@@ -25,7 +25,7 @@ steps:
       - '--set-env-vars'
       - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=box2411.bluehost.com,IMAP_PORT=993'
       - '--set-secrets'
-      - 'GEMINI_API_KEY=gemini-api-key:latest,EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest'
+      - 'EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
