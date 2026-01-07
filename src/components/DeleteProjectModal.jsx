@@ -7,7 +7,9 @@ export default function DeleteProjectModal({ project, onClose, onDeleted }) {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState(null);
 
-  const expectedConfirm = `DELETE ${project.name}`;
+  // Use the sanitized name consistently
+  const projectNameSanitized = project.name.replace(/\s+/g, '_');
+  const expectedConfirm = `DELETE ${projectNameSanitized}`;
   const isConfirmed = confirmText === expectedConfirm;
 
   const handleDelete = async () => {
@@ -22,8 +24,8 @@ export default function DeleteProjectModal({ project, onClose, onDeleted }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectName: project.name.replace(/\s+/g, '_'),
-          confirm: `DELETE ${project.name.replace(/\s+/g, '_')}`
+          projectName: projectNameSanitized,
+          confirm: expectedConfirm
         })
       });
       
@@ -88,16 +90,20 @@ export default function DeleteProjectModal({ project, onClose, onDeleted }) {
 
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-2">
-              To confirm, type: <span className="font-mono bg-slate-100 px-2 py-0.5 rounded">{expectedConfirm}</span>
+              To confirm, type: <span className="font-mono bg-slate-100 px-2 py-0.5 rounded text-red-600">{expectedConfirm}</span>
             </label>
             <input
               type="text"
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
-              placeholder="Type the confirmation text"
+              placeholder="Type the confirmation text exactly"
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-red-300 transition-colors font-mono"
               autoComplete="off"
+              spellCheck="false"
             />
+            {confirmText && !isConfirmed && (
+              <p className="text-xs text-red-500 mt-1">Text doesn't match. Type exactly as shown above.</p>
+            )}
           </div>
 
           {error && (
