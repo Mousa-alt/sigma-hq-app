@@ -1,5 +1,6 @@
-functions-framework==3.*
-flask>=2.0.0
-google-cloud-storage>=2.0.0
-google-cloud-firestore>=2.0.0
-google-generativeai>=0.3.0
+functions-framework==3.5.0
+flask==2.3.3
+google-cloud-storage==2.14.0
+google-cloud-firestore==2.14.0
+google-generativeai==0.3.2
+werkzeug==2.3.7
