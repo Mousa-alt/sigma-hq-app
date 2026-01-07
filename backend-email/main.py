@@ -8,24 +8,31 @@ import re
 from datetime import datetime, timezone
 from google.cloud import storage
 from google.cloud import firestore
-import google.generativeai as genai
+import vertexai
+from vertexai.generative_models import GenerativeModel
 import functions_framework
 from flask import jsonify
 
 # Configuration
-IMAP_SERVER = os.environ.get('IMAP_SERVER', 'box2411.bluehost.com')
+IMAP_SERVER = os.environ.get('IMAP_SERVER', 'mail.sigmadd-egypt.com')
 IMAP_PORT = int(os.environ.get('IMAP_PORT', '993'))
 EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 GCS_BUCKET = os.environ.get('GCS_BUCKET', 'sigma-docs-repository')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+GCP_PROJECT = os.environ.get('GCP_PROJECT', 'sigma-hq-technical-office')
+GCP_LOCATION = os.environ.get('GCP_LOCATION', 'europe-west1')
 
 # Initialize clients
 storage_client = storage.Client()
 db = firestore.Client()
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# Initialize Vertex AI (uses GCP credentials automatically)
+try:
+    vertexai.init(project=GCP_PROJECT, location=GCP_LOCATION)
+    VERTEX_AI_ENABLED = True
+except Exception as e:
+    print(f"Vertex AI init error: {e}")
+    VERTEX_AI_ENABLED = False
 
 # =============================================================================
 # EMAIL PROCESSING
@@ -96,17 +103,19 @@ def get_registered_projects():
                 'client': data.get('client', ''),
                 'keywords': data.get('keywords', [])
             })
+        print(f"📋 Loaded projects: {[p['name'] for p in projects]}")
     except Exception as e:
         print(f"Error loading projects: {e}")
     return projects
 
 def classify_email_with_ai(subject, sender, body, projects):
-    """Use Gemini to classify which project and document type"""
-    if not GEMINI_API_KEY:
-        return None, 'correspondence', 'low'
+    """Use Vertex AI Gemini to classify which project and document type"""
+    if not VERTEX_AI_ENABLED:
+        print("⚠️ Vertex AI not enabled, using fallback classification")
+        return fallback_classify(subject, projects)
     
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = GenerativeModel('gemini-1.5-flash-001')
         
         project_list = "\n".join([f"- {p['name']} (Client: {p.get('client', 'N/A')})" for p in projects])
         
@@ -129,13 +138,14 @@ RESPOND IN JSON ONLY:
 }}
 
 RULES:
-- Match project by name, client name, or context clues
+- Match project by name, client name, or context clues in the email
+- Look for project names or codes in the subject line
 - If unclear which project, set project_name to null
 - doc_type based on content:
   - rfi: questions, clarifications needed
-  - approval: approvals, rejections, status updates
+  - approval: approvals, rejections, status updates on submittals
   - vo: variation orders, change requests, cost changes
-  - submittal: material submittals, samples
+  - submittal: material submittals, shop drawings, samples
   - mom: meeting minutes, meeting notes
   - invoice: payments, invoices, financial
   - report: progress reports, site reports
@@ -144,6 +154,7 @@ RULES:
         
         response = model.generate_content(prompt)
         text = response.text.strip()
+        print(f"🤖 AI Response: {text[:200]}")
         
         # Extract JSON from response
         json_match = re.search(r'\{[\s\S]*\}', text)
@@ -152,6 +163,37 @@ RULES:
             return result.get('project_name'), result.get('doc_type', 'correspondence'), result.get('confidence', 'low')
     except Exception as e:
         print(f"AI classification error: {e}")
+        return fallback_classify(subject, projects)
+    
+    return None, 'correspondence', 'low'
+
+def fallback_classify(subject, projects):
+    """Fallback classification using keyword matching"""
+    subject_lower = subject.lower()
+    
+    # Try to match project name in subject
+    for project in projects:
+        project_name = project['name'].lower()
+        # Check for project name or parts of it
+        if project_name in subject_lower or project_name.replace('-', ' ') in subject_lower:
+            # Determine doc type from subject
+            doc_type = 'correspondence'
+            if 'rfi' in subject_lower:
+                doc_type = 'rfi'
+            elif 'shop drawing' in subject_lower or 'submittal' in subject_lower:
+                doc_type = 'submittal'
+            elif 'approval' in subject_lower or 'approved' in subject_lower:
+                doc_type = 'approval'
+            elif 'invoice' in subject_lower or 'payment' in subject_lower:
+                doc_type = 'invoice'
+            elif 'meeting' in subject_lower or 'mom' in subject_lower:
+                doc_type = 'mom'
+            elif 'variation' in subject_lower or 'vo' in subject_lower:
+                doc_type = 'vo'
+            elif 'report' in subject_lower:
+                doc_type = 'report'
+            
+            return project['name'], doc_type, 'medium'
     
     return None, 'correspondence', 'low'
 
@@ -165,7 +207,7 @@ def save_email_to_gcs(email_data, project_name, doc_type):
     
     # Determine path
     if project_name:
-        folder_name = project_name.replace(' ', '_')
+        folder_name = project_name.replace(' ', '-')
         path = f"{folder_name}/09-Correspondence/{doc_type.upper()}/{date_str}_{safe_subject}"
     else:
         path = f"_Unclassified_Emails/{date_str}_{safe_subject}"
@@ -218,12 +260,25 @@ def save_last_processed_uid(uid):
     except Exception as e:
         print(f"Error saving state: {e}")
 
+def reset_processed_state():
+    """Reset the last processed UID to reprocess emails"""
+    try:
+        db.collection('email_sync').document('state').set({
+            'last_uid': 0,
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+            'reset_reason': 'manual reset'
+        })
+        return True
+    except Exception as e:
+        print(f"Error resetting state: {e}")
+        return False
+
 def fetch_and_process_emails(since_date=None, limit=50):
     """Fetch new emails from IMAP and process them"""
     if not EMAIL_USER or not EMAIL_PASS:
         return {'error': 'Email credentials not configured'}
     
-    results = {'processed': 0, 'skipped': 0, 'errors': 0, 'emails': []}
+    results = {'processed': 0, 'skipped': 0, 'errors': 0, 'emails': [], 'vertex_ai': VERTEX_AI_ENABLED}
     
     try:
         # Connect to IMAP
@@ -246,7 +301,7 @@ def fetch_and_process_emails(since_date=None, limit=50):
         
         # Get registered projects
         projects = get_registered_projects()
-        print(f"📋 Loaded {len(projects)} registered projects")
+        results['projects_loaded'] = len(projects)
         
         # Get last processed UID
         last_uid = get_last_processed_uid()
@@ -348,10 +403,11 @@ def email_sync(request):
     # Health check
     if request.method == 'GET':
         return (jsonify({
-            'status': 'Email Sync Worker v1.0',
+            'status': 'Email Sync Worker v2.0',
             'imap_server': IMAP_SERVER,
             'email_configured': bool(EMAIL_USER and EMAIL_PASS),
-            'gemini_enabled': bool(GEMINI_API_KEY)
+            'vertex_ai_enabled': VERTEX_AI_ENABLED,
+            'gcp_project': GCP_PROJECT
         }), 200, headers)
     
     # Process emails
@@ -359,6 +415,11 @@ def email_sync(request):
         try:
             data = request.get_json(silent=True) or {}
             limit = data.get('limit', 50)
+            
+            # Reset state if requested
+            if data.get('reset'):
+                reset_processed_state()
+                return (jsonify({'message': 'State reset, will reprocess emails'}), 200, headers)
             
             # Optional: process from specific date
             since_str = data.get('since')
