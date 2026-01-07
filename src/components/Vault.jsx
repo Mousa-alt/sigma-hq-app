@@ -4,89 +4,129 @@ import { SYNC_WORKER_URL } from '../config';
 import FolderPopup from './FolderPopup';
 import { parseFilename, getFileIcon, detectDocumentType, getDocTypeInfo } from '../utils/documentUtils';
 
-// Standard 12-folder structure - matching actual Drive folder names
-const FOLDER_STRUCTURE = [
-  { id: '01', name: '01.Contract_Documents', label: 'Contract Documents', icon: 'file-text', color: 'blue' },
-  { id: '02', name: '02.Design_Drawings', label: 'Design Drawings', icon: 'compass', color: 'indigo' },
-  { id: '03', name: '03.Specifications', label: 'Specifications', icon: 'book-open', color: 'violet' },
-  { id: '04', name: '04.Shop_Drawings', label: 'Shop Drawings', icon: 'ruler', color: 'purple' },
-  { id: '05', name: '05.Quantity_Surveying', label: 'Quantity Surveying', icon: 'calculator', color: 'emerald' },
-  { id: '06', name: '06.Site_Reports', label: 'Site Reports', icon: 'clipboard-list', color: 'amber' },
-  { id: '07', name: '07.Correspondence', label: 'Correspondence', icon: 'mail', color: 'sky' },
-  { id: '08', name: '08.Quality_Control', label: 'Quality Control', icon: 'shield-check', color: 'green' },
-  { id: '09', name: '09.Health_Safety', label: 'Health & Safety', icon: 'hard-hat', color: 'red' },
-  { id: '10', name: '10.Handover', label: 'Handover', icon: 'package', color: 'teal' },
-  { id: '11', name: '11.Photos', label: 'Photos', icon: 'camera', color: 'pink' },
-  { id: '12', name: '12.Archive', label: 'Archive', icon: 'archive', color: 'slate' },
-];
+// Fallback icons for common folder name patterns
+const FOLDER_ICONS = {
+  'contract': { icon: 'file-text', color: 'blue' },
+  'design': { icon: 'compass', color: 'indigo' },
+  'drawing': { icon: 'ruler', color: 'purple' },
+  'shop': { icon: 'ruler', color: 'purple' },
+  'spec': { icon: 'book-open', color: 'violet' },
+  'quantity': { icon: 'calculator', color: 'emerald' },
+  'boq': { icon: 'calculator', color: 'emerald' },
+  'qs': { icon: 'calculator', color: 'emerald' },
+  'site': { icon: 'clipboard-list', color: 'amber' },
+  'report': { icon: 'clipboard-list', color: 'amber' },
+  'correspondence': { icon: 'mail', color: 'sky' },
+  'letter': { icon: 'mail', color: 'sky' },
+  'quality': { icon: 'shield-check', color: 'green' },
+  'qc': { icon: 'shield-check', color: 'green' },
+  'health': { icon: 'hard-hat', color: 'red' },
+  'safety': { icon: 'hard-hat', color: 'red' },
+  'hse': { icon: 'hard-hat', color: 'red' },
+  'handover': { icon: 'package', color: 'teal' },
+  'photo': { icon: 'camera', color: 'pink' },
+  'image': { icon: 'camera', color: 'pink' },
+  'archive': { icon: 'archive', color: 'slate' },
+  'old': { icon: 'archive', color: 'slate' },
+  'invoice': { icon: 'receipt', color: 'emerald' },
+  'payment': { icon: 'receipt', color: 'emerald' },
+  'meeting': { icon: 'users', color: 'purple' },
+  'mom': { icon: 'users', color: 'purple' },
+  'sample': { icon: 'box', color: 'amber' },
+  'material': { icon: 'box', color: 'amber' },
+};
 
-// Quick access sections - matching actual Drive structure
-const QUICK_ACCESS = [
-  { id: 'approved-sd', label: 'Approved Shop Drawings', folder: '04.Shop_Drawings/Approved', icon: 'check-circle', color: 'emerald' },
-  { id: 'mom', label: 'Meeting Minutes', folder: '07.Correspondence/MOM', icon: 'users', color: 'purple' },
-  { id: 'progress', label: 'Progress Reports', folder: '06.Site_Reports/Progress', icon: 'trending-up', color: 'blue' },
-  { id: 'invoices', label: 'Invoices', folder: '01.Contract_Documents/01.4_Invoices', icon: 'receipt', color: 'amber' },
-];
+// Get icon and color based on folder name
+const getFolderStyle = (folderName) => {
+  const lower = folderName.toLowerCase();
+  
+  for (const [keyword, style] of Object.entries(FOLDER_ICONS)) {
+    if (lower.includes(keyword)) {
+      return style;
+    }
+  }
+  
+  return { icon: 'folder', color: 'slate' };
+};
+
+// Clean up folder name for display
+const cleanFolderName = (name) => {
+  return name
+    .replace(/^\d+[\.\-_]\s*/, '') // Remove leading numbers like "01." or "01-" or "01_"
+    .replace(/_/g, ' ')             // Replace underscores with spaces
+    .replace(/\s+/g, ' ')           // Collapse multiple spaces
+    .trim();
+};
 
 export default function Vault({ project }) {
-  const [loading, setLoading] = useState(false);
+  const [folders, setFolders] = useState([]);
+  const [loadingFolders, setLoadingFolders] = useState(true);
   const [activePopup, setActivePopup] = useState(null);
   const [recentFiles, setRecentFiles] = useState([]);
   const [loadingRecent, setLoadingRecent] = useState(true);
 
   useEffect(() => {
     if (project) {
+      loadFolders();
       loadRecentFiles();
     }
   }, [project?.id]);
 
+  // Load actual folders from GCS
+  const loadFolders = async () => {
+    setLoadingFolders(true);
+    try {
+      const res = await fetch(`${SYNC_WORKER_URL}/files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          projectName: project.name.replace(/\s+/g, '_'),
+          folderPath: '' // Root level
+        })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        // Filter to only folders
+        const folderList = (data.files || []).filter(f => f.type === 'folder');
+        setFolders(folderList);
+      } else {
+        setFolders([]);
+      }
+    } catch (err) {
+      console.error('Error loading folders:', err);
+      setFolders([]);
+    } finally {
+      setLoadingFolders(false);
+    }
+  };
+
+  // Load recent files across all folders
   const loadRecentFiles = async () => {
     setLoadingRecent(true);
     try {
-      // Try to get recent files from multiple folders
-      const foldersToCheck = [
-        '04.Shop_Drawings',
-        '01.Contract_Documents',
-        '07.Correspondence',
-        '06.Site_Reports'
-      ];
+      const res = await fetch(`${SYNC_WORKER_URL}/list`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          projectName: project.name.replace(/\s+/g, '_')
+        })
+      });
       
-      const allFiles = [];
-      
-      for (const folder of foldersToCheck) {
-        try {
-          const res = await fetch(`${SYNC_WORKER_URL}/files`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              projectName: project.name.replace(/\s+/g, '_'),
-              folderPath: folder
-            })
-          });
-          
-          if (res.ok) {
-            const data = await res.json();
-            const files = (data.files || []).filter(f => f.type === 'file');
-            files.forEach(f => {
-              f.folder = folder.split('.')[1]?.replace(/_/g, ' ') || folder;
-            });
-            allFiles.push(...files);
-          }
-        } catch (e) {
-          // Continue with other folders
-        }
+      if (res.ok) {
+        const data = await res.json();
+        // Sort by updated and take top 5
+        const sorted = (data.files || [])
+          .filter(f => f.updated)
+          .sort((a, b) => new Date(b.updated) - new Date(a.updated))
+          .slice(0, 5);
+        setRecentFiles(sorted);
+      } else {
+        setRecentFiles([]);
       }
-      
-      // Sort by updated date and take top 5
-      allFiles.sort((a, b) => new Date(b.updated) - new Date(a.updated));
-      setRecentFiles(allFiles.slice(0, 5));
     } catch (err) {
-      // Use demo files
-      setRecentFiles([
-        { name: '45_AGORA-GEM-Kitchen_Layout-MH-Rev_02.pdf', folder: 'Shop Drawings', updated: '2026-01-03T14:00:00Z' },
-        { name: '15_AGORA-GEM-Invoice_015-FIN-Rev_00.pdf', folder: 'Invoices', updated: '2026-01-05T09:00:00Z' },
-        { name: 'MOM_2026_01_05.pdf', folder: 'Correspondence', updated: '2026-01-05T17:00:00Z' },
-      ]);
+      console.error('Error loading recent files:', err);
+      setRecentFiles([]);
     } finally {
       setLoadingRecent(false);
     }
@@ -116,10 +156,12 @@ export default function Vault({ project }) {
       const date = new Date(dateStr);
       const now = new Date();
       const diffMs = now - date;
-      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
       
-      if (diffHours < 1) return 'Just now';
+      if (diffMins < 1) return 'Just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
       if (diffHours < 24) return `${diffHours}h ago`;
       if (diffDays < 7) return `${diffDays}d ago`;
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -132,9 +174,15 @@ export default function Vault({ project }) {
     if (file.url) {
       window.open(file.url, '_blank');
     } else if (file.path) {
-      const viewUrl = `${SYNC_WORKER_URL}/view?path=${encodeURIComponent(file.path)}`;
+      const viewUrl = `${SYNC_WORKER_URL}/view?path=${encodeURIComponent(project.name.replace(/\s+/g, '_') + '/' + file.path)}`;
       window.open(viewUrl, '_blank');
     }
+  };
+
+  const getFolderFromPath = (path) => {
+    if (!path) return '';
+    const parts = path.split('/');
+    return parts[0] || '';
   };
 
   return (
@@ -145,43 +193,27 @@ export default function Vault({ project }) {
           <h2 className="text-lg font-semibold text-slate-900 mb-1">Project Documents</h2>
           <p className="text-sm text-slate-500">Browse and access all project files</p>
         </div>
-        <button
-          onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-medium text-slate-700 transition-colors"
-        >
-          <Icon name="external-link" size={14} />
-          Open in Drive
-        </button>
-      </div>
-
-      {/* Quick Access Panels */}
-      <div className="mb-8">
-        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Quick Access</h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {QUICK_ACCESS.map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActivePopup({ folder: item.folder, title: item.label })}
-              className={`p-4 rounded-xl border transition-all hover:shadow-md text-left ${getColorClasses(item.color)}`}
-            >
-              <Icon name={item.icon} size={20} className="mb-2" />
-              <p className="text-xs font-medium text-slate-900">{item.label}</p>
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { loadFolders(); loadRecentFiles(); }}
+            className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-medium text-slate-600 transition-colors"
+          >
+            <Icon name="refresh-cw" size={12} />
+            Refresh
+          </button>
+          <button
+            onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 rounded-lg text-xs font-medium text-white transition-colors"
+          >
+            <Icon name="external-link" size={14} />
+            Open in Drive
+          </button>
         </div>
       </div>
 
       {/* Recent Files */}
       <div className="mb-8">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Recently Modified</h3>
-          <button 
-            onClick={loadRecentFiles}
-            className="text-[10px] text-blue-500 hover:text-blue-600"
-          >
-            Refresh
-          </button>
-        </div>
+        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Recently Modified</h3>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           {loadingRecent ? (
             <div className="p-6 text-center">
@@ -190,13 +222,15 @@ export default function Vault({ project }) {
           ) : recentFiles.length === 0 ? (
             <div className="p-6 text-center">
               <Icon name="file" size={24} className="text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-400">No recent files</p>
+              <p className="text-sm text-slate-400">No files found</p>
+              <p className="text-xs text-slate-400 mt-1">Sync your project to see files</p>
             </div>
           ) : (
             recentFiles.map((file, i) => {
               const parsed = parseFilename(file.name);
-              const docType = detectDocumentType(file.name, file.folder || '');
+              const docType = detectDocumentType(file.name, file.path || '');
               const typeInfo = getDocTypeInfo(docType);
+              const folder = getFolderFromPath(file.path);
               
               return (
                 <div
@@ -208,16 +242,12 @@ export default function Vault({ project }) {
                     <Icon name={getFileIcon(file.name)} size={14} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className={`px-1 py-0.5 rounded text-[8px] font-semibold uppercase bg-${typeInfo.color}-100 text-${typeInfo.color}-700`}>
-                        {typeInfo.label}
-                      </span>
-                    </div>
                     <p className="text-sm font-medium text-slate-900 truncate">
                       {parsed.description || file.name}
                     </p>
                     <p className="text-[10px] text-slate-400">
-                      {file.folder} • {formatTimeAgo(file.updated)}
+                      {cleanFolderName(folder)} • {formatTimeAgo(file.updated)}
+                      {parsed.revision && ` • Rev ${parsed.revision}`}
                     </p>
                   </div>
                   <Icon name="chevron-right" size={14} className="text-slate-300" />
@@ -228,26 +258,44 @@ export default function Vault({ project }) {
         </div>
       </div>
 
-      {/* Standard Folder Structure */}
+      {/* Folders Grid - Dynamic */}
       <div>
         <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">All Folders</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {FOLDER_STRUCTURE.map(folder => (
-            <button
-              key={folder.id}
-              onClick={() => setActivePopup({ folder: folder.name, title: folder.label })}
-              className="p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
-            >
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 ${getColorClasses(folder.color)}`}>
-                <Icon name={folder.icon} size={18} />
-              </div>
-              <p className="text-xs font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
-                {folder.label}
-              </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">{folder.id}</p>
-            </button>
-          ))}
-        </div>
+        
+        {loadingFolders ? (
+          <div className="flex items-center justify-center py-12">
+            <Icon name="loader-2" size={24} className="animate-spin text-slate-400" />
+          </div>
+        ) : folders.length === 0 ? (
+          <div className="text-center py-12 bg-slate-50 rounded-xl border border-slate-200">
+            <Icon name="folder" size={32} className="text-slate-300 mx-auto mb-3" />
+            <p className="text-sm text-slate-500">No folders found</p>
+            <p className="text-xs text-slate-400 mt-1">Sync your project to load folders from Drive</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {folders.map((folder, i) => {
+              const style = getFolderStyle(folder.name);
+              const displayName = cleanFolderName(folder.name);
+              
+              return (
+                <button
+                  key={i}
+                  onClick={() => setActivePopup({ folder: folder.name, title: displayName })}
+                  className="p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
+                >
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 ${getColorClasses(style.color)}`}>
+                    <Icon name={style.icon} size={18} />
+                  </div>
+                  <p className="text-xs font-medium text-slate-900 group-hover:text-blue-600 transition-colors truncate">
+                    {displayName}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 truncate">{folder.name}</p>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Folder Popup */}
