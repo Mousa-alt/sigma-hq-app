@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import Icon from './Icon';
 import { SYNC_WORKER_URL } from '../config';
+import { 
+  parseGCSLink, 
+  detectDocumentType, 
+  getDocTypeInfo,
+  sortByHierarchy,
+  getFileViewURL 
+} from '../utils/documentUtils';
 
 export default function ChatPanel({ project, isExpanded, onToggle }) {
   const [messages, setMessages] = useState([]);
@@ -12,7 +19,7 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
     if (project) {
       setMessages([{
         role: 'assistant',
-        content: `Ready to help with ${project.name}. Ask me anything about your project documents - materials, approvals, invoices, drawings, or any specifications.`,
+        content: `Ready to help with **${project.name}**. I can search across all your project documents - contracts, BOQs, shop drawings, samples, meeting minutes, and correspondence.\n\nAsk me about materials, approvals, specifications, or anything in your project files.`,
         sources: []
       }]);
     }
@@ -47,18 +54,35 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
       
       if (data.summary) {
         response = data.summary;
-        sources = (data.results || []).slice(0, 5).map(r => ({
-          title: r.title,
-          link: r.link
-        }));
+        // Sort by hierarchy and take top sources
+        const sorted = sortByHierarchy(data.results || []);
+        sources = sorted.slice(0, 5).map(r => {
+          const { filename } = parseGCSLink(r.link);
+          const docType = detectDocumentType(filename, r.link);
+          const typeInfo = getDocTypeInfo(docType);
+          return {
+            title: r.title,
+            link: r.link,
+            docType,
+            typeInfo
+          };
+        });
       } else if (data.results && data.results.length > 0) {
-        response = `I found ${data.results.length} related documents. Here are the most relevant ones:`;
-        sources = data.results.slice(0, 5).map(r => ({
-          title: r.title,
-          link: r.link
-        }));
+        response = `I found ${data.results.length} related documents. The most authoritative sources are shown below:`;
+        const sorted = sortByHierarchy(data.results);
+        sources = sorted.slice(0, 5).map(r => {
+          const { filename } = parseGCSLink(r.link);
+          const docType = detectDocumentType(filename, r.link);
+          const typeInfo = getDocTypeInfo(docType);
+          return {
+            title: r.title,
+            link: r.link,
+            docType,
+            typeInfo
+          };
+        });
       } else {
-        response = "I couldn't find specific information about that. Try asking about materials, invoices, shop drawings, or meeting minutes.";
+        response = "I couldn't find specific information about that in the project documents. Try asking about:\n• Materials and samples\n• Shop drawings\n• Invoices\n• Meeting minutes\n• Specifications";
       }
       
       setMessages(prev => [...prev, { role: 'assistant', content: response, sources }]);
@@ -73,11 +97,31 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
     }
   };
 
-  // Parse GCS link to get filename
-  const getFilename = (gcsLink) => {
-    if (!gcsLink) return 'Document';
-    const parts = gcsLink.split('/');
-    return parts[parts.length - 1];
+  const handleSourceClick = (source) => {
+    const viewUrl = getFileViewURL(source.link, SYNC_WORKER_URL);
+    if (viewUrl) {
+      window.open(viewUrl, '_blank');
+    }
+  };
+
+  // Get badge color classes
+  const getBadgeClasses = (color) => {
+    const colors = {
+      red: 'bg-red-100 text-red-700 border-red-200',
+      purple: 'bg-purple-100 text-purple-700 border-purple-200',
+      emerald: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+      blue: 'bg-blue-100 text-blue-700 border-blue-200',
+      amber: 'bg-amber-100 text-amber-700 border-amber-200',
+      slate: 'bg-slate-100 text-slate-600 border-slate-200',
+    };
+    return colors[color] || colors.slate;
+  };
+
+  // Parse markdown-style bold
+  const renderContent = (content) => {
+    return content.split('**').map((part, i) => 
+      i % 2 === 1 ? <strong key={i}>{part}</strong> : part
+    );
   };
 
   return (
@@ -95,17 +139,20 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
             <Icon name="sparkles" size={14} />
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-slate-900">AI Assistant</span>
+            <span className="text-xs font-medium text-slate-900">Project AI</span>
             <span className="flex items-center gap-1 text-[10px] text-emerald-500">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Ready
             </span>
           </div>
         </div>
-        <Icon 
-          name={isExpanded ? "chevron-down" : "chevron-up"} 
-          size={18} 
-          className="text-slate-400" 
-        />
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-400 hidden sm:block">Understands document hierarchy</span>
+          <Icon 
+            name={isExpanded ? "chevron-down" : "chevron-up"} 
+            size={18} 
+            className="text-slate-400" 
+          />
+        </div>
       </div>
 
       {/* Expanded content */}
@@ -123,22 +170,23 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
                   }`}
                 >
                   {/* Message content */}
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                  <div className="whitespace-pre-wrap">{renderContent(msg.content)}</div>
                   
                   {/* Sources */}
                   {msg.sources && msg.sources.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-slate-200">
-                      <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-2">Sources</p>
+                      <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-2">Sources (by authority)</p>
                       <div className="flex flex-wrap gap-2">
                         {msg.sources.map((src, j) => (
-                          <span 
+                          <button 
                             key={j}
-                            className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-slate-200 rounded text-[10px] text-slate-600 hover:border-blue-300 cursor-pointer"
-                            title={getFilename(src.link)}
+                            onClick={(e) => { e.stopPropagation(); handleSourceClick(src); }}
+                            className={`inline-flex items-center gap-1.5 px-2 py-1 border rounded text-[10px] hover:shadow-sm transition-all cursor-pointer ${getBadgeClasses(src.typeInfo?.color)}`}
+                            title={src.title}
                           >
-                            <Icon name="file-text" size={10} />
-                            {src.title || getFilename(src.link)}
-                          </span>
+                            <span className="font-semibold">{src.typeInfo?.label}</span>
+                            <span className="text-slate-500 max-w-[100px] truncate">{src.title}</span>
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -149,7 +197,10 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
             {loading && (
               <div className="bg-slate-50 p-4 rounded-xl max-w-[85%]">
                 <div className="flex items-center gap-2">
-                  <Icon name="loader-2" size={14} className="animate-spin text-slate-400" />
+                  <div className="relative">
+                    <div className="w-5 h-5 rounded-full border-2 border-blue-100" />
+                    <div className="absolute inset-0 w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                  </div>
                   <span className="text-sm text-slate-500">Searching documents...</span>
                 </div>
               </div>
@@ -162,14 +213,14 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
             <input 
               value={input} 
               onChange={e => setInput(e.target.value)} 
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-5 py-4 text-sm outline-none pr-14 text-slate-900 placeholder:text-slate-400 focus:border-blue-300 transition-colors" 
-              placeholder="Ask about materials, approvals, invoices..." 
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-5 py-4 text-sm outline-none pr-14 text-slate-900 placeholder:text-slate-400 focus:border-blue-300 focus:bg-white transition-all" 
+              placeholder="Ask about materials, approvals, specifications..." 
               disabled={loading} 
             />
             <button 
               type="submit" 
               disabled={loading || !input.trim()} 
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-slate-900 text-white rounded-lg disabled:opacity-30 transition-opacity"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg disabled:opacity-30 transition-opacity"
             >
               <Icon name="send" size={14} />
             </button>
