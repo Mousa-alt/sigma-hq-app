@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Icon from './Icon';
+import FolderPopup from './FolderPopup';
 
 export default function ProjectHome({ project, syncing, onSyncNow, onUpdateStatus }) {
   const [tasks, setTasks] = useState([
@@ -8,6 +9,7 @@ export default function ProjectHome({ project, syncing, onSyncNow, onUpdateStatu
     { id: 3, text: 'Update BOQ with variation orders', done: true },
   ]);
   const [newTask, setNewTask] = useState('');
+  const [activePopup, setActivePopup] = useState(null);
 
   const addTask = () => {
     if (!newTask.trim()) return;
@@ -21,6 +23,31 @@ export default function ProjectHome({ project, syncing, onSyncNow, onUpdateStatu
 
   const deleteTask = (id) => {
     setTasks(tasks.filter(t => t.id !== id));
+  };
+
+  // Quick link configurations matching 12-folder structure
+  const quickLinks = [
+    { id: 'contract', label: 'Contract', icon: 'file-text', color: 'blue', folder: '01-Contract Documents' },
+    { id: 'invoices', label: 'Invoices', icon: 'receipt', color: 'emerald', folder: '05-Quantity Surveying/Invoices' },
+    { id: 'shop-drawings', label: 'Shop Drawings', icon: 'pencil-ruler', color: 'purple', folder: '04-Shop Drawings/Approved' },
+    { id: 'drive', label: 'Open Drive', icon: 'external-link', color: 'orange', folder: null },
+  ];
+
+  const handleQuickLink = (link) => {
+    if (link.folder === null) {
+      // Open Drive directly
+      project?.driveLink && window.open(project.driveLink, '_blank');
+    } else {
+      // Open popup with folder contents
+      setActivePopup(link);
+    }
+  };
+
+  const colorClasses = {
+    blue: 'hover:border-blue-300 hover:bg-blue-50 text-blue-500',
+    emerald: 'hover:border-emerald-300 hover:bg-emerald-50 text-emerald-500',
+    purple: 'hover:border-purple-300 hover:bg-purple-50 text-purple-500',
+    orange: 'hover:border-orange-300 hover:bg-orange-50 text-orange-500',
   };
 
   return (
@@ -48,34 +75,16 @@ export default function ProjectHome({ project, syncing, onSyncNow, onUpdateStatu
       <div>
         <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-4">Quick Links</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <button 
-            onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} 
-            className="flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:bg-blue-50 transition-all group"
-          >
-            <Icon name="file-text" size={18} className="text-blue-500" />
-            <span className="text-xs font-medium text-slate-700">Contract</span>
-          </button>
-          <button 
-            onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} 
-            className="flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-xl hover:border-emerald-300 hover:bg-emerald-50 transition-all group"
-          >
-            <Icon name="receipt" size={18} className="text-emerald-500" />
-            <span className="text-xs font-medium text-slate-700">Invoices</span>
-          </button>
-          <button 
-            onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} 
-            className="flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-xl hover:border-purple-300 hover:bg-purple-50 transition-all group"
-          >
-            <Icon name="file-check" size={18} className="text-purple-500" />
-            <span className="text-xs font-medium text-slate-700">Last Invoice</span>
-          </button>
-          <button 
-            onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} 
-            className="flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-xl hover:border-orange-300 hover:bg-orange-50 transition-all group"
-          >
-            <Icon name="external-link" size={18} className="text-orange-500" />
-            <span className="text-xs font-medium text-slate-700">Open Drive</span>
-          </button>
+          {quickLinks.map(link => (
+            <button 
+              key={link.id}
+              onClick={() => handleQuickLink(link)} 
+              className={`flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-xl transition-all group ${colorClasses[link.color]}`}
+            >
+              <Icon name={link.icon} size={18} className={colorClasses[link.color].split(' ').pop()} />
+              <span className="text-xs font-medium text-slate-700">{link.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -139,6 +148,16 @@ export default function ProjectHome({ project, syncing, onSyncNow, onUpdateStatu
           <p className="text-sm text-slate-400">WhatsApp & Outlook integration coming soon</p>
         </div>
       </div>
+
+      {/* Folder Popup */}
+      {activePopup && (
+        <FolderPopup
+          project={project}
+          folder={activePopup.folder}
+          title={activePopup.label}
+          onClose={() => setActivePopup(null)}
+        />
+      )}
     </div>
   );
 }
