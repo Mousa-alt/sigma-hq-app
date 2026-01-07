@@ -62,33 +62,102 @@ DOCUMENT_HIERARCHY = {
 }
 
 def detect_document_type(filename, path):
+    """
+    Detect document type based on FOLDER PATH (primary) and filename (secondary).
+    Supports both OLD and NEW folder structures.
+    """
     lower_name = filename.lower()
     lower_path = path.lower()
     
+    # ===========================================
+    # FOLDER-BASED DETECTION (Most Reliable)
+    # ===========================================
+    
+    # --- CVI / Variations ---
+    # OLD: 08.Variations & Extra Works/
+    # NEW: 01-Contract-Documents/ or dedicated CVI folder
+    if '08.variation' in lower_path or 'extra work' in lower_path:
+        return 'cvi'
+    if 'variation' in lower_path and ('cvi' in lower_path or 'instruction' in lower_path):
+        return 'cvi'
+    
+    # --- Shop Drawings (Sigma's work) ---
+    # OLD: 02.Drawings & Designs/01.Drawings/
+    # NEW: 04-Shop-Drawings/
+    if '01.drawings' in lower_path and '02.drawings' in lower_path:
+        return 'shop_drawing'  # OLD structure
+    if '04-shop' in lower_path or '04_shop' in lower_path:
+        return 'shop_drawing'  # NEW structure
+    if '/drawings/' in lower_path and 'design' not in lower_path:
+        return 'shop_drawing'
+    
+    # --- Design Drawings (Client's) ---
+    # OLD: 02.Drawings & Designs/02.Designs/
+    # NEW: 02-Design-Drawings/
+    if '02.design' in lower_path or '02-design' in lower_path:
+        return 'drawing'
+    
+    # --- MOM ---
+    # OLD: 06.MOM,Reports.../01.MOM/
+    # NEW: 09-Correspondence/ or dedicated MOM folder
+    if '01.mom' in lower_path or '/mom/' in lower_path or '06.mom' in lower_path:
+        return 'mom'
+    
+    # --- Reports ---
+    # OLD: 06.../02.Reports/
+    # NEW: 07-Site-Reports/
+    if '02.report' in lower_path or '07-site' in lower_path or '/reports/' in lower_path:
+        return 'report'
+    
+    # --- Invoices ---
+    # OLD: 07.Invoices/
+    # NEW: 06-Quantity-Surveying/ (invoices subfolder)
+    if '07.invoice' in lower_path or '/invoices/' in lower_path:
+        return 'invoice'
+    
+    # --- Submittals ---
+    # OLD: 10.Submittal/
+    # NEW: 04-Shop-Drawings/ (submittals are part of shop drawings)
+    if '10.submittal' in lower_path or '/submittal' in lower_path:
+        return 'submittal'
+    
+    # --- BOQ / QS ---
+    # OLD: 04.Qs & PO/
+    # NEW: 06-Quantity-Surveying/
+    if '04.qs' in lower_path or '06-quantity' in lower_path or '/qs/' in lower_path:
+        return 'boq'
+    
+    # --- Contract ---
+    # OLD: 03.LOI, Boq & Contract/
+    # NEW: 01-Contract-Documents/
+    if '03.loi' in lower_path or '01-contract' in lower_path:
+        return 'contract'
+    
+    # --- Specifications ---
+    # NEW: 03-Specifications/
+    if '03-spec' in lower_path or '/spec/' in lower_path:
+        return 'specification'
+    
+    # --- RFI ---
+    # NEW: 09-Correspondence/ (RFI subfolder)
+    if '/rfi/' in lower_path:
+        return 'rfi'
+    
+    # --- Correspondence ---
+    # NEW: 09-Correspondence/
+    if '09-corr' in lower_path or '/correspondence/' in lower_path:
+        return 'correspondence'
+    
+    # ===========================================
+    # FILENAME-BASED DETECTION (Fallback)
+    # ===========================================
     if re.search(r'\bcvi\b|variation.?instruction', lower_name): return 'cvi'
     if re.search(r'\bvo\b|variation.?order', lower_name): return 'vo'
-    if re.search(r'approv|approved', lower_name): return 'approval'
-    if re.search(r'shop.?draw|sd[-_]|\bsd\d', lower_name): return 'shop_drawing'
-    if re.search(r'\brfi\b|request.?for.?info', lower_name): return 'rfi'
-    if re.search(r'\bmom\b|minute|meeting', lower_name): return 'mom'
-    if re.search(r'submittal|submission', lower_name): return 'submittal'
-    if re.search(r'spec|specification', lower_name): return 'specification'
-    if re.search(r'\bboq\b|bill.?of.?quant|quantity', lower_name): return 'boq'
-    if re.search(r'contract|agreement', lower_name): return 'contract'
-    if re.search(r'letter|correspondence|ltr', lower_name): return 'correspondence'
-    if re.search(r'report|progress|daily|weekly', lower_name): return 'report'
-    if re.search(r'invoice|inv[-_]|payment|claim', lower_name): return 'invoice'
-    if re.search(r'drawing|dwg|plan|elevation|section', lower_name): return 'drawing'
-    
-    if 'cvi' in lower_path or 'variation' in lower_path: return 'cvi'
-    if 'shop' in lower_path and 'draw' in lower_path: return 'shop_drawing'
-    if 'rfi' in lower_path: return 'rfi'
-    if 'mom' in lower_path or 'meeting' in lower_path: return 'mom'
-    if 'spec' in lower_path: return 'specification'
-    if 'boq' in lower_path or 'quantity' in lower_path: return 'boq'
-    if 'contract' in lower_path: return 'contract'
-    if 'correspondence' in lower_path or 'letter' in lower_path: return 'correspondence'
-    if 'invoice' in lower_path or 'payment' in lower_path: return 'invoice'
+    if re.search(r'\bmom\b|minute.?of.?meeting', lower_name): return 'mom'
+    if re.search(r'\brfi\b', lower_name): return 'rfi'
+    if re.search(r'invoice|inv[-_]\d', lower_name): return 'invoice'
+    if re.search(r'submittal', lower_name): return 'submittal'
+    if re.search(r'report', lower_name): return 'report'
     
     return 'other'
 
@@ -148,11 +217,11 @@ def sync_project(drive_url, project_name):
     prefix = f"{project_name}/"
     max_size = MAX_FILE_SIZE_MB * 1024 * 1024
     
-    print(f"\U0001F680 Starting sync: {project_name}")
+    print(f"Starting sync: {project_name}")
     drive_files = list_drive_files(extract_folder_id(drive_url))
-    print(f"\U0001F4CB Found {len(drive_files)} files in Drive")
+    print(f"Found {len(drive_files)} files in Drive")
     gcs_files = list_gcs_files(bucket, prefix)
-    print(f"\U0001F4CB Found {len(gcs_files)} files in GCS")
+    print(f"Found {len(gcs_files)} files in GCS")
     
     stats = {'added': 0, 'updated': 0, 'deleted': 0, 'skipped': 0, 'error': None}
 
@@ -160,7 +229,7 @@ def sync_project(drive_url, project_name):
         for path in list(gcs_files.keys()):
             if path not in drive_files and '_extracted/' not in path:
                 bucket.blob(f"{prefix}{path}").delete()
-                print(f"\U0001F5D1 Deleted: {path}")
+                print(f"Deleted: {path}")
                 stats['deleted'] += 1
 
         for path, info in drive_files.items():
@@ -179,7 +248,7 @@ def sync_project(drive_url, project_name):
                 except: pass
             
             if needs_sync:
-                print(f"\U0001F4E5 Processing: {info['name']}")
+                print(f"Processing: {info['name']}")
                 req = drive_service.files().get_media(fileId=info['id'])
                 fh = io.BytesIO()
                 dl = MediaIoBaseDownload(fh, req)
@@ -198,12 +267,12 @@ def sync_project(drive_url, project_name):
                 
                 if is_update: stats['updated'] += 1
                 else: stats['added'] += 1
-                print(f"\u2705 {'Updated' if is_update else 'Uploaded'}: {path}")
+                print(f"{'Updated' if is_update else 'Uploaded'}: {path}")
 
-        print(f"\U0001F389 DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Skipped:{stats['skipped']}")
+        print(f"DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Skipped:{stats['skipped']}")
     except Exception as e:
         stats['error'] = str(e)
-        print(f"\u274C Sync error: {e}")
+        print(f"Sync error: {e}")
     
     return stats
 
@@ -219,26 +288,25 @@ def delete_project_files(project_name):
     for blob in blobs:
         blob.delete()
         deleted_count += 1
-        print(f"\U0001F5D1 Deleted: {blob.name}")
-    print(f"\U0001F389 Deleted {deleted_count} files for project {project_name}")
+        print(f"Deleted: {blob.name}")
+    print(f"Deleted {deleted_count} files for project {project_name}")
     return {'deleted': deleted_count, 'project': project_name}
 
 # =============================================================================
-# LATEST DOCUMENTS - SMART (by Subject + Revision)
+# LATEST DOCUMENTS BY TYPE - FOLDER PATH BASED
 # =============================================================================
 
 def extract_revision(filename):
     """Extract revision number from filename. Returns (rev_number, rev_string)"""
     lower = filename.lower()
     
-    # Common patterns: Rev03, Rev.03, Rev-03, R03, Rev 03, Revision 3
     patterns = [
-        r'rev[._\-\s]?(\d+)',      # Rev03, Rev.03, Rev-03, Rev 03
-        r'revision[._\-\s]?(\d+)', # Revision03
-        r'\br(\d+)\b',              # R03 (standalone)
-        r'_r(\d+)_',                # _R03_
-        r'-r(\d+)-',                # -R03-
-        r'v(\d+)(?:\.\d+)?(?:[_\-\s]|$)',  # V03, V3.0
+        r'rev[._\-\s]?(\d+)',
+        r'revision[._\-\s]?(\d+)',
+        r'\br(\d+)\b',
+        r'_r(\d+)_',
+        r'-r(\d+)-',
+        r'v(\d+)(?:\.\d+)?(?:[_\-\s]|$)',
     ]
     
     for pattern in patterns:
@@ -250,55 +318,65 @@ def extract_revision(filename):
     return 0, None
 
 def extract_subject(filename, path):
-    """Extract subject/discipline from filename (flooring, kitchen, MEP, etc.)"""
+    """
+    Extract subject/discipline from folder path (primary) and filename (secondary).
+    Supports both OLD and NEW structures.
+    """
     lower = filename.lower()
     lower_path = path.lower()
     
-    # Common construction disciplines/subjects
+    # OLD structure: 10.Architecture, 20.Electrical, etc.
+    if '10.architecture' in lower_path or '/architecture/' in lower_path:
+        return 'architectural'
+    if '20.electrical' in lower_path or '/electrical/' in lower_path:
+        return 'electrical'
+    if '30.air conditioning' in lower_path or '/ac/' in lower_path or 'hvac' in lower_path:
+        return 'mechanical'
+    if '40.fire fighting' in lower_path or '/fire' in lower_path:
+        return 'fire'
+    if '50.plumbing' in lower_path or '/plumbing/' in lower_path:
+        return 'plumbing'
+    
+    # OLD structure memo folders
+    if '01.interior' in lower_path:
+        return 'interior'
+    if '04.lighting' in lower_path:
+        return 'lighting'
+    if '08.floor' in lower_path:
+        return 'flooring'
+    if '09.door' in lower_path:
+        return 'door'
+    
+    if 'mep' in lower_path or 'x0.mep' in lower_path:
+        return 'mep'
+    
+    # Filename-based fallback
     subjects = {
-        'flooring': ['floor', 'flooring', 'tile', 'carpet', 'vinyl', 'marble', 'granite', 'porcelain'],
-        'kitchen': ['kitchen', 'ktc', 'kitch', 'pantry', 'k-'],
-        'bathroom': ['bathroom', 'bath', 'toilet', 'wc', 'lavatory', 'washroom', 'restroom'],
-        'ceiling': ['ceiling', 'clg', 'gypsum', 'soffit', 'bulkhead'],
+        'flooring': ['floor', 'tile', 'carpet', 'vinyl', 'marble', 'granite', 'porcelain'],
+        'kitchen': ['kitchen', 'ktc', 'pantry'],
+        'bathroom': ['bathroom', 'bath', 'toilet', 'wc', 'lavatory', 'washroom'],
+        'ceiling': ['ceiling', 'clg', 'gypsum', 'soffit', 'bulkhead', 'rcp'],
         'wall': ['wall', 'partition', 'drywall', 'cladding'],
-        'door': ['door', 'dr-', 'entrance', 'gate'],
-        'window': ['window', 'glazing', 'curtain wall', 'facade'],
-        'electrical': ['electrical', 'elec', 'elect', 'lighting', 'power', 'lv', 'mv', 'db', 'panel'],
-        'mechanical': ['mechanical', 'mech', 'hvac', 'ac', 'ahu', 'fcu', 'duct', 'diffuser'],
+        'door': ['door', 'entrance', 'gate', 'shutter'],
+        'window': ['window', 'glazing', 'curtain wall', 'facade', 'shop front'],
+        'electrical': ['electrical', 'elec', 'lighting', 'power', 'small power', 'db', 'panel'],
+        'mechanical': ['mechanical', 'mech', 'hvac', 'ac', 'ahu', 'fcu', 'duct', 'diffuser', 'grill'],
         'plumbing': ['plumbing', 'plumb', 'drainage', 'sanitary', 'water', 'pipe'],
-        'fire': ['fire', 'sprinkler', 'smoke', 'alarm', 'firefighting', 'ff'],
-        'furniture': ['furniture', 'furn', 'ff&e', 'ffe', 'joinery', 'millwork', 'casework'],
+        'fire': ['fire', 'sprinkler', 'smoke', 'alarm', 'firefighting'],
+        'furniture': ['furniture', 'furn', 'joinery', 'millwork', 'casework', 'carpentry'],
         'signage': ['signage', 'sign', 'wayfinding', 'graphics'],
-        'landscape': ['landscape', 'hardscape', 'softscape', 'irrigation', 'planting'],
-        'structure': ['structural', 'struct', 'steel', 'concrete', 'rebar', 'foundation'],
-        'architectural': ['architectural', 'arch', 'layout', 'plan', 'section', 'elevation'],
+        'architectural': ['layout', 'plan', 'elevation', 'section', 'setting out', 'construction'],
     }
     
-    # Check filename first, then path
     for subject, keywords in subjects.items():
         for kw in keywords:
             if kw in lower or kw in lower_path:
                 return subject
     
-    # Try to extract from filename pattern like SD-FL-001 (FL = flooring)
-    code_match = re.search(r'[_\-]([a-z]{2,4})[_\-]', lower)
+    code_match = re.search(r'-([aempf])-', lower)
     if code_match:
+        code_map = {'a': 'architectural', 'e': 'electrical', 'm': 'mechanical', 'p': 'plumbing', 'f': 'fire'}
         code = code_match.group(1)
-        code_map = {
-            'fl': 'flooring', 'flr': 'flooring',
-            'kt': 'kitchen', 'ktc': 'kitchen', 'k': 'kitchen',
-            'bt': 'bathroom', 'wc': 'bathroom',
-            'clg': 'ceiling', 'cl': 'ceiling',
-            'wl': 'wall', 'wll': 'wall',
-            'dr': 'door', 'dor': 'door',
-            'el': 'electrical', 'elec': 'electrical',
-            'mech': 'mechanical', 'mc': 'mechanical', 'hvac': 'mechanical',
-            'pl': 'plumbing', 'plb': 'plumbing',
-            'fr': 'furniture', 'frn': 'furniture',
-            'ar': 'architectural', 'arch': 'architectural',
-            'st': 'structure', 'str': 'structure',
-            'mep': 'mep',
-        }
         if code in code_map:
             return code_map[code]
     
@@ -309,17 +387,15 @@ def is_valid_document(filename):
     lower = filename.lower()
     ext = os.path.splitext(lower)[1]
     
-    # Valid document extensions only
     valid_ext = {'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'}
     if ext not in valid_ext:
         return False
     
-    # Skip obvious non-documents
     skip_patterns = [
-        'font', 'arial', 'calibri', 'times', 'helvetica',  # Fonts
-        'template', 'blank', 'empty',  # Templates
-        'backup', 'copy of', 'old_', '~$',  # Backups
-        'desktop.ini', 'thumbs.db', '.ds_store',  # System files
+        'font', 'arial', 'calibri', 'times', 'helvetica',
+        'template', 'blank', 'empty',
+        'backup', 'copy of', 'old_', '~$',
+        'desktop.ini', 'thumbs.db', '.ds_store',
     ]
     
     for pattern in skip_patterns:
@@ -333,7 +409,6 @@ def get_latest_by_type(project_name):
     bucket = storage_client.bucket(GCS_BUCKET)
     prefix = f"{project_name}/"
     
-    # Collect all valid documents
     all_docs = []
     
     for blob in bucket.list_blobs(prefix=prefix):
@@ -342,7 +417,6 @@ def get_latest_by_type(project_name):
         
         filename = os.path.basename(blob.name)
         
-        # Skip invalid files (fonts, system files, etc.)
         if not is_valid_document(filename):
             continue
         
@@ -368,32 +442,27 @@ def get_latest_by_type(project_name):
     # Group by type+subject, keep highest revision
     groups = {}
     for doc in all_docs:
-        # Key: type + subject (e.g., "shop_drawing_flooring")
         key = f"{doc['type']}_{doc['subject']}"
         
         if key not in groups:
             groups[key] = doc
         else:
-            # Keep the one with higher revision
             if doc['revision'] > groups[key]['revision']:
                 groups[key] = doc
-            # If same revision, keep more recently updated
             elif doc['revision'] == groups[key]['revision']:
                 if doc['updated'] > groups[key]['updated']:
                     groups[key] = doc
     
-    # Convert to list and sort by priority (highest first)
     result = list(groups.values())
     result.sort(key=lambda x: (
         DOCUMENT_HIERARCHY.get(x['type'], {}).get('priority', 0),
         x['revision']
     ), reverse=True)
     
-    # Return top 12 most important
     return result[:12]
 
 # =============================================================================
-# SEARCH - FIXED
+# SEARCH
 # =============================================================================
 
 def is_arabic(text):
@@ -415,7 +484,7 @@ def search_documents(query, project_name=None):
     
     try: response = client.search(request)
     except Exception as e:
-        print(f"\u274C Vertex AI Search error: {e}")
+        print(f"Vertex AI Search error: {e}")
         return {'summary': f'Search error: {str(e)}', 'results': [], 'total': 0}
     
     results = []
@@ -461,57 +530,48 @@ def generate_enhanced_response(query, results, project_name):
         context_parts = []
         for i, r in enumerate(results[:5]):
             doc_info = DOCUMENT_HIERARCHY.get(r['docType'], {})
-            context_parts.append(f"""
-Document {i+1}: {r['title']}
-   Type: {doc_info.get('description', 'Document')} (Authority Level: {r['priority']})
-   Location: {r['link']}
-   Content: {' ... '.join(r['snippets'][:2])}
-""")
+            context_parts.append(f"Document {i+1}: {r['title']}\n   Type: {doc_info.get('description', 'Document')} (Priority: {r['priority']})\n   Path: {r['link']}\n   Content: {' ... '.join(r['snippets'][:2])}")
         
         prompt = f"""You are a Senior Technical Office Engineer AI assistant at Sigma Contractors.
-You help engineers quickly find accurate information from project documents.
 
 PROJECT: {project_name or 'All Projects'}
 QUESTION: {query}
 
 DOCUMENT AUTHORITY (highest to lowest):
-- CVI (Consultant Variation Instruction) - OVERRIDES ALL other documents
-- VO (Variation Order) - Changes to contract
-- Approved Shop Drawings - Latest revision is authoritative
-- RFI Responses - Official clarifications
-- MOMs - Recorded decisions
-- Specifications & BOQ - Technical requirements
-- Contract - Base reference
+- CVI - OVERRIDES ALL
+- VO - Changes to contract
+- Approved Shop Drawings
+- RFI Responses
+- MOMs
+- Specifications & BOQ
+- Contract
 
 RETRIEVED DOCUMENTS:
 {chr(10).join(context_parts)}
 
-RESPOND IN {lang.upper()}. Follow this exact format:
+RESPOND IN {lang.upper()}:
 
 **Answer:**
-Give a direct, specific answer in 1-2 sentences. Include the exact value, dimension, material, or decision found.
+Direct, specific answer in 1-2 sentences with exact values.
 
 **Key Details:**
-- List specific facts: dimensions, quantities, dates, revision numbers
-- If multiple documents discuss this, state which one takes precedence
-- Include any conditions or exceptions
+- Specific facts: dimensions, quantities, dates, revisions
+- State which document takes precedence if multiple exist
 
 **Source:**
-State the most authoritative document used (type + name + revision if available)
+Most authoritative document (type + name + revision)
 
-IMPORTANT RULES:
-1. Be SPECIFIC - give exact values, not vague answers
-2. If a CVI or VO exists on this topic, it OVERRIDES everything else
-3. Always mention revision numbers when available
-4. If documents conflict, explicitly state: "Per [higher authority doc], this supersedes [lower doc]"
-5. If information is NOT found, say: "Not found in indexed documents. Check [suggested folder]."
-6. Keep response concise - engineers need quick answers
+RULES:
+1. Be SPECIFIC with exact values
+2. CVI/VO OVERRIDES everything
+3. Mention revision numbers
+4. If not found: "Not found in indexed documents. Check [folder]."
 """
 
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        print(f"\u274C Gemini error: {e}")
+        print(f"Gemini error: {e}")
         return None
 
 # =============================================================================
@@ -521,7 +581,6 @@ IMPORTANT RULES:
 def list_folder_files(project_name, folder_path):
     bucket = storage_client.bucket(GCS_BUCKET)
     prefix = f"{project_name}/{folder_path}/" if folder_path else f"{project_name}/"
-    print(f"Listing: {prefix}")
     
     files = []
     blobs = bucket.list_blobs(prefix=prefix, delimiter='/')
@@ -538,7 +597,6 @@ def list_folder_files(project_name, folder_path):
             files.append({'name': folder_name, 'type': 'folder', 'path': prefix_obj})
     
     files.sort(key=lambda x: (0 if x['type'] == 'folder' else 1, x['name'].lower()))
-    print(f"Found {len([f for f in files if f['type'] == 'folder'])} folders, {len([f for f in files if f['type'] == 'file'])} files")
     return files
 
 def list_gcs_project_files(project_name):
@@ -608,7 +666,7 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.2', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v5.3', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
     
     if request.method == 'GET' and path == '/view':
         try:
@@ -668,7 +726,6 @@ def sync_drive_folder(request):
             data = request.get_json(silent=True) or {}
             query, project = data.get('query', ''), data.get('projectName', None)
             if not query: return (jsonify({'error': 'Missing query'}), 400, headers)
-            print(f"Search: '{query}' in project: {project or 'ALL'}")
             return (jsonify(search_documents(query, project)), 200, headers)
         except Exception as e: return (jsonify({'error': str(e)}), 500, headers)
     
