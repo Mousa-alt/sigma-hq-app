@@ -10,4 +10,4 @@ COPY main.py .
 ENV PORT=8080
 EXPOSE 8080
 
-CMD exec functions-framework --target=email_sync --port=$PORT
+CMD ["functions-framework", "--target=email_sync", "--port=8080"]
