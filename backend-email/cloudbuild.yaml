@@ -23,7 +23,7 @@ steps:
       - '--timeout'
       - '300'
       - '--set-env-vars'
-      - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=mail.sigmadd-egypt.com,IMAP_PORT=993,GCP_PROJECT=sigma-hq-technical-office,GCP_LOCATION=europe-west1'
+      - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=mail.sigmadd-egypt.com,IMAP_PORT=993,GCP_PROJECT=sigma-hq-technical-office,GCP_LOCATION=us-central1,FIREBASE_PROJECT=sigma-hq-38843,APP_ID=sigma-hq-production'
       - '--set-secrets'
       - 'EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest'
 
