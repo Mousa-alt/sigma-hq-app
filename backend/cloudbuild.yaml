@@ -1,0 +1,26 @@
+steps:
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'sigma-sync-worker'
+      - '--source'
+      - '.'
+      - '--region'
+      - 'europe-west1'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '4Gi'
+      - '--timeout'
+      - '540'
+      - '--set-env-vars'
+      - 'GEMINI_API_KEY=${_GEMINI_API_KEY}'
+    dir: 'backend'
+
+substitutions:
+  _GEMINI_API_KEY: ''
+
+options:
+  logging: CLOUD_LOGGING_ONLY
