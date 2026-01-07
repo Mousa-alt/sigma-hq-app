@@ -21,10 +21,14 @@ EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 GCS_BUCKET = os.environ.get('GCS_BUCKET', 'sigma-docs-repository')
 GCP_PROJECT = os.environ.get('GCP_PROJECT', 'sigma-hq-technical-office')
 GCP_LOCATION = os.environ.get('GCP_LOCATION', 'europe-west1')
+FIREBASE_PROJECT = os.environ.get('FIREBASE_PROJECT', 'sigma-hq-38843')
+APP_ID = os.environ.get('APP_ID', 'sigma-hq-production')
 
 # Initialize clients
 storage_client = storage.Client()
-db = firestore.Client()
+
+# Initialize Firestore pointing to Firebase project
+db = firestore.Client(project=FIREBASE_PROJECT)
 
 # Initialize Vertex AI (uses GCP credentials automatically)
 try:
@@ -94,7 +98,8 @@ def get_registered_projects():
     """Get list of registered projects from Firestore"""
     projects = []
     try:
-        docs = db.collection('projects').stream()
+        # Path: artifacts/{APP_ID}/public/data/projects
+        docs = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('projects').stream()
         for doc in docs:
             data = doc.to_dict()
             projects.append({
@@ -112,6 +117,10 @@ def classify_email_with_ai(subject, sender, body, projects):
     """Use Vertex AI Gemini to classify which project and document type"""
     if not VERTEX_AI_ENABLED:
         print("⚠️ Vertex AI not enabled, using fallback classification")
+        return fallback_classify(subject, projects)
+    
+    if not projects:
+        print("⚠️ No projects loaded, using fallback classification")
         return fallback_classify(subject, projects)
     
     try:
@@ -243,7 +252,7 @@ def save_email_to_gcs(email_data, project_name, doc_type):
 def get_last_processed_uid():
     """Get the last processed email UID from Firestore"""
     try:
-        doc = db.collection('email_sync').document('state').get()
+        doc = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('email_sync').document('state').get()
         if doc.exists:
             return doc.to_dict().get('last_uid', 0)
     except:
@@ -253,7 +262,7 @@ def get_last_processed_uid():
 def save_last_processed_uid(uid):
     """Save the last processed email UID to Firestore"""
     try:
-        db.collection('email_sync').document('state').set({
+        db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('email_sync').document('state').set({
             'last_uid': uid,
             'updated_at': datetime.now(timezone.utc).isoformat()
         }, merge=True)
@@ -263,7 +272,7 @@ def save_last_processed_uid(uid):
 def reset_processed_state():
     """Reset the last processed UID to reprocess emails"""
     try:
-        db.collection('email_sync').document('state').set({
+        db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('email_sync').document('state').set({
             'last_uid': 0,
             'updated_at': datetime.now(timezone.utc).isoformat(),
             'reset_reason': 'manual reset'
@@ -403,11 +412,13 @@ def email_sync(request):
     # Health check
     if request.method == 'GET':
         return (jsonify({
-            'status': 'Email Sync Worker v2.0',
+            'status': 'Email Sync Worker v2.1',
             'imap_server': IMAP_SERVER,
             'email_configured': bool(EMAIL_USER and EMAIL_PASS),
             'vertex_ai_enabled': VERTEX_AI_ENABLED,
-            'gcp_project': GCP_PROJECT
+            'gcp_project': GCP_PROJECT,
+            'firebase_project': FIREBASE_PROJECT,
+            'app_id': APP_ID
         }), 200, headers)
     
     # Process emails
