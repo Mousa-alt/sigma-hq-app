@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { SYNC_WORKER_URL } from '../config';
 import FolderPopup from './FolderPopup';
+import { parseFilename, getFileIcon, detectDocumentType, getDocTypeInfo } from '../utils/documentUtils';
 
 // Standard 12-folder structure
 const FOLDER_STRUCTURE = [
@@ -22,15 +23,16 @@ const FOLDER_STRUCTURE = [
 // Quick access sections
 const QUICK_ACCESS = [
   { id: 'approved-sd', label: 'Approved Shop Drawings', folder: '04-Shop Drawings/Approved', icon: 'check-circle', color: 'emerald' },
-  { id: 'mom', label: 'Minutes of Meeting', folder: '07-Correspondence/MOM', icon: 'users', color: 'blue' },
-  { id: 'progress', label: 'Progress Reports', folder: '06-Site Reports/Progress', icon: 'trending-up', color: 'purple' },
-  { id: 'invoices', label: 'Latest Invoices', folder: '05-Quantity Surveying/Invoices', icon: 'receipt', color: 'amber' },
+  { id: 'mom', label: 'Meeting Minutes', folder: '07-Correspondence/MOM', icon: 'users', color: 'purple' },
+  { id: 'progress', label: 'Progress Reports', folder: '06-Site Reports/Progress', icon: 'trending-up', color: 'blue' },
+  { id: 'invoices', label: 'Invoices', folder: '05-Quantity Surveying/Invoices', icon: 'receipt', color: 'amber' },
 ];
 
 export default function Vault({ project }) {
   const [loading, setLoading] = useState(false);
   const [activePopup, setActivePopup] = useState(null);
   const [recentFiles, setRecentFiles] = useState([]);
+  const [loadingRecent, setLoadingRecent] = useState(true);
 
   useEffect(() => {
     if (project) {
@@ -39,30 +41,100 @@ export default function Vault({ project }) {
   }, [project?.id]);
 
   const loadRecentFiles = async () => {
-    // In future, this would fetch recently modified files
-    setRecentFiles([
-      { name: '45_AGORA-CAI-Kitchen_Layout-MH-Rev_02.pdf', folder: 'Shop Drawings', date: '2 hours ago' },
-      { name: '15_AGORA-CAI-Invoice_015-FIN-Rev_00.pdf', folder: 'Invoices', date: '5 hours ago' },
-      { name: 'MOM_2026_01_05.pdf', folder: 'Correspondence', date: 'Yesterday' },
-    ]);
+    setLoadingRecent(true);
+    try {
+      // Try to get recent files from multiple folders
+      const foldersToCheck = [
+        '04-Shop Drawings',
+        '05-Quantity Surveying',
+        '07-Correspondence',
+        '06-Site Reports'
+      ];
+      
+      const allFiles = [];
+      
+      for (const folder of foldersToCheck) {
+        try {
+          const res = await fetch(`${SYNC_WORKER_URL}/files`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              projectName: project.name.replace(/\s+/g, '_'),
+              folderPath: folder
+            })
+          });
+          
+          if (res.ok) {
+            const data = await res.json();
+            const files = (data.files || []).filter(f => f.type === 'file');
+            files.forEach(f => {
+              f.folder = folder.split('-')[1]; // e.g., "Shop Drawings"
+            });
+            allFiles.push(...files);
+          }
+        } catch (e) {
+          // Continue with other folders
+        }
+      }
+      
+      // Sort by updated date and take top 5
+      allFiles.sort((a, b) => new Date(b.updated) - new Date(a.updated));
+      setRecentFiles(allFiles.slice(0, 5));
+    } catch (err) {
+      // Use demo files
+      setRecentFiles([
+        { name: '45_AGORA-GEM-Kitchen_Layout-MH-Rev_02.pdf', folder: 'Shop Drawings', updated: '2026-01-03T14:00:00Z' },
+        { name: '15_AGORA-GEM-Invoice_015-FIN-Rev_00.pdf', folder: 'Invoices', updated: '2026-01-05T09:00:00Z' },
+        { name: 'MOM_2026_01_05.pdf', folder: 'Correspondence', updated: '2026-01-05T17:00:00Z' },
+      ]);
+    } finally {
+      setLoadingRecent(false);
+    }
   };
 
   const getColorClasses = (color) => {
     const colors = {
-      blue: 'bg-blue-50 text-blue-500 border-blue-200',
-      indigo: 'bg-indigo-50 text-indigo-500 border-indigo-200',
-      violet: 'bg-violet-50 text-violet-500 border-violet-200',
-      purple: 'bg-purple-50 text-purple-500 border-purple-200',
-      emerald: 'bg-emerald-50 text-emerald-500 border-emerald-200',
-      amber: 'bg-amber-50 text-amber-500 border-amber-200',
-      sky: 'bg-sky-50 text-sky-500 border-sky-200',
-      green: 'bg-green-50 text-green-500 border-green-200',
-      red: 'bg-red-50 text-red-500 border-red-200',
-      teal: 'bg-teal-50 text-teal-500 border-teal-200',
-      pink: 'bg-pink-50 text-pink-500 border-pink-200',
-      slate: 'bg-slate-100 text-slate-500 border-slate-200',
+      blue: 'bg-blue-50 text-blue-500 border-blue-200 hover:border-blue-300',
+      indigo: 'bg-indigo-50 text-indigo-500 border-indigo-200 hover:border-indigo-300',
+      violet: 'bg-violet-50 text-violet-500 border-violet-200 hover:border-violet-300',
+      purple: 'bg-purple-50 text-purple-500 border-purple-200 hover:border-purple-300',
+      emerald: 'bg-emerald-50 text-emerald-500 border-emerald-200 hover:border-emerald-300',
+      amber: 'bg-amber-50 text-amber-500 border-amber-200 hover:border-amber-300',
+      sky: 'bg-sky-50 text-sky-500 border-sky-200 hover:border-sky-300',
+      green: 'bg-green-50 text-green-500 border-green-200 hover:border-green-300',
+      red: 'bg-red-50 text-red-500 border-red-200 hover:border-red-300',
+      teal: 'bg-teal-50 text-teal-500 border-teal-200 hover:border-teal-300',
+      pink: 'bg-pink-50 text-pink-500 border-pink-200 hover:border-pink-300',
+      slate: 'bg-slate-100 text-slate-500 border-slate-200 hover:border-slate-300',
     };
     return colors[color] || colors.slate;
+  };
+
+  const formatTimeAgo = (dateStr) => {
+    if (!dateStr) return '';
+    try {
+      const date = new Date(dateStr);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      
+      if (diffHours < 1) return 'Just now';
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    } catch {
+      return '';
+    }
+  };
+
+  const handleFileClick = (file) => {
+    if (file.url) {
+      window.open(file.url, '_blank');
+    } else if (file.path) {
+      const viewUrl = `${SYNC_WORKER_URL}/view?path=${encodeURIComponent(file.path)}`;
+      window.open(viewUrl, '_blank');
+    }
   };
 
   return (
@@ -71,7 +143,7 @@ export default function Vault({ project }) {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-lg font-semibold text-slate-900 mb-1">Project Documents</h2>
-          <p className="text-sm text-slate-500">Quick access to key folders and recent files</p>
+          <p className="text-sm text-slate-500">Browse and access all project files</p>
         </div>
         <button
           onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')}
@@ -101,23 +173,58 @@ export default function Vault({ project }) {
 
       {/* Recent Files */}
       <div className="mb-8">
-        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Recently Modified</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Recently Modified</h3>
+          <button 
+            onClick={loadRecentFiles}
+            className="text-[10px] text-blue-500 hover:text-blue-600"
+          >
+            Refresh
+          </button>
+        </div>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          {recentFiles.map((file, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer transition-colors border-b border-slate-100 last:border-0"
-            >
-              <div className="p-2 bg-blue-50 rounded-lg text-blue-500">
-                <Icon name="file-text" size={14} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-900 truncate">{file.name}</p>
-                <p className="text-[10px] text-slate-400">{file.folder} • {file.date}</p>
-              </div>
-              <Icon name="chevron-right" size={14} className="text-slate-300" />
+          {loadingRecent ? (
+            <div className="p-6 text-center">
+              <Icon name="loader-2" size={20} className="animate-spin text-slate-400 mx-auto" />
             </div>
-          ))}
+          ) : recentFiles.length === 0 ? (
+            <div className="p-6 text-center">
+              <Icon name="file" size={24} className="text-slate-300 mx-auto mb-2" />
+              <p className="text-sm text-slate-400">No recent files</p>
+            </div>
+          ) : (
+            recentFiles.map((file, i) => {
+              const parsed = parseFilename(file.name);
+              const docType = detectDocumentType(file.name, file.folder || '');
+              const typeInfo = getDocTypeInfo(docType);
+              
+              return (
+                <div
+                  key={i}
+                  onClick={() => handleFileClick(file)}
+                  className="flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer transition-colors border-b border-slate-100 last:border-0"
+                >
+                  <div className="p-2 bg-blue-50 rounded-lg text-blue-500">
+                    <Icon name={getFileIcon(file.name)} size={14} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className={`px-1 py-0.5 rounded text-[8px] font-semibold uppercase bg-${typeInfo.color}-100 text-${typeInfo.color}-700`}>
+                        {typeInfo.label}
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium text-slate-900 truncate">
+                      {parsed.description || file.name}
+                    </p>
+                    <p className="text-[10px] text-slate-400">
+                      {file.folder} • {formatTimeAgo(file.updated)}
+                    </p>
+                  </div>
+                  <Icon name="chevron-right" size={14} className="text-slate-300" />
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 
