@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, doc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from './firebase';
-import { APP_ID, SYNC_WORKER_URL, COLORS, TABS } from './config';
+import { APP_ID, SYNC_WORKER_URL, COLORS, TABS, BRANDING } from './config';
 
 // Components
 import Sidebar from './components/Sidebar';
@@ -199,6 +199,15 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {/* Floating Sigma icon - bottom right (visible when sidebar hidden) */}
+      <div className="fixed bottom-4 right-4 z-30 lg:hidden">
+        <img 
+          src={BRANDING.logo} 
+          alt="Sigma" 
+          className="w-10 h-10 object-contain opacity-50"
+        />
+      </div>
 
       {/* Bottom chat panel (project view only) */}
       {view === 'project' && (

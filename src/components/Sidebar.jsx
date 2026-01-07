@@ -21,9 +21,9 @@ export default function Sidebar({
         <img 
           src={BRANDING.logoWhite} 
           alt="Sigma" 
-          className="h-10 w-auto mb-4" 
+          className="w-full mb-4" 
         />
-        <p className="text-[10px] font-medium uppercase tracking-[0.2em]" style={{ color: COLORS.blue }}>
+        <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-white/70">
           {BRANDING.title}
         </p>
       </div>
@@ -66,7 +66,7 @@ export default function Sidebar({
 
       {/* Chat with all projects */}
       <div className="border-t border-white/5 bg-black/20 p-4">
-        <div className="flex items-center gap-2 text-blue-400 mb-3">
+        <div className="flex items-center gap-2 text-white/70 mb-3">
           <Icon name="message-circle" size={14} /> 
           <span className="text-[10px] font-medium uppercase tracking-widest">Chat with all projects</span>
         </div>
