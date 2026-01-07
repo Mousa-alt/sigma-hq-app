@@ -4,16 +4,16 @@ import FolderPopup from './FolderPopup';
 
 export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow, onUpdateStatus }) {
   const [tasks, setTasks] = useState([
-    { id: 1, text: 'Review shop drawings for Kitchen area', done: false },
-    { id: 2, text: 'Send RFI response to consultant', done: false },
-    { id: 3, text: 'Update BOQ with variation orders', done: true },
+    { id: 1, text: 'Review shop drawings for Kitchen area', done: false, source: 'manual' },
+    { id: 2, text: 'Send RFI response to consultant', done: false, source: 'manual' },
+    { id: 3, text: 'Update BOQ with variation orders', done: true, source: 'manual' },
   ]);
   const [newTask, setNewTask] = useState('');
   const [activePopup, setActivePopup] = useState(null);
 
   const addTask = () => {
     if (!newTask.trim()) return;
-    setTasks([...tasks, { id: Date.now(), text: newTask, done: false }]);
+    setTasks([...tasks, { id: Date.now(), text: newTask, done: false, source: 'manual' }]);
     setNewTask('');
   };
 
@@ -49,6 +49,17 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     return `${diffDays}d ago (${timeStr})`;
   };
 
+  // Format date for display
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '—';
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
+  };
+
   // Quick link configurations matching actual Drive structure
   const quickLinks = [
     { id: 'contract', label: 'Contract', icon: 'file-text', color: 'blue', folder: '01.Contract_Documents' },
@@ -70,6 +81,17 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     emerald: 'hover:border-emerald-300 hover:bg-emerald-50 text-emerald-500',
     purple: 'hover:border-purple-300 hover:bg-purple-50 text-purple-500',
     orange: 'hover:border-orange-300 hover:bg-orange-50 text-orange-500',
+  };
+
+  // Get task source icon
+  const getSourceIcon = (source) => {
+    switch (source) {
+      case 'ai': return 'sparkles';
+      case 'email': return 'mail';
+      case 'mom': return 'users';
+      case 'fireflies': return 'mic';
+      default: return null;
+    }
   };
 
   return (
@@ -104,7 +126,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       </div>
 
       {/* Status & Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="p-5 bg-slate-50 rounded-xl border border-slate-100">
           <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-2">Status</p>
           <div className="flex items-center gap-2">
@@ -117,8 +139,12 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
           <span className="text-2xl font-semibold text-slate-900">277</span>
         </div>
         <div className="p-5 bg-slate-50 rounded-xl border border-slate-100">
-          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-2">Area</p>
-          <span className="text-2xl font-semibold text-slate-900">{project?.area || '—'} <span className="text-sm font-normal text-slate-400">m²</span></span>
+          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-2">Start Date</p>
+          <span className="text-sm font-semibold text-slate-900">{formatDate(project?.startDate)}</span>
+        </div>
+        <div className="p-5 bg-slate-50 rounded-xl border border-slate-100">
+          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-2">End Date</p>
+          <span className="text-sm font-semibold text-slate-900">{formatDate(project?.endDate)}</span>
         </div>
       </div>
 
@@ -139,9 +165,14 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         </div>
       </div>
 
-      {/* Tasks */}
+      {/* Tasks Hub */}
       <div>
-        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-4">Tasks</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Tasks Hub</h3>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] text-slate-400 bg-slate-100 px-2 py-1 rounded-full">AI extraction coming soon</span>
+          </div>
+        </div>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           {/* Add task input */}
           <div className="p-4 border-b border-slate-100 flex gap-3">
@@ -174,6 +205,12 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
                 <span className={`flex-1 text-sm ${task.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
                   {task.text}
                 </span>
+                {getSourceIcon(task.source) && (
+                  <span className="text-[9px] text-slate-400 flex items-center gap-1">
+                    <Icon name={getSourceIcon(task.source)} size={10} />
+                    {task.source.toUpperCase()}
+                  </span>
+                )}
                 <button 
                   onClick={() => deleteTask(task.id)}
                   className="p-1 text-slate-400 hover:text-red-500 transition-colors"
@@ -189,14 +226,21 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
             )}
           </div>
         </div>
-      </div>
-
-      {/* Recent Actions (placeholder for WhatsApp/Outlook integration) */}
-      <div>
-        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-4">Recent Actions</h3>
-        <div className="bg-slate-50 border border-slate-100 rounded-xl p-6 text-center">
-          <Icon name="inbox" size={24} className="mx-auto mb-2 text-slate-300" />
-          <p className="text-sm text-slate-400">WhatsApp & Outlook integration coming soon</p>
+        
+        {/* Future integrations teaser */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <span className="text-[9px] text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-full flex items-center gap-1">
+            <Icon name="mail" size={10} /> Outlook
+          </span>
+          <span className="text-[9px] text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-full flex items-center gap-1">
+            <Icon name="users" size={10} /> MOMs
+          </span>
+          <span className="text-[9px] text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-full flex items-center gap-1">
+            <Icon name="mic" size={10} /> Fireflies
+          </span>
+          <span className="text-[9px] text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-full flex items-center gap-1">
+            <Icon name="check-square" size={10} /> OneDrive To-Do
+          </span>
         </div>
       </div>
 

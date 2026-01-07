@@ -7,7 +7,8 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
     name: '',
     location: 'Cairo',
     driveLink: '',
-    area: ''
+    startDate: '',
+    endDate: ''
   });
 
   if (!isOpen) return null;
@@ -19,7 +20,7 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
       return;
     }
     onSubmit(formData);
-    setFormData({ name: '', location: 'Cairo', driveLink: '', area: '' });
+    setFormData({ name: '', location: 'Cairo', driveLink: '', startDate: '', endDate: '' });
   };
 
   return (
@@ -81,15 +82,25 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
             </p>
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-2">Area (m²) - Optional</label>
-            <input
-              type="number"
-              value={formData.area}
-              onChange={(e) => setFormData({ ...formData, area: e.target.value })}
-              placeholder="e.g., 5000"
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">Start Date</label>
+              <input
+                type="date"
+                value={formData.startDate}
+                onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">End Date</label>
+              <input
+                type="date"
+                value={formData.endDate}
+                onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+              />
+            </div>
           </div>
 
           {/* Actions */}
