@@ -36,8 +36,8 @@ const FOLDER_ICONS = {
   'material': { icon: 'box', color: 'amber' },
 };
 
-// Extended document type config
-const LATEST_DOC_CONFIG = {
+// Document type config
+const DOC_TYPE_CONFIG = {
   cvi: { icon: 'alert-circle', color: 'red', label: 'CVI' },
   vo: { icon: 'file-signature', color: 'orange', label: 'VO' },
   approval: { icon: 'check-circle', color: 'green', label: 'Approval' },
@@ -48,6 +48,33 @@ const LATEST_DOC_CONFIG = {
   submittal: { icon: 'package', color: 'amber', label: 'Submittal' },
   correspondence: { icon: 'mail', color: 'sky', label: 'Letter' },
   report: { icon: 'clipboard-list', color: 'teal', label: 'Report' },
+  specification: { icon: 'book-open', color: 'violet', label: 'Spec' },
+  drawing: { icon: 'compass', color: 'indigo', label: 'Drawing' },
+  contract: { icon: 'file-text', color: 'blue', label: 'Contract' },
+  boq: { icon: 'calculator', color: 'emerald', label: 'BOQ' },
+  other: { icon: 'file', color: 'slate', label: 'Document' },
+};
+
+// Subject/discipline labels
+const SUBJECT_LABELS = {
+  flooring: 'Flooring',
+  kitchen: 'Kitchen',
+  bathroom: 'Bathroom',
+  ceiling: 'Ceiling',
+  wall: 'Wall',
+  door: 'Door',
+  window: 'Window',
+  electrical: 'Electrical',
+  mechanical: 'Mechanical',
+  plumbing: 'Plumbing',
+  fire: 'Fire',
+  furniture: 'Furniture',
+  signage: 'Signage',
+  landscape: 'Landscape',
+  structure: 'Structure',
+  architectural: 'Architectural',
+  mep: 'MEP',
+  general: 'General',
 };
 
 const getFolderStyle = (folderName) => {
@@ -59,27 +86,6 @@ const getFolderStyle = (folderName) => {
 };
 
 const cleanFolderName = (name) => name.replace(/^\d+[\.-_]\s*/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
-
-// Extract the important part of filename (usually at the end)
-const getDisplayName = (filename) => {
-  // Remove extension
-  const nameWithoutExt = filename.replace(/\.[^.]+$/, '');
-  
-  // If name is short enough, show it all
-  if (nameWithoutExt.length <= 25) return nameWithoutExt;
-  
-  // Split by common separators
-  const parts = nameWithoutExt.split(/[-_\s]+/);
-  
-  // Take last 3-4 parts (usually the most important)
-  if (parts.length > 3) {
-    const importantParts = parts.slice(-3).join(' ');
-    if (importantParts.length <= 25) return '…' + importantParts;
-  }
-  
-  // Otherwise show last 25 chars
-  return '…' + nameWithoutExt.slice(-25);
-};
 
 export default function Vault({ project }) {
   const [folders, setFolders] = useState([]);
@@ -152,23 +158,6 @@ export default function Vault({ project }) {
     slate: 'bg-slate-100 text-slate-600',
   };
 
-  const formatTimeAgo = (dateStr) => {
-    if (!dateStr) return '';
-    try {
-      const date = new Date(dateStr);
-      const now = new Date();
-      const diffMs = now - date;
-      const diffMins = Math.floor(diffMs / 60000);
-      const diffHours = Math.floor(diffMs / 3600000);
-      const diffDays = Math.floor(diffMs / 86400000);
-      if (diffMins < 1) return 'Just now';
-      if (diffMins < 60) return `${diffMins}m ago`;
-      if (diffHours < 24) return `${diffHours}h ago`;
-      if (diffDays < 7) return `${diffDays}d ago`;
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    } catch { return ''; }
-  };
-
   const handleLatestDocClick = (doc) => {
     const filePath = `${project.name.replace(/\s+/g, '_')}/${doc.path}`;
     setViewingFile({ name: doc.name, path: filePath });
@@ -191,9 +180,9 @@ export default function Vault({ project }) {
         </div>
       </div>
 
-      {/* Latest Documents - Horizontal scroll */}
+      {/* Latest Documents - by Subject + Revision */}
       <div className="mb-8">
-        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Latest Documents</h3>
+        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Latest Revisions</h3>
         {loadingLatest ? (
           <div className="bg-white border border-slate-200 rounded-xl p-6 text-center">
             <Icon name="loader-2" size={20} className="animate-spin text-slate-400 mx-auto" />
@@ -207,34 +196,47 @@ export default function Vault({ project }) {
         ) : (
           <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 -mx-2 px-2">
             {latestDocs.map((doc, i) => {
-              const config = LATEST_DOC_CONFIG[doc.type] || { icon: 'file', color: 'slate', label: doc.typeLabel };
-              const parsed = parseFilename(doc.name);
-              const displayName = getDisplayName(doc.name);
+              const config = DOC_TYPE_CONFIG[doc.type] || DOC_TYPE_CONFIG.other;
+              const subjectLabel = SUBJECT_LABELS[doc.subject] || doc.subject;
               
               return (
                 <button
                   key={i}
                   onClick={() => handleLatestDocClick(doc)}
-                  className="flex-shrink-0 w-48 p-3 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
+                  className="flex-shrink-0 w-52 p-3 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
                 >
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className={`p-1.5 rounded-lg ${colorClasses[config.color] || 'bg-slate-100 text-slate-500'}`}>
-                      <Icon name={config.icon} size={12} />
+                  {/* Header: Type + Subject */}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <div className={`p-1 rounded ${colorClasses[config.color] || 'bg-slate-100 text-slate-500'}`}>
+                        <Icon name={config.icon} size={10} />
+                      </div>
+                      <span className="text-[9px] font-bold uppercase text-slate-500">{config.label}</span>
                     </div>
-                    <span className="text-[9px] font-bold uppercase text-slate-400">{config.label}</span>
+                    {doc.revisionStr && (
+                      <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                        {doc.revisionStr}
+                      </span>
+                    )}
                   </div>
                   
-                  {/* Document name - shows end part */}
-                  <p 
-                    className="text-xs font-medium text-slate-800 mb-2 leading-tight line-clamp-2"
-                    title={doc.name}
-                  >
-                    {displayName}
+                  {/* Subject - the main info */}
+                  <p className="text-sm font-semibold text-slate-900 mb-1 capitalize">
+                    {subjectLabel}
                   </p>
                   
+                  {/* Filename */}
+                  <p 
+                    className="text-[10px] text-slate-500 truncate mb-2"
+                    title={doc.name}
+                  >
+                    {doc.name}
+                  </p>
+                  
+                  {/* Footer */}
                   <div className="flex items-center justify-between text-[9px] text-slate-400">
-                    <span>{formatTimeAgo(doc.updated)}</span>
-                    {parsed.revision && <span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold text-slate-600">R{parsed.revision}</span>}
+                    <span>{doc.updated ? new Date(doc.updated).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</span>
+                    <Icon name="chevron-right" size={10} className="text-slate-300 group-hover:text-blue-500" />
                   </div>
                 </button>
               );

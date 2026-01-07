@@ -148,11 +148,11 @@ def sync_project(drive_url, project_name):
     prefix = f"{project_name}/"
     max_size = MAX_FILE_SIZE_MB * 1024 * 1024
     
-    print(f"🚀 Starting sync: {project_name}")
+    print(f"\U0001F680 Starting sync: {project_name}")
     drive_files = list_drive_files(extract_folder_id(drive_url))
-    print(f"📋 Found {len(drive_files)} files in Drive")
+    print(f"\U0001F4CB Found {len(drive_files)} files in Drive")
     gcs_files = list_gcs_files(bucket, prefix)
-    print(f"📋 Found {len(gcs_files)} files in GCS")
+    print(f"\U0001F4CB Found {len(gcs_files)} files in GCS")
     
     stats = {'added': 0, 'updated': 0, 'deleted': 0, 'skipped': 0, 'error': None}
 
@@ -160,7 +160,7 @@ def sync_project(drive_url, project_name):
         for path in list(gcs_files.keys()):
             if path not in drive_files and '_extracted/' not in path:
                 bucket.blob(f"{prefix}{path}").delete()
-                print(f"🗑️ Deleted: {path}")
+                print(f"\U0001F5D1 Deleted: {path}")
                 stats['deleted'] += 1
 
         for path, info in drive_files.items():
@@ -179,7 +179,7 @@ def sync_project(drive_url, project_name):
                 except: pass
             
             if needs_sync:
-                print(f"📥 Processing: {info['name']}")
+                print(f"\U0001F4E5 Processing: {info['name']}")
                 req = drive_service.files().get_media(fileId=info['id'])
                 fh = io.BytesIO()
                 dl = MediaIoBaseDownload(fh, req)
@@ -198,12 +198,12 @@ def sync_project(drive_url, project_name):
                 
                 if is_update: stats['updated'] += 1
                 else: stats['added'] += 1
-                print(f"✅ {'Updated' if is_update else 'Uploaded'}: {path}")
+                print(f"\u2705 {'Updated' if is_update else 'Uploaded'}: {path}")
 
-        print(f"🎉 DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Skipped:{stats['skipped']}")
+        print(f"\U0001F389 DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Skipped:{stats['skipped']}")
     except Exception as e:
         stats['error'] = str(e)
-        print(f"❌ Sync error: {e}")
+        print(f"\u274C Sync error: {e}")
     
     return stats
 
@@ -219,42 +219,178 @@ def delete_project_files(project_name):
     for blob in blobs:
         blob.delete()
         deleted_count += 1
-        print(f"🗑️ Deleted: {blob.name}")
-    print(f"🎉 Deleted {deleted_count} files for project {project_name}")
+        print(f"\U0001F5D1 Deleted: {blob.name}")
+    print(f"\U0001F389 Deleted {deleted_count} files for project {project_name}")
     return {'deleted': deleted_count, 'project': project_name}
 
 # =============================================================================
-# LATEST DOCUMENTS BY TYPE
+# LATEST DOCUMENTS - SMART (by Subject + Revision)
 # =============================================================================
 
+def extract_revision(filename):
+    """Extract revision number from filename. Returns (rev_number, rev_string)"""
+    lower = filename.lower()
+    
+    # Common patterns: Rev03, Rev.03, Rev-03, R03, Rev 03, Revision 3
+    patterns = [
+        r'rev[._\-\s]?(\d+)',      # Rev03, Rev.03, Rev-03, Rev 03
+        r'revision[._\-\s]?(\d+)', # Revision03
+        r'\br(\d+)\b',              # R03 (standalone)
+        r'_r(\d+)_',                # _R03_
+        r'-r(\d+)-',                # -R03-
+        r'v(\d+)(?:\.\d+)?(?:[_\-\s]|$)',  # V03, V3.0
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, lower)
+        if match:
+            rev_num = int(match.group(1))
+            return rev_num, f"Rev {str(rev_num).zfill(2)}"
+    
+    return 0, None
+
+def extract_subject(filename, path):
+    """Extract subject/discipline from filename (flooring, kitchen, MEP, etc.)"""
+    lower = filename.lower()
+    lower_path = path.lower()
+    
+    # Common construction disciplines/subjects
+    subjects = {
+        'flooring': ['floor', 'flooring', 'tile', 'carpet', 'vinyl', 'marble', 'granite', 'porcelain'],
+        'kitchen': ['kitchen', 'ktc', 'kitch', 'pantry', 'k-'],
+        'bathroom': ['bathroom', 'bath', 'toilet', 'wc', 'lavatory', 'washroom', 'restroom'],
+        'ceiling': ['ceiling', 'clg', 'gypsum', 'soffit', 'bulkhead'],
+        'wall': ['wall', 'partition', 'drywall', 'cladding'],
+        'door': ['door', 'dr-', 'entrance', 'gate'],
+        'window': ['window', 'glazing', 'curtain wall', 'facade'],
+        'electrical': ['electrical', 'elec', 'elect', 'lighting', 'power', 'lv', 'mv', 'db', 'panel'],
+        'mechanical': ['mechanical', 'mech', 'hvac', 'ac', 'ahu', 'fcu', 'duct', 'diffuser'],
+        'plumbing': ['plumbing', 'plumb', 'drainage', 'sanitary', 'water', 'pipe'],
+        'fire': ['fire', 'sprinkler', 'smoke', 'alarm', 'firefighting', 'ff'],
+        'furniture': ['furniture', 'furn', 'ff&e', 'ffe', 'joinery', 'millwork', 'casework'],
+        'signage': ['signage', 'sign', 'wayfinding', 'graphics'],
+        'landscape': ['landscape', 'hardscape', 'softscape', 'irrigation', 'planting'],
+        'structure': ['structural', 'struct', 'steel', 'concrete', 'rebar', 'foundation'],
+        'architectural': ['architectural', 'arch', 'layout', 'plan', 'section', 'elevation'],
+    }
+    
+    # Check filename first, then path
+    for subject, keywords in subjects.items():
+        for kw in keywords:
+            if kw in lower or kw in lower_path:
+                return subject
+    
+    # Try to extract from filename pattern like SD-FL-001 (FL = flooring)
+    code_match = re.search(r'[_\-]([a-z]{2,4})[_\-]', lower)
+    if code_match:
+        code = code_match.group(1)
+        code_map = {
+            'fl': 'flooring', 'flr': 'flooring',
+            'kt': 'kitchen', 'ktc': 'kitchen', 'k': 'kitchen',
+            'bt': 'bathroom', 'wc': 'bathroom',
+            'clg': 'ceiling', 'cl': 'ceiling',
+            'wl': 'wall', 'wll': 'wall',
+            'dr': 'door', 'dor': 'door',
+            'el': 'electrical', 'elec': 'electrical',
+            'mech': 'mechanical', 'mc': 'mechanical', 'hvac': 'mechanical',
+            'pl': 'plumbing', 'plb': 'plumbing',
+            'fr': 'furniture', 'frn': 'furniture',
+            'ar': 'architectural', 'arch': 'architectural',
+            'st': 'structure', 'str': 'structure',
+            'mep': 'mep',
+        }
+        if code in code_map:
+            return code_map[code]
+    
+    return 'general'
+
+def is_valid_document(filename):
+    """Filter out non-document files like fonts, system files, etc."""
+    lower = filename.lower()
+    ext = os.path.splitext(lower)[1]
+    
+    # Valid document extensions only
+    valid_ext = {'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'}
+    if ext not in valid_ext:
+        return False
+    
+    # Skip obvious non-documents
+    skip_patterns = [
+        'font', 'arial', 'calibri', 'times', 'helvetica',  # Fonts
+        'template', 'blank', 'empty',  # Templates
+        'backup', 'copy of', 'old_', '~$',  # Backups
+        'desktop.ini', 'thumbs.db', '.ds_store',  # System files
+    ]
+    
+    for pattern in skip_patterns:
+        if pattern in lower:
+            return False
+    
+    return True
+
 def get_latest_by_type(project_name):
+    """Get latest documents - grouped by TYPE and SUBJECT, sorted by REVISION"""
     bucket = storage_client.bucket(GCS_BUCKET)
     prefix = f"{project_name}/"
-    # Show more document types
-    target_types = ['mom', 'shop_drawing', 'cvi', 'invoice', 'rfi', 'submittal', 'correspondence', 'report', 'vo', 'approval']
-    latest = {t: None for t in target_types}
+    
+    # Collect all valid documents
+    all_docs = []
     
     for blob in bucket.list_blobs(prefix=prefix):
-        if blob.name.endswith('/') or '_extracted/' in blob.name: continue
+        if blob.name.endswith('/') or '_extracted/' in blob.name:
+            continue
+        
         filename = os.path.basename(blob.name)
+        
+        # Skip invalid files (fonts, system files, etc.)
+        if not is_valid_document(filename):
+            continue
+        
         rel_path = blob.name[len(prefix):]
         doc_type = detect_document_type(filename, rel_path)
+        subject = extract_subject(filename, rel_path)
+        rev_num, rev_str = extract_revision(filename)
         
-        if doc_type in target_types:
-            file_data = {
-                'name': filename, 'path': rel_path, 'fullPath': blob.name,
-                'updated': blob.updated.isoformat() if blob.updated else '',
-                'size': blob.size, 'type': doc_type,
-                'typeLabel': DOCUMENT_HIERARCHY.get(doc_type, {}).get('label', 'Document'),
-                'typeDescription': DOCUMENT_HIERARCHY.get(doc_type, {}).get('description', 'Document')
-            }
-            if latest[doc_type] is None: latest[doc_type] = file_data
-            elif blob.updated and latest[doc_type].get('updated'):
-                if blob.updated.isoformat() > latest[doc_type]['updated']: latest[doc_type] = file_data
+        all_docs.append({
+            'name': filename,
+            'path': rel_path,
+            'fullPath': blob.name,
+            'updated': blob.updated.isoformat() if blob.updated else '',
+            'size': blob.size,
+            'type': doc_type,
+            'subject': subject,
+            'revision': rev_num,
+            'revisionStr': rev_str,
+            'typeLabel': DOCUMENT_HIERARCHY.get(doc_type, {}).get('label', 'Document'),
+            'typeDescription': DOCUMENT_HIERARCHY.get(doc_type, {}).get('description', 'Document')
+        })
     
-    result = [v for v in latest.values() if v is not None]
-    result.sort(key=lambda x: DOCUMENT_HIERARCHY.get(x['type'], {}).get('priority', 0), reverse=True)
-    return result
+    # Group by type+subject, keep highest revision
+    groups = {}
+    for doc in all_docs:
+        # Key: type + subject (e.g., "shop_drawing_flooring")
+        key = f"{doc['type']}_{doc['subject']}"
+        
+        if key not in groups:
+            groups[key] = doc
+        else:
+            # Keep the one with higher revision
+            if doc['revision'] > groups[key]['revision']:
+                groups[key] = doc
+            # If same revision, keep more recently updated
+            elif doc['revision'] == groups[key]['revision']:
+                if doc['updated'] > groups[key]['updated']:
+                    groups[key] = doc
+    
+    # Convert to list and sort by priority (highest first)
+    result = list(groups.values())
+    result.sort(key=lambda x: (
+        DOCUMENT_HIERARCHY.get(x['type'], {}).get('priority', 0),
+        x['revision']
+    ), reverse=True)
+    
+    # Return top 12 most important
+    return result[:12]
 
 # =============================================================================
 # SEARCH - FIXED
@@ -279,7 +415,7 @@ def search_documents(query, project_name=None):
     
     try: response = client.search(request)
     except Exception as e:
-        print(f"❌ Vertex AI Search error: {e}")
+        print(f"\u274C Vertex AI Search error: {e}")
         return {'summary': f'Search error: {str(e)}', 'results': [], 'total': 0}
     
     results = []
@@ -326,7 +462,7 @@ def generate_enhanced_response(query, results, project_name):
         for i, r in enumerate(results[:5]):
             doc_info = DOCUMENT_HIERARCHY.get(r['docType'], {})
             context_parts.append(f"""
-📄 Document {i+1}: {r['title']}
+Document {i+1}: {r['title']}
    Type: {doc_info.get('description', 'Document')} (Authority Level: {r['priority']})
    Location: {r['link']}
    Content: {' ... '.join(r['snippets'][:2])}
@@ -339,32 +475,30 @@ PROJECT: {project_name or 'All Projects'}
 QUESTION: {query}
 
 DOCUMENT AUTHORITY (highest to lowest):
-• CVI (Consultant Variation Instruction) - OVERRIDES ALL other documents
-• VO (Variation Order) - Changes to contract
-• Approved Shop Drawings - Latest revision is authoritative
-• RFI Responses - Official clarifications
-• MOMs - Recorded decisions
-• Specifications & BOQ - Technical requirements
-• Contract - Base reference
+- CVI (Consultant Variation Instruction) - OVERRIDES ALL other documents
+- VO (Variation Order) - Changes to contract
+- Approved Shop Drawings - Latest revision is authoritative
+- RFI Responses - Official clarifications
+- MOMs - Recorded decisions
+- Specifications & BOQ - Technical requirements
+- Contract - Base reference
 
 RETRIEVED DOCUMENTS:
 {chr(10).join(context_parts)}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RESPOND IN {lang.upper()}. Follow this exact format:
 
 **Answer:**
 Give a direct, specific answer in 1-2 sentences. Include the exact value, dimension, material, or decision found.
 
 **Key Details:**
-• List specific facts: dimensions, quantities, dates, revision numbers
-• If multiple documents discuss this, state which one takes precedence
-• Include any conditions or exceptions
+- List specific facts: dimensions, quantities, dates, revision numbers
+- If multiple documents discuss this, state which one takes precedence
+- Include any conditions or exceptions
 
 **Source:**
 State the most authoritative document used (type + name + revision if available)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 IMPORTANT RULES:
 1. Be SPECIFIC - give exact values, not vague answers
 2. If a CVI or VO exists on this topic, it OVERRIDES everything else
@@ -377,7 +511,7 @@ IMPORTANT RULES:
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        print(f"❌ Gemini error: {e}")
+        print(f"\u274C Gemini error: {e}")
         return None
 
 # =============================================================================
@@ -387,7 +521,7 @@ IMPORTANT RULES:
 def list_folder_files(project_name, folder_path):
     bucket = storage_client.bucket(GCS_BUCKET)
     prefix = f"{project_name}/{folder_path}/" if folder_path else f"{project_name}/"
-    print(f"📂 Listing: {prefix}")
+    print(f"Listing: {prefix}")
     
     files = []
     blobs = bucket.list_blobs(prefix=prefix, delimiter='/')
@@ -404,7 +538,7 @@ def list_folder_files(project_name, folder_path):
             files.append({'name': folder_name, 'type': 'folder', 'path': prefix_obj})
     
     files.sort(key=lambda x: (0 if x['type'] == 'folder' else 1, x['name'].lower()))
-    print(f"📋 Found {len([f for f in files if f['type'] == 'folder'])} folders, {len([f for f in files if f['type'] == 'file'])} files")
+    print(f"Found {len([f for f in files if f['type'] == 'folder'])} folders, {len([f for f in files if f['type'] == 'file'])} files")
     return files
 
 def list_gcs_project_files(project_name):
@@ -458,7 +592,7 @@ Format: ## Layout Changes, ## Added Elements, ## Removed Elements, ## Specificat
         response = model.generate_content([prompt, {'mime_type': mime1, 'data': base64.standard_b64encode(content1).decode('utf-8')}, {'mime_type': mime2, 'data': base64.standard_b64encode(content2).decode('utf-8')}])
         return {'comparison': response.text, 'file1': file1_name, 'file2': file2_name}
     except Exception as e:
-        print(f"❌ Compare error: {e}")
+        print(f"Compare error: {e}")
         return {'error': str(e)}
 
 # =============================================================================
@@ -474,7 +608,7 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.1', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v5.2', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
     
     if request.method == 'GET' and path == '/view':
         try:
@@ -534,7 +668,7 @@ def sync_drive_folder(request):
             data = request.get_json(silent=True) or {}
             query, project = data.get('query', ''), data.get('projectName', None)
             if not query: return (jsonify({'error': 'Missing query'}), 400, headers)
-            print(f"🔍 Search: '{query}' in project: {project or 'ALL'}")
+            print(f"Search: '{query}' in project: {project or 'ALL'}")
             return (jsonify(search_documents(query, project)), 200, headers)
         except Exception as e: return (jsonify({'error': str(e)}), 500, headers)
     
