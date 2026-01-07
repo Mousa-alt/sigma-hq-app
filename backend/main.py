@@ -400,6 +400,45 @@ def get_latest_by_type(project_name):
     }
 
 # =============================================================================
+# EMAIL FUNCTIONS
+# =============================================================================
+
+def get_project_emails(project_name, limit=10):
+    """Get recent emails for a project from GCS"""
+    bucket = storage_client.bucket(GCS_BUCKET)
+    folder_name = project_name.replace(' ', '-')
+    prefix = f"{folder_name}/09-Correspondence/"
+    
+    emails = []
+    
+    for blob in bucket.list_blobs(prefix=prefix):
+        if not blob.name.endswith('.json'):
+            continue
+        if '_attachments/' in blob.name:
+            continue
+        
+        try:
+            content = blob.download_as_string()
+            email_data = json.loads(content)
+            emails.append({
+                'subject': email_data.get('subject', 'No Subject'),
+                'from': email_data.get('from', 'Unknown'),
+                'to': email_data.get('to', ''),
+                'date': email_data.get('date', ''),
+                'type': email_data.get('classified_type', 'correspondence'),
+                'path': blob.name,
+                'hasAttachments': len(email_data.get('attachments', [])) > 0
+            })
+        except Exception as e:
+            print(f"Error reading email {blob.name}: {e}")
+            continue
+    
+    # Sort by date descending
+    emails.sort(key=lambda x: x.get('date', ''), reverse=True)
+    
+    return emails[:limit]
+
+# =============================================================================
 # SEARCH
 # =============================================================================
 
@@ -594,7 +633,16 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.5', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v5.6', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+    
+    if request.method == 'GET' and path == '/emails':
+        try:
+            project = request.args.get('project', '')
+            limit = int(request.args.get('limit', '10'))
+            if not project: return (jsonify({'error': 'Missing project parameter'}), 400, headers)
+            emails = get_project_emails(project, limit)
+            return (jsonify({'emails': emails, 'count': len(emails), 'project': project}), 200, headers)
+        except Exception as e: return (jsonify({'error': str(e)}), 500, headers)
     
     if request.method == 'GET' and path == '/view':
         try:
