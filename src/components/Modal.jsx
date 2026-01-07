@@ -8,7 +8,8 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
     location: 'Cairo',
     driveLink: '',
     startDate: '',
-    endDate: ''
+    expectedEndDate: '',
+    completionDate: ''
   });
 
   if (!isOpen) return null;
@@ -20,29 +21,24 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
       return;
     }
     onSubmit(formData);
-    setFormData({ name: '', location: 'Cairo', driveLink: '', startDate: '', endDate: '' });
+    setFormData({ name: '', location: 'Cairo', driveLink: '', startDate: '', expectedEndDate: '', completionDate: '' });
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in">
-        {/* Header */}
         <div className="p-6 border-b border-slate-100">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold text-slate-900">Register New Project</h2>
               <p className="text-sm text-slate-500 mt-1">Connect a Google Drive folder to sync documents</p>
             </div>
-            <button 
-              onClick={onClose}
-              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-            >
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
               <Icon name="x" size={20} className="text-slate-400" />
             </button>
           </div>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-2">Project Name</label>
@@ -82,28 +78,36 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-2">Start Date</label>
               <input
                 type="date"
                 value={formData.startDate}
                 onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+                className="w-full px-3 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-2">End Date</label>
+              <label className="block text-xs font-medium text-slate-700 mb-2">Expected End</label>
               <input
                 type="date"
-                value={formData.endDate}
-                onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+                value={formData.expectedEndDate}
+                onChange={(e) => setFormData({ ...formData, expectedEndDate: e.target.value })}
+                className="w-full px-3 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">Completion</label>
+              <input
+                type="date"
+                value={formData.completionDate}
+                onChange={(e) => setFormData({ ...formData, completionDate: e.target.value })}
+                className="w-full px-3 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
               />
             </div>
           </div>
 
-          {/* Actions */}
           <div className="flex gap-3 pt-4">
             <button
               type="button"
@@ -119,15 +123,9 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
               style={{ backgroundColor: COLORS.navy }}
             >
               {loading ? (
-                <>
-                  <Icon name="loader-2" size={16} className="animate-spin" />
-                  Creating...
-                </>
+                <><Icon name="loader-2" size={16} className="animate-spin" />Creating...</>
               ) : (
-                <>
-                  <Icon name="plus" size={16} />
-                  Create Project
-                </>
+                <><Icon name="plus" size={16} />Create Project</>
               )}
             </button>
           </div>
