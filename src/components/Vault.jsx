@@ -36,13 +36,18 @@ const FOLDER_ICONS = {
   'material': { icon: 'box', color: 'amber' },
 };
 
+// Extended document type config
 const LATEST_DOC_CONFIG = {
   cvi: { icon: 'alert-circle', color: 'red', label: 'CVI' },
+  vo: { icon: 'file-signature', color: 'orange', label: 'VO' },
+  approval: { icon: 'check-circle', color: 'green', label: 'Approval' },
   mom: { icon: 'users', color: 'purple', label: 'MOM' },
-  shop_drawing: { icon: 'ruler', color: 'indigo', label: 'Shop Drawing' },
+  shop_drawing: { icon: 'ruler', color: 'indigo', label: 'Shop Dwg' },
   invoice: { icon: 'receipt', color: 'emerald', label: 'Invoice' },
   rfi: { icon: 'help-circle', color: 'blue', label: 'RFI' },
   submittal: { icon: 'package', color: 'amber', label: 'Submittal' },
+  correspondence: { icon: 'mail', color: 'sky', label: 'Letter' },
+  report: { icon: 'clipboard-list', color: 'teal', label: 'Report' },
 };
 
 const getFolderStyle = (folderName) => {
@@ -61,19 +66,19 @@ const getDisplayName = (filename) => {
   const nameWithoutExt = filename.replace(/\.[^.]+$/, '');
   
   // If name is short enough, show it all
-  if (nameWithoutExt.length <= 30) return nameWithoutExt;
+  if (nameWithoutExt.length <= 25) return nameWithoutExt;
   
   // Split by common separators
   const parts = nameWithoutExt.split(/[-_\s]+/);
   
   // Take last 3-4 parts (usually the most important)
   if (parts.length > 3) {
-    const importantParts = parts.slice(-4).join(' ');
-    if (importantParts.length <= 35) return '...' + importantParts;
+    const importantParts = parts.slice(-3).join(' ');
+    if (importantParts.length <= 25) return '…' + importantParts;
   }
   
-  // Otherwise show last 30 chars
-  return '...' + nameWithoutExt.slice(-30);
+  // Otherwise show last 25 chars
+  return '…' + nameWithoutExt.slice(-25);
 };
 
 export default function Vault({ project }) {
@@ -138,6 +143,7 @@ export default function Vault({ project }) {
     purple: 'bg-purple-50 text-purple-600',
     emerald: 'bg-emerald-50 text-emerald-600',
     amber: 'bg-amber-50 text-amber-600',
+    orange: 'bg-orange-50 text-orange-600',
     sky: 'bg-sky-50 text-sky-600',
     green: 'bg-green-50 text-green-600',
     red: 'bg-red-50 text-red-600',
@@ -185,7 +191,7 @@ export default function Vault({ project }) {
         </div>
       </div>
 
-      {/* Latest Documents - Horizontal scroll on mobile, grid on desktop */}
+      {/* Latest Documents - Horizontal scroll */}
       <div className="mb-8">
         <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Latest Documents</h3>
         {loadingLatest ? (
@@ -209,28 +215,26 @@ export default function Vault({ project }) {
                 <button
                   key={i}
                   onClick={() => handleLatestDocClick(doc)}
-                  className="flex-shrink-0 w-56 p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
+                  className="flex-shrink-0 w-48 p-3 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
                 >
                   <div className="flex items-center gap-2 mb-2">
                     <div className={`p-1.5 rounded-lg ${colorClasses[config.color] || 'bg-slate-100 text-slate-500'}`}>
-                      <Icon name={config.icon} size={14} />
+                      <Icon name={config.icon} size={12} />
                     </div>
-                    <span className="text-[10px] font-semibold uppercase text-slate-400">{config.label}</span>
+                    <span className="text-[9px] font-bold uppercase text-slate-400">{config.label}</span>
                   </div>
                   
-                  {/* Sliding text container */}
-                  <div className="overflow-hidden mb-2">
-                    <p 
-                      className="text-sm font-medium text-slate-900 whitespace-nowrap group-hover:animate-marquee"
-                      title={doc.name}
-                    >
-                      {displayName}
-                    </p>
-                  </div>
+                  {/* Document name - shows end part */}
+                  <p 
+                    className="text-xs font-medium text-slate-800 mb-2 leading-tight line-clamp-2"
+                    title={doc.name}
+                  >
+                    {displayName}
+                  </p>
                   
-                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                  <div className="flex items-center justify-between text-[9px] text-slate-400">
                     <span>{formatTimeAgo(doc.updated)}</span>
-                    {parsed.revision && <span className="bg-slate-100 px-1.5 py-0.5 rounded font-medium">Rev {parsed.revision}</span>}
+                    {parsed.revision && <span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold text-slate-600">R{parsed.revision}</span>}
                   </div>
                 </button>
               );
