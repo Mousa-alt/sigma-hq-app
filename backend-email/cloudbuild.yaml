@@ -19,13 +19,13 @@ steps:
       - 'managed'
       - '--allow-unauthenticated'
       - '--memory'
-      - '512Mi'
+      - '1Gi'
       - '--timeout'
       - '300'
       - '--set-env-vars'
-      - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=mail.sigmadd-egypt.com,IMAP_PORT=993'
+      - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=mail.sigmadd-egypt.com,IMAP_PORT=993,GCP_PROJECT=sigma-hq-technical-office,GCP_LOCATION=europe-west1'
       - '--set-secrets'
-      - 'EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest,GEMINI_API_KEY=gemini-api-key:latest'
+      - 'EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
