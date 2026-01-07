@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, addDoc, updateDoc, doc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from './firebase';
 import { APP_ID, SYNC_WORKER_URL, COLORS, TABS, BRANDING } from './config';
@@ -12,9 +12,13 @@ import ProjectHome from './components/ProjectHome';
 import AIChat from './components/AIChat';
 import Vault from './components/Vault';
 import Actions from './components/Actions';
+import ProjectSettings from './components/ProjectSettings';
 import Modal from './components/Modal';
 import ChatPanel from './components/ChatPanel';
 import Icon from './components/Icon';
+
+// Add Settings tab
+const ALL_TABS = [...TABS, { id: 'settings', label: 'Settings', icon: 'settings' }];
 
 export default function App() {
   // Core state
@@ -28,6 +32,7 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
@@ -54,7 +59,6 @@ export default function App() {
         const updated = data.find(p => p.id === selectedProject.id);
         if (updated) {
           setSelectedProject(updated);
-          // Update last sync time from project data
           if (updated.lastSyncAt) {
             setLastSyncTime(updated.lastSyncAt.toDate ? updated.lastSyncAt.toDate() : updated.lastSyncAt);
           }
@@ -70,6 +74,7 @@ export default function App() {
     } else {
       setLastSyncTime(null);
     }
+    setSyncError(null);
   }, [selectedProject?.id]);
 
   // Handlers
@@ -83,7 +88,7 @@ export default function App() {
         userId: user.uid
       });
       
-      // Trigger sync
+      // Trigger sync (fire and forget)
       fetch(SYNC_WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -104,6 +109,8 @@ export default function App() {
   const handleSyncNow = async () => {
     if (!selectedProject?.driveLink) return alert('No Drive link found.');
     setSyncing(true);
+    setSyncError(null);
+    
     try {
       const res = await fetch(SYNC_WORKER_URL, {
         method: 'POST',
@@ -114,10 +121,14 @@ export default function App() {
         })
       });
       const result = await res.json();
+      
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      
       if (result.added !== undefined) {
         alert(`✅ Sync Complete\n\nAdded: ${result.added}\nUpdated: ${result.updated}\nDeleted: ${result.deleted}\nSkipped: ${result.skipped}`);
         
-        // Update project with sync timestamp
         const now = new Date();
         await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'projects', selectedProject.id), { 
           status: 'Active',
@@ -125,21 +136,32 @@ export default function App() {
         });
         setLastSyncTime(now);
       } else {
-        throw new Error(result.error || "Sync failed");
+        throw new Error("Sync failed - no results returned");
       }
     } catch (err) {
-      alert('Sync triggered! Check Cloud Run logs for progress.');
-      // Still update the timestamp for UI feedback
-      const now = new Date();
-      setLastSyncTime(now);
+      console.error('Sync error:', err);
+      setSyncError(err.message);
+      alert(`❌ Sync Failed\n\n${err.message}`);
+      
+      // Update status to show error
+      await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'projects', selectedProject.id), { 
+        status: 'Sync Error'
+      });
     } finally {
       setSyncing(false);
     }
   };
 
-  const handleUpdateStatus = async (status) => {
-    if (!selectedProject) return;
-    await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'projects', selectedProject.id), { status });
+  const handleUpdateProject = async (updatedProject) => {
+    if (!updatedProject?.id) return;
+    const { id, ...data } = updatedProject;
+    await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'projects', id), data);
+  };
+
+  const handleDeleteProject = async (projectId) => {
+    await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'projects', projectId));
+    setView('overview');
+    setSelectedProject(null);
   };
 
   const handleSelectProject = (project) => {
@@ -152,6 +174,7 @@ export default function App() {
     setView('overview');
     setSelectedProject(null);
     setLastSyncTime(null);
+    setSyncError(null);
   };
 
   return (
@@ -194,9 +217,20 @@ export default function App() {
             <Overview projects={projects} onSelectProject={handleSelectProject} />
           ) : (
             <div className="h-full flex flex-col animate-in">
+              {/* Sync Error Banner */}
+              {syncError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
+                  <Icon name="alert-circle" size={18} className="text-red-500" />
+                  <span className="text-sm text-red-700 flex-1">Sync failed: {syncError}</span>
+                  <button onClick={() => setSyncError(null)} className="text-red-400 hover:text-red-600">
+                    <Icon name="x" size={16} />
+                  </button>
+                </div>
+              )}
+
               {/* Tabs */}
               <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar pb-2">
-                {TABS.map(t => (
+                {ALL_TABS.map(t => (
                   <button 
                     key={t.id} 
                     onClick={() => setActiveTab(t.id)} 
@@ -217,12 +251,19 @@ export default function App() {
                     syncing={syncing}
                     lastSyncTime={lastSyncTime}
                     onSyncNow={handleSyncNow}
-                    onUpdateStatus={handleUpdateStatus}
+                    onUpdateProject={handleUpdateProject}
                   />
                 )}
                 {activeTab === 'search' && <AIChat project={selectedProject} />}
                 {activeTab === 'vault' && <Vault project={selectedProject} />}
                 {activeTab === 'actions' && <Actions />}
+                {activeTab === 'settings' && (
+                  <ProjectSettings
+                    project={selectedProject}
+                    onUpdateProject={handleUpdateProject}
+                    onDeleteProject={handleDeleteProject}
+                  />
+                )}
               </div>
             </div>
           )}
