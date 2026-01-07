@@ -23,7 +23,7 @@ steps:
       - '--timeout'
       - '300'
       - '--set-env-vars'
-      - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=box2411.bluehost.com,IMAP_PORT=993'
+      - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=mail.sigmadd-egypt.com,IMAP_PORT=993'
       - '--set-secrets'
       - 'EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest'
 
