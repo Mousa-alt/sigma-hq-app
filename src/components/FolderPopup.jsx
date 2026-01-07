@@ -11,6 +11,8 @@ export default function FolderPopup({ project, folder, title, onClose }) {
   const [currentPath, setCurrentPath] = useState(folder);
   const [pathHistory, setPathHistory] = useState([{ path: folder, title: title }]);
 
+  const projectNameClean = project?.name?.replace(/\s+/g, '_') || '';
+
   useEffect(() => {
     loadFiles(currentPath);
   }, [currentPath]);
@@ -25,7 +27,7 @@ export default function FolderPopup({ project, folder, title, onClose }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          projectName: project.name.replace(/\s+/g, '_'),
+          projectName: projectNameClean,
           folderPath: folderPath
         })
       });
@@ -60,15 +62,40 @@ export default function FolderPopup({ project, folder, title, onClose }) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // Extract relative folder path from full GCS path
+  const getRelativePath = (fullPath) => {
+    // fullPath might be like "AGORA_GEM/01.Contract_Documents/01.1_Main_Contract/"
+    // We need just "01.Contract_Documents/01.1_Main_Contract"
+    if (!fullPath) return '';
+    
+    // Remove trailing slash
+    let path = fullPath.replace(/\/$/, '');
+    
+    // Remove project name prefix if present
+    if (path.startsWith(projectNameClean + '/')) {
+      path = path.substring(projectNameClean.length + 1);
+    }
+    
+    return path;
+  };
+
   const handleItemClick = (item) => {
     if (item.type === 'folder') {
       // Navigate into subfolder
-      const newPath = item.path.replace(/\/$/, ''); // Remove trailing slash
+      const relativePath = getRelativePath(item.path);
       const folderName = item.name;
-      setPathHistory([...pathHistory, { path: newPath, title: folderName }]);
-      setCurrentPath(newPath);
+      setPathHistory([...pathHistory, { path: relativePath, title: folderName }]);
+      setCurrentPath(relativePath);
     } else {
       setSelectedFile(item);
+    }
+  };
+
+  const handleDoubleClick = (item) => {
+    if (item.type === 'folder') {
+      handleItemClick(item);
+    } else {
+      handleOpenFile(item);
     }
   };
 
@@ -84,6 +111,7 @@ export default function FolderPopup({ project, folder, title, onClose }) {
     if (file.url) {
       window.open(file.url, '_blank');
     } else if (file.path) {
+      // file.path should be the full GCS path
       const viewUrl = `${SYNC_WORKER_URL}/view?path=${encodeURIComponent(file.path)}`;
       window.open(viewUrl, '_blank');
     }
@@ -200,7 +228,7 @@ export default function FolderPopup({ project, folder, title, onClose }) {
                     <div
                       key={i}
                       onClick={() => handleItemClick(item)}
-                      onDoubleClick={() => !isFolder && handleOpenFile(item)}
+                      onDoubleClick={() => handleDoubleClick(item)}
                       className={`flex items-center gap-3 p-4 hover:bg-slate-50 cursor-pointer transition-colors ${selectedFile?.name === item.name ? 'bg-blue-50' : ''}`}
                     >
                       <div className={`p-2 rounded-lg ${isFolder ? 'bg-amber-50 text-amber-500' : 'bg-blue-50 text-blue-500'}`}>
@@ -219,7 +247,7 @@ export default function FolderPopup({ project, folder, title, onClose }) {
                           {isFolder ? item.name : (parsed?.description || item.name)}
                         </p>
                         <p className="text-[10px] text-slate-400">
-                          {isFolder ? 'Folder' : (
+                          {isFolder ? 'Click to open folder' : (
                             <>
                               {formatDate(item.updated)}
                               {item.size && ` • ${formatSize(item.size)}`}
@@ -250,7 +278,7 @@ export default function FolderPopup({ project, folder, title, onClose }) {
               </div>
               
               {/* File info */}
-              <div className="bg-white rounded-lg border border-slate-200 p-4 mb-4">
+              <div className="bg-white rounded-lg border border-slate-200 p-4 mb-4 flex-1 overflow-y-auto">
                 {(() => {
                   const parsed = parseFilename(selectedFile.name);
                   const docType = detectDocumentType(selectedFile.name, selectedFile.path || '');
