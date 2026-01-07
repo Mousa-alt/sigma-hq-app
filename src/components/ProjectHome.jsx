@@ -2,7 +2,7 @@ import { useState } from 'react';
 import Icon from './Icon';
 import FolderPopup from './FolderPopup';
 
-export default function ProjectHome({ project, syncing, onSyncNow, onUpdateStatus }) {
+export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow, onUpdateStatus }) {
   const [tasks, setTasks] = useState([
     { id: 1, text: 'Review shop drawings for Kitchen area', done: false },
     { id: 2, text: 'Send RFI response to consultant', done: false },
@@ -25,20 +25,42 @@ export default function ProjectHome({ project, syncing, onSyncNow, onUpdateStatu
     setTasks(tasks.filter(t => t.id !== id));
   };
 
-  // Quick link configurations matching 12-folder structure
+  // Format last sync time
+  const formatLastSync = () => {
+    if (!lastSyncTime) return 'Never synced';
+    const date = new Date(lastSyncTime);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    const timeStr = date.toLocaleString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true 
+    });
+    
+    if (diffMins < 1) return `Just now (${timeStr})`;
+    if (diffMins < 60) return `${diffMins} min ago (${timeStr})`;
+    if (diffHours < 24) return `${diffHours}h ago (${timeStr})`;
+    return `${diffDays}d ago (${timeStr})`;
+  };
+
+  // Quick link configurations matching actual Drive structure
   const quickLinks = [
-    { id: 'contract', label: 'Contract', icon: 'file-text', color: 'blue', folder: '01-Contract Documents' },
-    { id: 'invoices', label: 'Invoices', icon: 'receipt', color: 'emerald', folder: '05-Quantity Surveying/Invoices' },
-    { id: 'shop-drawings', label: 'Shop Drawings', icon: 'pencil-ruler', color: 'purple', folder: '04-Shop Drawings/Approved' },
+    { id: 'contract', label: 'Contract', icon: 'file-text', color: 'blue', folder: '01.Contract_Documents' },
+    { id: 'invoices', label: 'Invoices', icon: 'receipt', color: 'emerald', folder: '01.Contract_Documents/01.4_Invoices' },
+    { id: 'shop-drawings', label: 'Shop Drawings', icon: 'ruler', color: 'purple', folder: '04.Shop_Drawings' },
     { id: 'drive', label: 'Open Drive', icon: 'external-link', color: 'orange', folder: null },
   ];
 
   const handleQuickLink = (link) => {
     if (link.folder === null) {
-      // Open Drive directly
       project?.driveLink && window.open(project.driveLink, '_blank');
     } else {
-      // Open popup with folder contents
       setActivePopup(link);
     }
   };
@@ -52,6 +74,35 @@ export default function ProjectHome({ project, syncing, onSyncNow, onUpdateStatu
 
   return (
     <div className="space-y-8">
+      {/* Sync Status Bar */}
+      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100">
+        <div className="flex items-center gap-4">
+          <div className={`p-2 rounded-lg ${syncing ? 'bg-amber-100' : 'bg-emerald-100'}`}>
+            <Icon 
+              name={syncing ? 'loader-2' : 'cloud-check'} 
+              size={20} 
+              className={syncing ? 'animate-spin text-amber-600' : 'text-emerald-600'} 
+            />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-slate-900">
+              {syncing ? 'Syncing...' : 'Synced with Google Drive'}
+            </p>
+            <p className="text-xs text-slate-500">
+              Last sync: {formatLastSync()}
+            </p>
+          </div>
+        </div>
+        <button 
+          onClick={onSyncNow} 
+          disabled={syncing} 
+          className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+        >
+          <Icon name="refresh-cw" size={14} className={syncing ? 'animate-spin' : ''} />
+          {syncing ? 'Syncing...' : 'Sync Now'}
+        </button>
+      </div>
+
       {/* Status & Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-5 bg-slate-50 rounded-xl border border-slate-100">

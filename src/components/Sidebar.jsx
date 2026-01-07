@@ -17,58 +17,61 @@ export default function Sidebar({
       style={{ backgroundColor: COLORS.navy }}
     >
       {/* Logo */}
-      <div className="px-5 py-4 border-b border-white/5">
+      <div className="px-5 py-5 border-b border-white/5">
         <img 
           src={BRANDING.logoWhite} 
           alt="Sigma" 
-          className="h-8 w-auto mb-2" 
+          className="h-14 w-auto" 
         />
-        <p className="text-[9px] font-medium uppercase tracking-[0.15em] text-white/50">
-          {BRANDING.title}
-        </p>
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 p-4 overflow-y-auto no-scrollbar">
+        {/* Section title */}
+        <p className="px-4 mb-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Navigation</p>
+        
         <button 
           onClick={() => { onGoToOverview(); onCloseSidebar(); }} 
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all mb-4 ${view === 'overview' ? 'text-white shadow-lg' : 'text-slate-400 hover:text-white'}`} 
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all mb-2 ${view === 'overview' ? 'text-white shadow-lg' : 'text-slate-400 hover:text-white'}`} 
           style={view === 'overview' ? { backgroundColor: COLORS.blue } : {}}
         >
           <Icon name="layout-dashboard" size={18} /> 
-          <span className="font-medium text-sm uppercase tracking-tight">Dashboard</span>
+          <span className="font-medium text-sm">Dashboard</span>
         </button>
 
-        <div className="flex items-center justify-between px-4 mb-3">
-          <span className="text-[10px] font-medium uppercase tracking-widest text-slate-500">Live Projects</span>
-          <button 
-            onClick={onOpenModal} 
-            className="p-1 rounded text-white shadow-lg" 
-            style={{ backgroundColor: COLORS.blue }}
-          >
-            <Icon name="plus" size={12} />
-          </button>
-        </div>
-
-        <div className="space-y-1">
-          {projects.map(p => (
+        {/* Projects section */}
+        <div className="mt-6">
+          <div className="flex items-center justify-between px-4 mb-3">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Live Projects</span>
             <button 
-              key={p.id} 
-              onClick={() => { onSelectProject(p); onCloseSidebar(); }} 
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left transition-all ${selectedProject?.id === p.id ? 'bg-white/10 text-white border border-white/10' : 'text-slate-400 hover:text-white'}`}
+              onClick={onOpenModal} 
+              className="p-1 rounded text-white shadow-lg" 
+              style={{ backgroundColor: COLORS.blue }}
             >
-              <div className={`shrink-0 w-2 h-2 rounded-full ${p.status === 'Syncing...' ? 'bg-amber-500 animate-pulse' : 'bg-emerald-400'}`} />
-              <span className="text-xs font-medium truncate">{p.name}</span>
+              <Icon name="plus" size={12} />
             </button>
-          ))}
+          </div>
+
+          <div className="space-y-1">
+            {projects.map(p => (
+              <button 
+                key={p.id} 
+                onClick={() => { onSelectProject(p); onCloseSidebar(); }} 
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left transition-all ${selectedProject?.id === p.id ? 'bg-white/10 text-white border border-white/10' : 'text-slate-400 hover:text-white'}`}
+              >
+                <div className={`shrink-0 w-2 h-2 rounded-full ${p.status === 'Syncing...' ? 'bg-amber-500 animate-pulse' : 'bg-emerald-400'}`} />
+                <span className="text-xs font-medium truncate">{p.name}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </nav>
 
       {/* Chat with all projects */}
       <div className="border-t border-white/5 bg-black/20 p-4">
         <div className="flex items-center gap-2 text-white/50 mb-3">
-          <Icon name="message-circle" size={14} /> 
-          <span className="text-[10px] font-medium uppercase tracking-widest">Chat with all projects</span>
+          <Icon name="sparkles" size={14} /> 
+          <span className="text-[10px] font-medium uppercase tracking-widest">AI Search</span>
         </div>
         <div className="relative">
           <input 

@@ -4,28 +4,28 @@ import { SYNC_WORKER_URL } from '../config';
 import FolderPopup from './FolderPopup';
 import { parseFilename, getFileIcon, detectDocumentType, getDocTypeInfo } from '../utils/documentUtils';
 
-// Standard 12-folder structure
+// Standard 12-folder structure - matching actual Drive folder names
 const FOLDER_STRUCTURE = [
-  { id: '01', name: '01-Contract Documents', icon: 'file-signature', color: 'blue' },
-  { id: '02', name: '02-Design Drawings', icon: 'drafting-compass', color: 'indigo' },
-  { id: '03', name: '03-Specifications', icon: 'book-open', color: 'violet' },
-  { id: '04', name: '04-Shop Drawings', icon: 'pencil-ruler', color: 'purple' },
-  { id: '05', name: '05-Quantity Surveying', icon: 'calculator', color: 'emerald' },
-  { id: '06', name: '06-Site Reports', icon: 'clipboard-list', color: 'amber' },
-  { id: '07', name: '07-Correspondence', icon: 'mail', color: 'sky' },
-  { id: '08', name: '08-Quality Control', icon: 'shield-check', color: 'green' },
-  { id: '09', name: '09-Health Safety', icon: 'hard-hat', color: 'red' },
-  { id: '10', name: '10-Handover', icon: 'package-check', color: 'teal' },
-  { id: '11', name: '11-Photos', icon: 'camera', color: 'pink' },
-  { id: '12', name: '12-Archive', icon: 'archive', color: 'slate' },
+  { id: '01', name: '01.Contract_Documents', label: 'Contract Documents', icon: 'file-text', color: 'blue' },
+  { id: '02', name: '02.Design_Drawings', label: 'Design Drawings', icon: 'compass', color: 'indigo' },
+  { id: '03', name: '03.Specifications', label: 'Specifications', icon: 'book-open', color: 'violet' },
+  { id: '04', name: '04.Shop_Drawings', label: 'Shop Drawings', icon: 'ruler', color: 'purple' },
+  { id: '05', name: '05.Quantity_Surveying', label: 'Quantity Surveying', icon: 'calculator', color: 'emerald' },
+  { id: '06', name: '06.Site_Reports', label: 'Site Reports', icon: 'clipboard-list', color: 'amber' },
+  { id: '07', name: '07.Correspondence', label: 'Correspondence', icon: 'mail', color: 'sky' },
+  { id: '08', name: '08.Quality_Control', label: 'Quality Control', icon: 'shield-check', color: 'green' },
+  { id: '09', name: '09.Health_Safety', label: 'Health & Safety', icon: 'hard-hat', color: 'red' },
+  { id: '10', name: '10.Handover', label: 'Handover', icon: 'package', color: 'teal' },
+  { id: '11', name: '11.Photos', label: 'Photos', icon: 'camera', color: 'pink' },
+  { id: '12', name: '12.Archive', label: 'Archive', icon: 'archive', color: 'slate' },
 ];
 
-// Quick access sections
+// Quick access sections - matching actual Drive structure
 const QUICK_ACCESS = [
-  { id: 'approved-sd', label: 'Approved Shop Drawings', folder: '04-Shop Drawings/Approved', icon: 'check-circle', color: 'emerald' },
-  { id: 'mom', label: 'Meeting Minutes', folder: '07-Correspondence/MOM', icon: 'users', color: 'purple' },
-  { id: 'progress', label: 'Progress Reports', folder: '06-Site Reports/Progress', icon: 'trending-up', color: 'blue' },
-  { id: 'invoices', label: 'Invoices', folder: '05-Quantity Surveying/Invoices', icon: 'receipt', color: 'amber' },
+  { id: 'approved-sd', label: 'Approved Shop Drawings', folder: '04.Shop_Drawings/Approved', icon: 'check-circle', color: 'emerald' },
+  { id: 'mom', label: 'Meeting Minutes', folder: '07.Correspondence/MOM', icon: 'users', color: 'purple' },
+  { id: 'progress', label: 'Progress Reports', folder: '06.Site_Reports/Progress', icon: 'trending-up', color: 'blue' },
+  { id: 'invoices', label: 'Invoices', folder: '01.Contract_Documents/01.4_Invoices', icon: 'receipt', color: 'amber' },
 ];
 
 export default function Vault({ project }) {
@@ -45,10 +45,10 @@ export default function Vault({ project }) {
     try {
       // Try to get recent files from multiple folders
       const foldersToCheck = [
-        '04-Shop Drawings',
-        '05-Quantity Surveying',
-        '07-Correspondence',
-        '06-Site Reports'
+        '04.Shop_Drawings',
+        '01.Contract_Documents',
+        '07.Correspondence',
+        '06.Site_Reports'
       ];
       
       const allFiles = [];
@@ -68,7 +68,7 @@ export default function Vault({ project }) {
             const data = await res.json();
             const files = (data.files || []).filter(f => f.type === 'file');
             files.forEach(f => {
-              f.folder = folder.split('-')[1]; // e.g., "Shop Drawings"
+              f.folder = folder.split('.')[1]?.replace(/_/g, ' ') || folder;
             });
             allFiles.push(...files);
           }
@@ -235,14 +235,14 @@ export default function Vault({ project }) {
           {FOLDER_STRUCTURE.map(folder => (
             <button
               key={folder.id}
-              onClick={() => setActivePopup({ folder: folder.name, title: folder.name.split('-')[1] })}
+              onClick={() => setActivePopup({ folder: folder.name, title: folder.label })}
               className="p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
             >
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 ${getColorClasses(folder.color)}`}>
                 <Icon name={folder.icon} size={18} />
               </div>
               <p className="text-xs font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
-                {folder.name.split('-')[1]}
+                {folder.label}
               </p>
               <p className="text-[10px] text-slate-400 mt-0.5">{folder.id}</p>
             </button>

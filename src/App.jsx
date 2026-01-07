@@ -215,6 +215,7 @@ export default function App() {
                   <ProjectHome
                     project={selectedProject}
                     syncing={syncing}
+                    lastSyncTime={lastSyncTime}
                     onSyncNow={handleSyncNow}
                     onUpdateStatus={handleUpdateStatus}
                   />
