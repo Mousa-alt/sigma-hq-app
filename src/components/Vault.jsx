@@ -3,7 +3,7 @@ import Icon from './Icon';
 import { SYNC_WORKER_URL } from '../config';
 import FolderPopup from './FolderPopup';
 import FileViewer from './FileViewer';
-import { parseFilename, getFileIcon, detectDocumentType, getDocTypeInfo } from '../utils/documentUtils';
+import { parseFilename, getFileIcon } from '../utils/documentUtils';
 
 const FOLDER_ICONS = {
   'contract': { icon: 'file-text', color: 'blue' },
@@ -36,6 +36,15 @@ const FOLDER_ICONS = {
   'material': { icon: 'box', color: 'amber' },
 };
 
+const LATEST_DOC_CONFIG = {
+  cvi: { icon: 'alert-circle', color: 'red', label: 'Latest CVI' },
+  mom: { icon: 'users', color: 'purple', label: 'Latest MOM' },
+  shop_drawing: { icon: 'ruler', color: 'indigo', label: 'Latest Shop Drawing' },
+  invoice: { icon: 'receipt', color: 'emerald', label: 'Latest Invoice' },
+  rfi: { icon: 'help-circle', color: 'blue', label: 'Latest RFI' },
+  submittal: { icon: 'package', color: 'amber', label: 'Latest Submittal' },
+};
+
 const getFolderStyle = (folderName) => {
   const lower = folderName.toLowerCase();
   for (const [keyword, style] of Object.entries(FOLDER_ICONS)) {
@@ -50,14 +59,14 @@ export default function Vault({ project }) {
   const [folders, setFolders] = useState([]);
   const [loadingFolders, setLoadingFolders] = useState(true);
   const [activePopup, setActivePopup] = useState(null);
-  const [recentFiles, setRecentFiles] = useState([]);
-  const [loadingRecent, setLoadingRecent] = useState(true);
+  const [latestDocs, setLatestDocs] = useState([]);
+  const [loadingLatest, setLoadingLatest] = useState(true);
   const [viewingFile, setViewingFile] = useState(null);
 
   useEffect(() => {
     if (project) {
       loadFolders();
-      loadRecentFiles();
+      loadLatestDocs();
     }
   }, [project?.id]);
 
@@ -81,23 +90,23 @@ export default function Vault({ project }) {
     }
   };
 
-  const loadRecentFiles = async () => {
-    setLoadingRecent(true);
+  const loadLatestDocs = async () => {
+    setLoadingLatest(true);
     try {
-      const res = await fetch(`${SYNC_WORKER_URL}/list`, {
+      const res = await fetch(`${SYNC_WORKER_URL}/latest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectName: project.name.replace(/\s+/g, '_') })
       });
       if (res.ok) {
         const data = await res.json();
-        const sorted = (data.files || []).filter(f => f.updated).sort((a, b) => new Date(b.updated) - new Date(a.updated)).slice(0, 5);
-        setRecentFiles(sorted);
-      } else setRecentFiles([]);
+        setLatestDocs(data.latest || []);
+      } else setLatestDocs([]);
     } catch (err) {
-      setRecentFiles([]);
+      console.error('Error loading latest docs:', err);
+      setLatestDocs([]);
     } finally {
-      setLoadingRecent(false);
+      setLoadingLatest(false);
     }
   };
 
@@ -133,13 +142,10 @@ export default function Vault({ project }) {
     } catch { return ''; }
   };
 
-  const handleFileClick = (file) => {
-    // Open inline viewer
-    const filePath = `${project.name.replace(/\s+/g, '_')}/${file.path}`;
-    setViewingFile({ name: file.name, path: filePath });
+  const handleLatestDocClick = (doc) => {
+    const filePath = `${project.name.replace(/\s+/g, '_')}/${doc.path}`;
+    setViewingFile({ name: doc.name, path: filePath });
   };
-
-  const getFolderFromPath = (path) => path ? path.split('/')[0] || '' : '';
 
   return (
     <div className="h-full flex flex-col overflow-y-auto no-scrollbar">
@@ -149,7 +155,7 @@ export default function Vault({ project }) {
           <p className="text-sm text-slate-500">Browse and access all project files</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => { loadFolders(); loadRecentFiles(); }} className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-medium text-slate-600">
+          <button onClick={() => { loadFolders(); loadLatestDocs(); }} className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-medium text-slate-600">
             <Icon name="refresh-cw" size={12} />Refresh
           </button>
           <button onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 rounded-lg text-xs font-medium text-white">
@@ -158,34 +164,51 @@ export default function Vault({ project }) {
         </div>
       </div>
 
-      {/* Recent Files */}
+      {/* Latest Documents by Type */}
       <div className="mb-8">
-        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Recently Modified</h3>
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          {loadingRecent ? (
-            <div className="p-6 text-center"><Icon name="loader-2" size={20} className="animate-spin text-slate-400 mx-auto" /></div>
-          ) : recentFiles.length === 0 ? (
-            <div className="p-6 text-center">
-              <Icon name="file" size={24} className="text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-400">No files found</p>
-            </div>
-          ) : (
-            recentFiles.map((file, i) => {
-              const parsed = parseFilename(file.name);
-              const folder = getFolderFromPath(file.path);
+        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Latest Documents</h3>
+        {loadingLatest ? (
+          <div className="bg-white border border-slate-200 rounded-xl p-6 text-center">
+            <Icon name="loader-2" size={20} className="animate-spin text-slate-400 mx-auto" />
+          </div>
+        ) : latestDocs.length === 0 ? (
+          <div className="bg-white border border-slate-200 rounded-xl p-6 text-center">
+            <Icon name="file" size={24} className="text-slate-300 mx-auto mb-2" />
+            <p className="text-sm text-slate-400">No documents found yet</p>
+            <p className="text-xs text-slate-400 mt-1">Sync your project to load documents</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {latestDocs.map((doc, i) => {
+              const config = LATEST_DOC_CONFIG[doc.type] || { icon: 'file', color: 'slate', label: doc.typeLabel };
+              const parsed = parseFilename(doc.name);
               return (
-                <div key={i} onClick={() => handleFileClick(file)} className="flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0">
-                  <div className="p-2 bg-blue-50 rounded-lg text-blue-500"><Icon name={getFileIcon(file.name)} size={14} /></div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-900 truncate">{parsed.description || file.name}</p>
-                    <p className="text-[10px] text-slate-400">{cleanFolderName(folder)} • {formatTimeAgo(file.updated)}{parsed.revision && ` • Rev ${parsed.revision}`}</p>
+                <button
+                  key={i}
+                  onClick={() => handleLatestDocClick(doc)}
+                  className="p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2 rounded-lg ${colorClasses[config.color]?.split(' ').slice(0, 2).join(' ') || 'bg-slate-100 text-slate-500'}`}>
+                      <Icon name={config.icon} size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-medium uppercase text-slate-400 mb-1">{config.label}</p>
+                      <p className="text-sm font-medium text-slate-900 truncate group-hover:text-blue-600">
+                        {parsed.description || doc.name}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        {formatTimeAgo(doc.updated)}
+                        {parsed.revision && ` • Rev ${parsed.revision}`}
+                      </p>
+                    </div>
+                    <Icon name="chevron-right" size={14} className="text-slate-300 mt-1" />
                   </div>
-                  <Icon name="chevron-right" size={14} className="text-slate-300" />
-                </div>
+                </button>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </div>
 
       {/* Folders Grid */}
