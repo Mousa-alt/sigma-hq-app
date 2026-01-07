@@ -1,0 +1,33 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/sigma-email-sync', './backend-email']
+  
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/sigma-email-sync']
+  
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'sigma-email-sync'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/sigma-email-sync'
+      - '--region'
+      - 'europe-west1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+      - '--timeout'
+      - '300'
+      - '--set-env-vars'
+      - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=box2411.bluehost.com,IMAP_PORT=993'
+      - '--set-secrets'
+      - 'GEMINI_API_KEY=gemini-api-key:latest,EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '600s'
