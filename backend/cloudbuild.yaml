@@ -1,10 +1,18 @@
 steps:
+  # 1. Build the container image
+  # We point the context to the 'backend' directory where the Dockerfile lives
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/sigma-sync-worker', '.']
-  
+    args: [
+      'build', 
+      '-t', 'gcr.io/$PROJECT_ID/sigma-sync-worker', 
+      './backend' 
+    ]
+
+  # 2. Push the image to Google Container Registry
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/sigma-sync-worker']
-  
+
+  # 3. Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -15,15 +23,16 @@ steps:
       - 'gcr.io/$PROJECT_ID/sigma-sync-worker'
       - '--region'
       - 'europe-west1'
+      - '--memory'
+      - '4Gi'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
-      - '--memory'
-      - '4Gi'
-      - '--timeout'
-      - '540'
       - '--set-secrets'
       - 'GEMINI_API_KEY=gemini-api-key:latest'
+
+images:
+  - 'gcr.io/$PROJECT_ID/sigma-sync-worker'
 
 options:
   logging: CLOUD_LOGGING_ONLY
