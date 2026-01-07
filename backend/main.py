@@ -40,24 +40,23 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # =============================================================================
-# DOCUMENT HIERARCHY SYSTEM
+# DOCUMENT HIERARCHY SYSTEM (No CVI - Shop Drawings are primary)
 # =============================================================================
 
 DOCUMENT_HIERARCHY = {
-    'cvi': {'priority': 100, 'label': 'CVI', 'description': 'Consultant Variation Instruction'},
-    'vo': {'priority': 95, 'label': 'VO', 'description': 'Variation Order'},
+    'shop_drawing': {'priority': 100, 'label': 'Shop Drawing', 'description': 'Shop Drawing'},
     'approval': {'priority': 90, 'label': 'Approval', 'description': 'Material/Shop Drawing Approval'},
-    'shop_drawing': {'priority': 80, 'label': 'Shop Drawing', 'description': 'Approved Shop Drawing'},
-    'rfi': {'priority': 70, 'label': 'RFI', 'description': 'Request for Information Response'},
-    'mom': {'priority': 60, 'label': 'MOM', 'description': 'Minutes of Meeting'},
-    'submittal': {'priority': 55, 'label': 'Submittal', 'description': 'Material Submittal'},
-    'specification': {'priority': 50, 'label': 'Spec', 'description': 'Technical Specification'},
-    'boq': {'priority': 45, 'label': 'BOQ', 'description': 'Bill of Quantities'},
-    'contract': {'priority': 40, 'label': 'Contract', 'description': 'Contract Document'},
-    'correspondence': {'priority': 35, 'label': 'Letter', 'description': 'Correspondence'},
-    'report': {'priority': 30, 'label': 'Report', 'description': 'Site/Progress Report'},
-    'drawing': {'priority': 25, 'label': 'Drawing', 'description': 'Design Drawing'},
-    'invoice': {'priority': 20, 'label': 'Invoice', 'description': 'Invoice/Payment'},
+    'rfi': {'priority': 85, 'label': 'RFI', 'description': 'Request for Information Response'},
+    'mom': {'priority': 80, 'label': 'MOM', 'description': 'Minutes of Meeting'},
+    'submittal': {'priority': 75, 'label': 'Submittal', 'description': 'Material Submittal'},
+    'specification': {'priority': 70, 'label': 'Spec', 'description': 'Technical Specification'},
+    'boq': {'priority': 65, 'label': 'BOQ', 'description': 'Bill of Quantities'},
+    'vo': {'priority': 60, 'label': 'VO', 'description': 'Variation Order (Financial)'},
+    'contract': {'priority': 55, 'label': 'Contract', 'description': 'Contract Document'},
+    'correspondence': {'priority': 50, 'label': 'Letter', 'description': 'Correspondence'},
+    'report': {'priority': 45, 'label': 'Report', 'description': 'Site/Progress Report'},
+    'drawing': {'priority': 40, 'label': 'Drawing', 'description': 'Design Drawing'},
+    'invoice': {'priority': 35, 'label': 'Invoice', 'description': 'Invoice/Payment'},
     'other': {'priority': 10, 'label': 'Document', 'description': 'General Document'},
 }
 
@@ -73,13 +72,10 @@ def detect_document_type(filename, path):
     # FOLDER-BASED DETECTION (Most Reliable)
     # ===========================================
     
-    # --- CVI / Variations ---
+    # --- Variation Orders (Financial) ---
     # OLD: 08.Variations & Extra Works/
-    # NEW: 01-Contract-Documents/ or dedicated CVI folder
     if '08.variation' in lower_path or 'extra work' in lower_path:
-        return 'cvi'
-    if 'variation' in lower_path and ('cvi' in lower_path or 'instruction' in lower_path):
-        return 'cvi'
+        return 'vo'
     
     # --- Shop Drawings (Sigma's work) ---
     # OLD: 02.Drawings & Designs/01.Drawings/
@@ -151,8 +147,7 @@ def detect_document_type(filename, path):
     # ===========================================
     # FILENAME-BASED DETECTION (Fallback)
     # ===========================================
-    if re.search(r'\bcvi\b|variation.?instruction', lower_name): return 'cvi'
-    if re.search(r'\bvo\b|variation.?order', lower_name): return 'vo'
+    if re.search(r'\bvo\b|variation', lower_name): return 'vo'
     if re.search(r'\bmom\b|minute.?of.?meeting', lower_name): return 'mom'
     if re.search(r'\brfi\b', lower_name): return 'rfi'
     if re.search(r'invoice|inv[-_]\d', lower_name): return 'invoice'
@@ -318,10 +313,7 @@ def extract_revision(filename):
     return 0, None
 
 def extract_subject(filename, path):
-    """
-    Extract subject/discipline from folder path (primary) and filename (secondary).
-    Supports both OLD and NEW structures.
-    """
+    """Extract subject/discipline from folder path (primary) and filename (secondary)."""
     lower = filename.lower()
     lower_path = path.lower()
     
@@ -338,14 +330,10 @@ def extract_subject(filename, path):
         return 'plumbing'
     
     # OLD structure memo folders
-    if '01.interior' in lower_path:
-        return 'interior'
-    if '04.lighting' in lower_path:
-        return 'lighting'
-    if '08.floor' in lower_path:
-        return 'flooring'
-    if '09.door' in lower_path:
-        return 'door'
+    if '01.interior' in lower_path: return 'interior'
+    if '04.lighting' in lower_path: return 'lighting'
+    if '08.floor' in lower_path: return 'flooring'
+    if '09.door' in lower_path: return 'door'
     
     if 'mep' in lower_path or 'x0.mep' in lower_path:
         return 'mep'
@@ -538,13 +526,13 @@ PROJECT: {project_name or 'All Projects'}
 QUESTION: {query}
 
 DOCUMENT AUTHORITY (highest to lowest):
-- CVI - OVERRIDES ALL
-- VO - Changes to contract
-- Approved Shop Drawings
-- RFI Responses
-- MOMs
-- Specifications & BOQ
-- Contract
+- Shop Drawings - Latest revision is authoritative for execution
+- Approved Materials/Submittals - Confirmed specifications
+- RFI Responses - Official clarifications
+- MOMs - Recorded decisions
+- Specifications & BOQ - Technical requirements
+- VO (Variation Order) - Financial/scope changes
+- Contract - Base reference
 
 RETRIEVED DOCUMENTS:
 {chr(10).join(context_parts)}
@@ -563,7 +551,7 @@ Most authoritative document (type + name + revision)
 
 RULES:
 1. Be SPECIFIC with exact values
-2. CVI/VO OVERRIDES everything
+2. Latest Shop Drawing revision is the authority
 3. Mention revision numbers
 4. If not found: "Not found in indexed documents. Check [folder]."
 """
@@ -666,7 +654,7 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.3', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v5.4', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
     
     if request.method == 'GET' and path == '/view':
         try:
