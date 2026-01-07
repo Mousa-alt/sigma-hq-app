@@ -4,12 +4,25 @@ import { COLORS } from '../config';
 export default function Header({ 
   view, 
   selectedProject, 
-  syncing, 
+  syncing,
+  lastSyncTime,
   onOpenSidebar, 
   onGoBack, 
   onSyncNow, 
   onOpenModal 
 }) {
+  const formatLastSync = () => {
+    if (!lastSyncTime) return null;
+    const date = new Date(lastSyncTime);
+    return date.toLocaleString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true 
+    });
+  };
+
   return (
     <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
       <div className="flex items-center gap-4">
@@ -44,14 +57,21 @@ export default function Header({
       
       <div className="flex items-center gap-3">
         {view === 'project' && (
-          <button 
-            onClick={onSyncNow} 
-            disabled={syncing} 
-            className="hidden sm:flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-medium transition-all disabled:opacity-50"
-          >
-            <Icon name={syncing ? "loader-2" : "refresh-cw"} size={14} className={syncing ? "animate-spin" : ""} />
-            {syncing ? 'Syncing...' : 'Sync Now'}
-          </button>
+          <div className="hidden sm:flex flex-col items-end">
+            <button 
+              onClick={onSyncNow} 
+              disabled={syncing} 
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+            >
+              <Icon name={syncing ? "loader-2" : "refresh-cw"} size={14} className={syncing ? "animate-spin" : ""} />
+              {syncing ? 'Syncing...' : 'Sync Now'}
+            </button>
+            {lastSyncTime && (
+              <p className="text-[10px] text-slate-400 mt-1">
+                Last: {formatLastSync()}
+              </p>
+            )}
+          </div>
         )}
         <button 
           onClick={onOpenModal} 

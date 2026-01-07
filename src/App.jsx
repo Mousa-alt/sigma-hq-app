@@ -30,6 +30,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(null);
 
   // Auth
   useEffect(() => {
@@ -51,10 +52,25 @@ export default function App() {
       setProjects(data);
       if (selectedProject) {
         const updated = data.find(p => p.id === selectedProject.id);
-        if (updated) setSelectedProject(updated);
+        if (updated) {
+          setSelectedProject(updated);
+          // Update last sync time from project data
+          if (updated.lastSyncAt) {
+            setLastSyncTime(updated.lastSyncAt.toDate ? updated.lastSyncAt.toDate() : updated.lastSyncAt);
+          }
+        }
       }
     });
   }, [user, selectedProject?.id]);
+
+  // Update lastSyncTime when selecting a project
+  useEffect(() => {
+    if (selectedProject?.lastSyncAt) {
+      setLastSyncTime(selectedProject.lastSyncAt.toDate ? selectedProject.lastSyncAt.toDate() : selectedProject.lastSyncAt);
+    } else {
+      setLastSyncTime(null);
+    }
+  }, [selectedProject?.id]);
 
   // Handlers
   const handleCreateProject = async (formData) => {
@@ -100,12 +116,22 @@ export default function App() {
       const result = await res.json();
       if (result.added !== undefined) {
         alert(`✅ Sync Complete\n\nAdded: ${result.added}\nUpdated: ${result.updated}\nDeleted: ${result.deleted}\nSkipped: ${result.skipped}`);
-        handleUpdateStatus('Active');
+        
+        // Update project with sync timestamp
+        const now = new Date();
+        await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'projects', selectedProject.id), { 
+          status: 'Active',
+          lastSyncAt: now
+        });
+        setLastSyncTime(now);
       } else {
         throw new Error(result.error || "Sync failed");
       }
     } catch (err) {
       alert('Sync triggered! Check Cloud Run logs for progress.');
+      // Still update the timestamp for UI feedback
+      const now = new Date();
+      setLastSyncTime(now);
     } finally {
       setSyncing(false);
     }
@@ -125,6 +151,7 @@ export default function App() {
   const handleGoToOverview = () => {
     setView('overview');
     setSelectedProject(null);
+    setLastSyncTime(null);
   };
 
   return (
@@ -155,6 +182,7 @@ export default function App() {
           view={view}
           selectedProject={selectedProject}
           syncing={syncing}
+          lastSyncTime={lastSyncTime}
           onOpenSidebar={() => setIsSidebarOpen(true)}
           onGoBack={handleGoToOverview}
           onSyncNow={handleSyncNow}
