@@ -167,15 +167,14 @@ export default function App() {
           ) : (
             <div className="h-full flex flex-col animate-in">
               {/* Tabs */}
-              <div className="flex gap-2 mb-8 overflow-x-auto no-scrollbar pb-2">
+              <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar pb-2">
                 {TABS.map(t => (
                   <button 
                     key={t.id} 
                     onClick={() => setActiveTab(t.id)} 
-                    className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                      activeTab === t.id ? 'text-white shadow-lg' : 'text-slate-500 hover:bg-white'
-                    }`} 
-                    style={activeTab === t.id ? { backgroundColor: COLORS.navy } : {}}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                      activeTab === t.id ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'
+                    }`}
                   >
                     <Icon name={t.icon} size={14} /> {t.label}
                   </button>
@@ -183,7 +182,7 @@ export default function App() {
               </div>
 
               {/* Tab content */}
-              <div className="bg-white rounded-[2.5rem] p-6 lg:p-12 shadow-sm flex-1 min-h-[400px] overflow-hidden">
+              <div className="bg-white rounded-xl border border-slate-200 p-6 lg:p-8 flex-1 min-h-[400px] overflow-hidden">
                 {activeTab === 'home' && (
                   <ProjectHome
                     project={selectedProject}
@@ -192,7 +191,7 @@ export default function App() {
                     onUpdateStatus={handleUpdateStatus}
                   />
                 )}
-                {activeTab === 'ai' && <AIChat project={selectedProject} />}
+                {activeTab === 'search' && <AIChat project={selectedProject} />}
                 {activeTab === 'vault' && <Vault project={selectedProject} />}
                 {activeTab === 'actions' && <Actions />}
               </div>

@@ -1,63 +1,33 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Icon from './Icon';
 import { SYNC_WORKER_URL } from '../config';
 
 export default function AIChat({ project }) {
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
 
-  // Initialize chat when project changes
-  useEffect(() => {
-    if (project) {
-      setMessages([{
-        role: 'assistant',
-        content: `I have indexed the technical documentation for **${project.name}**. Ask me about drawings, specs, meeting minutes, or any project documents.`
-      }]);
-    }
-  }, [project?.id]);
-
-  const handleSubmit = async (e) => {
+  const handleSearch = async (e) => {
     e.preventDefault();
-    if (!input.trim() || loading) return;
+    if (!query.trim() || loading) return;
     
-    const userMessage = input.trim();
-    setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
+    setSearched(true);
     
     try {
       const res = await fetch(`${SYNC_WORKER_URL}/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          query: userMessage, 
+          query: query.trim(), 
           projectName: project.name.replace(/\s+/g, '_') 
         })
       });
       const data = await res.json();
-      
-      let response = '';
-      if (data.summary) {
-        response = data.summary;
-      } else if (data.results && data.results.length > 0) {
-        response = `Found ${data.total} relevant documents:\n\n`;
-        data.results.slice(0, 3).forEach((r, i) => {
-          response += `**${i+1}. ${r.title}**\n`;
-          if (r.snippets && r.snippets[0]) {
-            response += `${r.snippets[0].substring(0, 200)}...\n\n`;
-          }
-        });
-      } else {
-        response = "I couldn't find specific information about that in the project documents. Try rephrasing your question or asking about specific document types like meeting minutes, shop drawings, or correspondence.";
-      }
-      
-      setMessages(prev => [...prev, { role: 'assistant', content: response }]);
+      setResults(data.results || []);
     } catch (err) {
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: "Sorry, I encountered an error searching the documents. Please try again." 
-      }]);
+      setResults([]);
     } finally {
       setLoading(false);
     }
@@ -65,45 +35,86 @@ export default function AIChat({ project }) {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-y-auto space-y-4 mb-6 no-scrollbar">
-        {messages.map((msg, i) => (
-          <div 
-            key={i} 
-            className={`p-5 rounded-[1.5rem] text-sm font-medium leading-relaxed max-w-[85%] ${
-              msg.role === 'user' 
-                ? 'bg-blue-600 text-white ml-auto rounded-br-none' 
-                : 'bg-slate-100 text-slate-700 rounded-bl-none'
-            }`}
-          >
-            {msg.content.split('\n').map((line, j) => <p key={j} className="mb-1">{line}</p>)}
-          </div>
-        ))}
-        {loading && (
-          <div className="bg-slate-100 p-5 rounded-[1.5rem] rounded-bl-none max-w-[85%]">
-            <div className="flex gap-1">
-              <div className="w-2 h-2 bg-slate-400 rounded-full animate-pulse" />
-              <div className="w-2 h-2 bg-slate-400 rounded-full animate-pulse" style={{animationDelay: '0.2s'}} />
-              <div className="w-2 h-2 bg-slate-400 rounded-full animate-pulse" style={{animationDelay: '0.4s'}} />
-            </div>
-          </div>
-        )}
+      {/* Search header */}
+      <div className="mb-6">
+        <h2 className="text-lg font-semibold text-slate-900 mb-1">Search Documents</h2>
+        <p className="text-sm text-slate-500">Find files, drawings, and documents in this project</p>
       </div>
-      <form onSubmit={handleSubmit} className="relative">
-        <input 
-          value={input} 
-          onChange={e => setInput(e.target.value)} 
-          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-6 py-4 text-sm font-medium outline-none pr-16 text-black" 
-          placeholder="Ask about project documents..." 
-          disabled={loading} 
-        />
-        <button 
-          type="submit" 
-          disabled={loading} 
-          className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 bg-slate-900 text-white rounded-xl active:scale-95 transition-all disabled:opacity-50"
-        >
-          <Icon name="send" size={16} />
-        </button>
+
+      {/* Search input */}
+      <form onSubmit={handleSearch} className="mb-6">
+        <div className="relative">
+          <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search for flooring drawings, invoices, specifications..."
+            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-12 pr-24 py-4 text-sm outline-none focus:border-blue-300 transition-colors"
+          />
+          <button
+            type="submit"
+            disabled={loading || !query.trim()}
+            className="absolute right-2 top-1/2 -translate-y-1/2 px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-medium disabled:opacity-30 transition-opacity"
+          >
+            {loading ? 'Searching...' : 'Search'}
+          </button>
+        </div>
       </form>
+
+      {/* Quick searches */}
+      {!searched && (
+        <div className="mb-6">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Quick Searches</p>
+          <div className="flex flex-wrap gap-2">
+            {['Shop Drawings', 'Invoices', 'Specifications', 'BOQ', 'RFI'].map(term => (
+              <button
+                key={term}
+                onClick={() => { setQuery(term); }}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs text-slate-600 transition-colors"
+              >
+                {term}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      <div className="flex-1 overflow-y-auto no-scrollbar">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Icon name="loader-2" size={24} className="animate-spin text-slate-400" />
+          </div>
+        ) : searched && results.length === 0 ? (
+          <div className="text-center py-12">
+            <Icon name="search-x" size={32} className="mx-auto mb-3 text-slate-300" />
+            <p className="text-slate-500 text-sm">No documents found for "{query}"</p>
+            <p className="text-slate-400 text-xs mt-1">Try different keywords or check the spelling</p>
+          </div>
+        ) : results.length > 0 ? (
+          <div className="space-y-3">
+            {results.map((result, i) => (
+              <div 
+                key={i}
+                className="p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 transition-colors cursor-pointer"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-blue-50 rounded-lg text-blue-500">
+                    <Icon name="file-text" size={16} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-medium text-slate-900 truncate">{result.title}</h4>
+                    {result.snippets && result.snippets[0] && (
+                      <p className="text-xs text-slate-500 mt-1 line-clamp-2">{result.snippets[0]}</p>
+                    )}
+                  </div>
+                  <Icon name="external-link" size={14} className="text-slate-400" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

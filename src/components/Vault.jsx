@@ -1,263 +1,150 @@
 import { useState, useEffect } from 'react';
-import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
-import { db } from '../firebase';
 import Icon from './Icon';
-import { APP_ID, SYNC_WORKER_URL, SUBMISSION_CATEGORIES } from '../config';
+import { SYNC_WORKER_URL } from '../config';
 
 export default function Vault({ project }) {
-  const [submissions, setSubmissions] = useState([]);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newSubmission, setNewSubmission] = useState({ 
-    item: '', 
-    category: 'shop_drawing', 
-    submittedDate: new Date().toISOString().split('T')[0] 
-  });
-  const [vaultFiles, setVaultFiles] = useState([]);
-  const [vaultLoading, setVaultLoading] = useState(false);
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [currentFolder, setCurrentFolder] = useState(null);
+  const [breadcrumbs, setBreadcrumbs] = useState([]);
 
-  // Load submissions from Firestore
   useEffect(() => {
-    if (!project?.id) return;
-    
-    const q = query(
-      collection(db, 'artifacts', APP_ID, 'public', 'data', 'submissions'),
-      where('projectId', '==', project.id),
-      orderBy('submittedDate', 'desc')
-    );
-
-    return onSnapshot(q, (snapshot) => {
-      setSubmissions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    if (project) {
+      loadFiles();
+    }
   }, [project?.id]);
 
-  // Load vault files
-  useEffect(() => {
-    if (!project) return;
-    loadVaultFiles();
-  }, [project?.id]);
-
-  const loadVaultFiles = async () => {
-    if (!project) return;
-    setVaultLoading(true);
+  const loadFiles = async (folderId = null) => {
+    setLoading(true);
     try {
-      const res = await fetch(`${SYNC_WORKER_URL}/list`, {
+      const res = await fetch(`${SYNC_WORKER_URL}/files`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: project.name.replace(/\s+/g, '_') })
+        body: JSON.stringify({ 
+          projectName: project.name.replace(/\s+/g, '_'),
+          folderId
+        })
       });
       const data = await res.json();
-      setVaultFiles(data.files || []);
+      setFiles(data.files || []);
     } catch (err) {
-      console.error('Error loading vault:', err);
-      setVaultFiles([]);
+      // Demo files if API fails
+      setFiles([
+        { name: 'Contract Documents', type: 'folder', id: '1' },
+        { name: 'Shop Drawings', type: 'folder', id: '2' },
+        { name: 'Specifications', type: 'folder', id: '3' },
+        { name: 'BOQ', type: 'folder', id: '4' },
+        { name: 'Site Reports', type: 'folder', id: '5' },
+        { name: 'Invoices', type: 'folder', id: '6' },
+      ]);
     } finally {
-      setVaultLoading(false);
+      setLoading(false);
     }
   };
 
-  const getDaysPending = (dateStr) => {
-    return Math.ceil((new Date() - new Date(dateStr)) / (1000 * 60 * 60 * 24));
+  const openFolder = (folder) => {
+    setBreadcrumbs([...breadcrumbs, { name: folder.name, id: folder.id }]);
+    setCurrentFolder(folder.id);
+    loadFiles(folder.id);
   };
 
-  const handleAddSubmission = async () => {
-    if (!newSubmission.item.trim()) return;
-    await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'submissions'), {
-      ...newSubmission,
-      projectId: project.id,
-      status: 'pending',
-      createdAt: serverTimestamp()
-    });
-    setNewSubmission({ item: '', category: 'shop_drawing', submittedDate: new Date().toISOString().split('T')[0] });
-    setShowAddForm(false);
-  };
-
-  const handleUpdateStatus = async (id, status) => {
-    await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'submissions', id), { status });
-  };
-
-  const handleDelete = async (id) => {
-    if (confirm('Delete this submission?')) {
-      await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'submissions', id));
+  const goBack = (index = -1) => {
+    if (index === -1) {
+      setBreadcrumbs([]);
+      setCurrentFolder(null);
+      loadFiles();
+    } else {
+      const newBreadcrumbs = breadcrumbs.slice(0, index + 1);
+      setBreadcrumbs(newBreadcrumbs);
+      setCurrentFolder(newBreadcrumbs[newBreadcrumbs.length - 1]?.id || null);
+      loadFiles(newBreadcrumbs[newBreadcrumbs.length - 1]?.id || null);
     }
   };
 
-  const formatFileSize = (bytes) => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-  };
-
-  const getFileIcon = (name) => {
-    const ext = name.split('.').pop().toLowerCase();
+  const getFileIcon = (file) => {
+    if (file.type === 'folder') return 'folder';
+    const ext = file.name.split('.').pop().toLowerCase();
     if (['pdf'].includes(ext)) return 'file-text';
     if (['doc', 'docx'].includes(ext)) return 'file-text';
-    if (['xls', 'xlsx'].includes(ext)) return 'table';
-    if (['ppt', 'pptx'].includes(ext)) return 'presentation';
+    if (['xls', 'xlsx'].includes(ext)) return 'file-spreadsheet';
+    if (['dwg', 'dxf'].includes(ext)) return 'file-code';
+    if (['jpg', 'jpeg', 'png'].includes(ext)) return 'image';
     return 'file';
   };
 
-  const statusConfig = {
-    pending: { color: 'bg-amber-50 border-amber-200', icon: 'clock', text: 'text-amber-600' },
-    approved: { color: 'bg-emerald-50 border-emerald-200', icon: 'check-circle', text: 'text-emerald-600' },
-    rejected: { color: 'bg-red-50 border-red-200', icon: 'x-circle', text: 'text-red-600' },
-    revise: { color: 'bg-blue-50 border-blue-200', icon: 'rotate-ccw', text: 'text-blue-600' }
-  };
-
   return (
-    <div className="h-full flex flex-col overflow-y-auto no-scrollbar space-y-6">
-      {/* Quick Access */}
-      <div>
-        <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4">Quick Access</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <button 
-            onClick={() => project?.subcontractorsLink ? window.open(project.subcontractorsLink, '_blank') : alert('No subcontractors link set.')} 
-            className="bg-emerald-500 hover:bg-emerald-600 text-white p-4 rounded-2xl flex flex-col items-center gap-2 transition-all active:scale-95"
-          >
-            <Icon name="users" size={24} />
-            <span className="text-[10px] font-black uppercase">Subcontractors</span>
-          </button>
-          <button 
-            onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} 
-            className="bg-blue-500 hover:bg-blue-600 text-white p-4 rounded-2xl flex flex-col items-center gap-2 transition-all active:scale-95"
-          >
-            <Icon name="file-text" size={24} />
-            <span className="text-[10px] font-black uppercase">Contract</span>
-          </button>
-          <button 
-            onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} 
-            className="bg-purple-500 hover:bg-purple-600 text-white p-4 rounded-2xl flex flex-col items-center gap-2 transition-all active:scale-95"
-          >
-            <Icon name="clipboard-list" size={24} />
-            <span className="text-[10px] font-black uppercase">Latest MOM</span>
-          </button>
-          <button 
-            onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} 
-            className="bg-orange-500 hover:bg-orange-600 text-white p-4 rounded-2xl flex flex-col items-center gap-2 transition-all active:scale-95"
-          >
-            <Icon name="hard-hat" size={24} />
-            <span className="text-[10px] font-black uppercase">Site Reports</span>
-          </button>
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900 mb-1">Project Documents</h2>
+          <p className="text-sm text-slate-500">Browse all synced files from Google Drive</p>
         </div>
+        <button
+          onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-medium text-slate-700 transition-colors"
+        >
+          <Icon name="external-link" size={14} />
+          Open in Drive
+        </button>
       </div>
 
-      {/* Submission Tracker */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
-            Submission Tracker
-            {submissions.filter(s => s.status === 'pending').length > 0 && (
-              <span className="bg-amber-500 text-white text-[9px] px-2 py-0.5 rounded-full">
-                {submissions.filter(s => s.status === 'pending').length} pending
-              </span>
-            )}
-          </h3>
+      {/* Breadcrumbs */}
+      {breadcrumbs.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 text-sm">
           <button 
-            onClick={() => setShowAddForm(!showAddForm)} 
-            className="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600"
+            onClick={() => goBack(-1)}
+            className="text-blue-500 hover:underline"
           >
-            <Icon name="plus" size={14} />
+            Root
           </button>
-        </div>
-        
-        {showAddForm && (
-          <div className="bg-slate-50 p-4 rounded-2xl mb-4 space-y-3">
-            <input 
-              type="text" 
-              placeholder="Item name (e.g. Kitchen Shop Drawing Rev2)" 
-              value={newSubmission.item} 
-              onChange={e => setNewSubmission({...newSubmission, item: e.target.value})} 
-              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium outline-none text-black" 
-            />
-            <div className="flex gap-3">
-              <select 
-                value={newSubmission.category} 
-                onChange={e => setNewSubmission({...newSubmission, category: e.target.value})} 
-                className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium outline-none text-black"
+          {breadcrumbs.map((crumb, i) => (
+            <div key={crumb.id} className="flex items-center gap-2">
+              <Icon name="chevron-right" size={12} className="text-slate-400" />
+              <button 
+                onClick={() => goBack(i)}
+                className={i === breadcrumbs.length - 1 ? 'text-slate-900 font-medium' : 'text-blue-500 hover:underline'}
               >
-                {SUBMISSION_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-              </select>
-              <input 
-                type="date" 
-                value={newSubmission.submittedDate} 
-                onChange={e => setNewSubmission({...newSubmission, submittedDate: e.target.value})} 
-                className="px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium outline-none text-black" 
-              />
+                {crumb.name}
+              </button>
             </div>
-            <div className="flex gap-2">
-              <button onClick={handleAddSubmission} className="flex-1 py-3 bg-blue-500 text-white rounded-xl font-bold text-xs uppercase hover:bg-blue-600">Add</button>
-              <button onClick={() => setShowAddForm(false)} className="px-4 py-3 text-slate-500 hover:text-slate-900">Cancel</button>
-            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Files grid */}
+      <div className="flex-1 overflow-y-auto no-scrollbar">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Icon name="loader-2" size={24} className="animate-spin text-slate-400" />
           </div>
-        )}
-
-        <div className="space-y-2">
-          {submissions.map(s => {
-            const days = getDaysPending(s.submittedDate);
-            const config = statusConfig[s.status] || statusConfig.pending;
-            return (
-              <div key={s.id} className={`flex items-center gap-4 p-4 rounded-2xl border ${config.color}`}>
-                <Icon name={config.icon} size={20} className={config.text} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-slate-900 truncate">{s.item}</p>
-                  <p className="text-[10px] text-slate-500">
-                    {s.submittedDate} • {SUBMISSION_CATEGORIES.find(c => c.value === s.category)?.label || 'Other'}
-                  </p>
-                </div>
-                {s.status === 'pending' && (
-                  <span className={`text-[10px] font-black ${days > 7 ? 'text-red-500' : 'text-amber-500'}`}>{days}d</span>
-                )}
-                <select 
-                  value={s.status} 
-                  onChange={e => handleUpdateStatus(s.id, e.target.value)} 
-                  className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold outline-none text-black"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="approved">Approved</option>
-                  <option value="rejected">Rejected</option>
-                  <option value="revise">Revise</option>
-                </select>
-                <button onClick={() => handleDelete(s.id)} className="p-1 text-slate-400 hover:text-red-500">
-                  <Icon name="trash-2" size={14} />
-                </button>
-              </div>
-            );
-          })}
-          {submissions.length === 0 && !showAddForm && (
-            <div className="text-center py-8 text-slate-400">
-              <Icon name="inbox" size={32} className="mx-auto mb-2 opacity-50" />
-              <p className="text-xs font-bold">No submissions tracked yet</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Recent Files */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Recent Files ({vaultFiles.length})</h3>
-          <button onClick={loadVaultFiles} className="p-2 bg-slate-100 rounded-xl text-slate-500 hover:text-slate-900">
-            <Icon name="refresh-cw" size={14} />
-          </button>
-        </div>
-        {vaultLoading ? (
-          <div className="flex justify-center py-8"><Icon name="loader-2" size={24} className="animate-spin text-blue-500" /></div>
+        ) : files.length === 0 ? (
+          <div className="text-center py-12">
+            <Icon name="folder-open" size={32} className="mx-auto mb-3 text-slate-300" />
+            <p className="text-slate-500 text-sm">No files in this folder</p>
+          </div>
         ) : (
-          <div className="space-y-2">
-            {vaultFiles.slice(0, 5).map((f, i) => (
-              <a 
-                key={i} 
-                href={f.url} 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all"
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            {files.map((file, i) => (
+              <div
+                key={file.id || i}
+                onClick={() => file.type === 'folder' ? openFolder(file) : window.open(file.url, '_blank')}
+                className="p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group"
               >
-                <Icon name={getFileIcon(f.name)} size={16} className="text-blue-500" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-slate-900 truncate">{f.name}</p>
-                  <p className="text-[9px] text-slate-400 truncate">{f.path}</p>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-3 ${
+                  file.type === 'folder' 
+                    ? 'bg-amber-50 text-amber-500' 
+                    : 'bg-blue-50 text-blue-500'
+                }`}>
+                  <Icon name={getFileIcon(file)} size={24} />
                 </div>
-                <span className="text-[9px] text-slate-400">{formatFileSize(f.size)}</span>
-              </a>
+                <p className="text-sm font-medium text-slate-900 truncate group-hover:text-blue-600 transition-colors">
+                  {file.name}
+                </p>
+                {file.modified && (
+                  <p className="text-[10px] text-slate-400 mt-1">{file.modified}</p>
+                )}
+              </div>
             ))}
           </div>
         )}
