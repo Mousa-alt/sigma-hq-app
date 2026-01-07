@@ -3,7 +3,7 @@ import Icon from './Icon';
 import { SYNC_WORKER_URL } from '../config';
 import FolderPopup from './FolderPopup';
 import FileViewer from './FileViewer';
-import { parseFilename, getFileIcon } from '../utils/documentUtils';
+import { parseFilename } from '../utils/documentUtils';
 
 const FOLDER_ICONS = {
   'contract': { icon: 'file-text', color: 'blue' },
@@ -37,12 +37,12 @@ const FOLDER_ICONS = {
 };
 
 const LATEST_DOC_CONFIG = {
-  cvi: { icon: 'alert-circle', color: 'red', label: 'Latest CVI' },
-  mom: { icon: 'users', color: 'purple', label: 'Latest MOM' },
-  shop_drawing: { icon: 'ruler', color: 'indigo', label: 'Latest Shop Drawing' },
-  invoice: { icon: 'receipt', color: 'emerald', label: 'Latest Invoice' },
-  rfi: { icon: 'help-circle', color: 'blue', label: 'Latest RFI' },
-  submittal: { icon: 'package', color: 'amber', label: 'Latest Submittal' },
+  cvi: { icon: 'alert-circle', color: 'red', label: 'CVI' },
+  mom: { icon: 'users', color: 'purple', label: 'MOM' },
+  shop_drawing: { icon: 'ruler', color: 'indigo', label: 'Shop Drawing' },
+  invoice: { icon: 'receipt', color: 'emerald', label: 'Invoice' },
+  rfi: { icon: 'help-circle', color: 'blue', label: 'RFI' },
+  submittal: { icon: 'package', color: 'amber', label: 'Submittal' },
 };
 
 const getFolderStyle = (folderName) => {
@@ -54,6 +54,27 @@ const getFolderStyle = (folderName) => {
 };
 
 const cleanFolderName = (name) => name.replace(/^\d+[\.-_]\s*/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+
+// Extract the important part of filename (usually at the end)
+const getDisplayName = (filename) => {
+  // Remove extension
+  const nameWithoutExt = filename.replace(/\.[^.]+$/, '');
+  
+  // If name is short enough, show it all
+  if (nameWithoutExt.length <= 30) return nameWithoutExt;
+  
+  // Split by common separators
+  const parts = nameWithoutExt.split(/[-_\s]+/);
+  
+  // Take last 3-4 parts (usually the most important)
+  if (parts.length > 3) {
+    const importantParts = parts.slice(-4).join(' ');
+    if (importantParts.length <= 35) return '...' + importantParts;
+  }
+  
+  // Otherwise show last 30 chars
+  return '...' + nameWithoutExt.slice(-30);
+};
 
 export default function Vault({ project }) {
   const [folders, setFolders] = useState([]);
@@ -111,18 +132,18 @@ export default function Vault({ project }) {
   };
 
   const colorClasses = {
-    blue: 'bg-blue-50 text-blue-500 border-blue-200 hover:border-blue-300',
-    indigo: 'bg-indigo-50 text-indigo-500 border-indigo-200 hover:border-indigo-300',
-    violet: 'bg-violet-50 text-violet-500 border-violet-200 hover:border-violet-300',
-    purple: 'bg-purple-50 text-purple-500 border-purple-200 hover:border-purple-300',
-    emerald: 'bg-emerald-50 text-emerald-500 border-emerald-200 hover:border-emerald-300',
-    amber: 'bg-amber-50 text-amber-500 border-amber-200 hover:border-amber-300',
-    sky: 'bg-sky-50 text-sky-500 border-sky-200 hover:border-sky-300',
-    green: 'bg-green-50 text-green-500 border-green-200 hover:border-green-300',
-    red: 'bg-red-50 text-red-500 border-red-200 hover:border-red-300',
-    teal: 'bg-teal-50 text-teal-500 border-teal-200 hover:border-teal-300',
-    pink: 'bg-pink-50 text-pink-500 border-pink-200 hover:border-pink-300',
-    slate: 'bg-slate-100 text-slate-500 border-slate-200 hover:border-slate-300',
+    blue: 'bg-blue-50 text-blue-600',
+    indigo: 'bg-indigo-50 text-indigo-600',
+    violet: 'bg-violet-50 text-violet-600',
+    purple: 'bg-purple-50 text-purple-600',
+    emerald: 'bg-emerald-50 text-emerald-600',
+    amber: 'bg-amber-50 text-amber-600',
+    sky: 'bg-sky-50 text-sky-600',
+    green: 'bg-green-50 text-green-600',
+    red: 'bg-red-50 text-red-600',
+    teal: 'bg-teal-50 text-teal-600',
+    pink: 'bg-pink-50 text-pink-600',
+    slate: 'bg-slate-100 text-slate-600',
   };
 
   const formatTimeAgo = (dateStr) => {
@@ -164,7 +185,7 @@ export default function Vault({ project }) {
         </div>
       </div>
 
-      {/* Latest Documents by Type */}
+      {/* Latest Documents - Horizontal scroll on mobile, grid on desktop */}
       <div className="mb-8">
         <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Latest Documents</h3>
         {loadingLatest ? (
@@ -178,31 +199,38 @@ export default function Vault({ project }) {
             <p className="text-xs text-slate-400 mt-1">Sync your project to load documents</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 -mx-2 px-2">
             {latestDocs.map((doc, i) => {
               const config = LATEST_DOC_CONFIG[doc.type] || { icon: 'file', color: 'slate', label: doc.typeLabel };
               const parsed = parseFilename(doc.name);
+              const displayName = getDisplayName(doc.name);
+              
               return (
                 <button
                   key={i}
                   onClick={() => handleLatestDocClick(doc)}
-                  className="p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
+                  className="flex-shrink-0 w-56 p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
                 >
-                  <div className="flex items-start gap-3">
-                    <div className={`p-2 rounded-lg ${colorClasses[config.color]?.split(' ').slice(0, 2).join(' ') || 'bg-slate-100 text-slate-500'}`}>
-                      <Icon name={config.icon} size={16} />
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className={`p-1.5 rounded-lg ${colorClasses[config.color] || 'bg-slate-100 text-slate-500'}`}>
+                      <Icon name={config.icon} size={14} />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[10px] font-medium uppercase text-slate-400 mb-1">{config.label}</p>
-                      <p className="text-sm font-medium text-slate-900 truncate group-hover:text-blue-600">
-                        {parsed.description || doc.name}
-                      </p>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        {formatTimeAgo(doc.updated)}
-                        {parsed.revision && ` • Rev ${parsed.revision}`}
-                      </p>
-                    </div>
-                    <Icon name="chevron-right" size={14} className="text-slate-300 mt-1" />
+                    <span className="text-[10px] font-semibold uppercase text-slate-400">{config.label}</span>
+                  </div>
+                  
+                  {/* Sliding text container */}
+                  <div className="overflow-hidden mb-2">
+                    <p 
+                      className="text-sm font-medium text-slate-900 whitespace-nowrap group-hover:animate-marquee"
+                      title={doc.name}
+                    >
+                      {displayName}
+                    </p>
+                  </div>
+                  
+                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                    <span>{formatTimeAgo(doc.updated)}</span>
+                    {parsed.revision && <span className="bg-slate-100 px-1.5 py-0.5 rounded font-medium">Rev {parsed.revision}</span>}
                   </div>
                 </button>
               );
