@@ -40,7 +40,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # =============================================================================
-# DOCUMENT HIERARCHY SYSTEM (No CVI - Shop Drawings are primary)
+# DOCUMENT HIERARCHY SYSTEM
 # =============================================================================
 
 DOCUMENT_HIERARCHY = {
@@ -68,85 +68,59 @@ def detect_document_type(filename, path):
     lower_name = filename.lower()
     lower_path = path.lower()
     
-    # ===========================================
-    # FOLDER-BASED DETECTION (Most Reliable)
-    # ===========================================
-    
     # --- Variation Orders (Financial) ---
-    # OLD: 08.Variations & Extra Works/
     if '08.variation' in lower_path or 'extra work' in lower_path:
         return 'vo'
     
     # --- Shop Drawings (Sigma's work) ---
-    # OLD: 02.Drawings & Designs/01.Drawings/
-    # NEW: 04-Shop-Drawings/
     if '01.drawings' in lower_path and '02.drawings' in lower_path:
-        return 'shop_drawing'  # OLD structure
+        return 'shop_drawing'
     if '04-shop' in lower_path or '04_shop' in lower_path:
-        return 'shop_drawing'  # NEW structure
+        return 'shop_drawing'
     if '/drawings/' in lower_path and 'design' not in lower_path:
         return 'shop_drawing'
     
     # --- Design Drawings (Client's) ---
-    # OLD: 02.Drawings & Designs/02.Designs/
-    # NEW: 02-Design-Drawings/
     if '02.design' in lower_path or '02-design' in lower_path:
         return 'drawing'
     
     # --- MOM ---
-    # OLD: 06.MOM,Reports.../01.MOM/
-    # NEW: 09-Correspondence/ or dedicated MOM folder
     if '01.mom' in lower_path or '/mom/' in lower_path or '06.mom' in lower_path:
         return 'mom'
     
     # --- Reports ---
-    # OLD: 06.../02.Reports/
-    # NEW: 07-Site-Reports/
     if '02.report' in lower_path or '07-site' in lower_path or '/reports/' in lower_path:
         return 'report'
     
     # --- Invoices ---
-    # OLD: 07.Invoices/
-    # NEW: 06-Quantity-Surveying/ (invoices subfolder)
     if '07.invoice' in lower_path or '/invoices/' in lower_path:
         return 'invoice'
     
     # --- Submittals ---
-    # OLD: 10.Submittal/
-    # NEW: 04-Shop-Drawings/ (submittals are part of shop drawings)
     if '10.submittal' in lower_path or '/submittal' in lower_path:
         return 'submittal'
     
     # --- BOQ / QS ---
-    # OLD: 04.Qs & PO/
-    # NEW: 06-Quantity-Surveying/
     if '04.qs' in lower_path or '06-quantity' in lower_path or '/qs/' in lower_path:
         return 'boq'
     
     # --- Contract ---
-    # OLD: 03.LOI, Boq & Contract/
-    # NEW: 01-Contract-Documents/
     if '03.loi' in lower_path or '01-contract' in lower_path:
         return 'contract'
     
     # --- Specifications ---
-    # NEW: 03-Specifications/
     if '03-spec' in lower_path or '/spec/' in lower_path:
         return 'specification'
     
     # --- RFI ---
-    # NEW: 09-Correspondence/ (RFI subfolder)
     if '/rfi/' in lower_path:
         return 'rfi'
     
     # --- Correspondence ---
-    # NEW: 09-Correspondence/
     if '09-corr' in lower_path or '/correspondence/' in lower_path:
         return 'correspondence'
     
-    # ===========================================
-    # FILENAME-BASED DETECTION (Fallback)
-    # ===========================================
+    # Filename-based fallback
     if re.search(r'\bvo\b|variation', lower_name): return 'vo'
     if re.search(r'\bmom\b|minute.?of.?meeting', lower_name): return 'mom'
     if re.search(r'\brfi\b', lower_name): return 'rfi'
@@ -224,7 +198,6 @@ def sync_project(drive_url, project_name):
         for path in list(gcs_files.keys()):
             if path not in drive_files and '_extracted/' not in path:
                 bucket.blob(f"{prefix}{path}").delete()
-                print(f"Deleted: {path}")
                 stats['deleted'] += 1
 
         for path, info in drive_files.items():
@@ -243,7 +216,6 @@ def sync_project(drive_url, project_name):
                 except: pass
             
             if needs_sync:
-                print(f"Processing: {info['name']}")
                 req = drive_service.files().get_media(fileId=info['id'])
                 fh = io.BytesIO()
                 dl = MediaIoBaseDownload(fh, req)
@@ -262,7 +234,6 @@ def sync_project(drive_url, project_name):
                 
                 if is_update: stats['updated'] += 1
                 else: stats['added'] += 1
-                print(f"{'Updated' if is_update else 'Uploaded'}: {path}")
 
         print(f"DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Skipped:{stats['skipped']}")
     except Exception as e:
@@ -283,18 +254,14 @@ def delete_project_files(project_name):
     for blob in blobs:
         blob.delete()
         deleted_count += 1
-        print(f"Deleted: {blob.name}")
-    print(f"Deleted {deleted_count} files for project {project_name}")
     return {'deleted': deleted_count, 'project': project_name}
 
 # =============================================================================
-# LATEST DOCUMENTS BY TYPE - FOLDER PATH BASED
+# LATEST DOCUMENTS - APPROVED & RECENT
 # =============================================================================
 
 def extract_revision(filename):
-    """Extract revision number from filename. Returns (rev_number, rev_string)"""
     lower = filename.lower()
-    
     patterns = [
         r'rev[._\-\s]?(\d+)',
         r'revision[._\-\s]?(\d+)',
@@ -303,40 +270,28 @@ def extract_revision(filename):
         r'-r(\d+)-',
         r'v(\d+)(?:\.\d+)?(?:[_\-\s]|$)',
     ]
-    
     for pattern in patterns:
         match = re.search(pattern, lower)
         if match:
             rev_num = int(match.group(1))
             return rev_num, f"Rev {str(rev_num).zfill(2)}"
-    
     return 0, None
 
 def extract_subject(filename, path):
-    """Extract subject/discipline from folder path (primary) and filename (secondary)."""
     lower = filename.lower()
     lower_path = path.lower()
     
-    # OLD structure: 10.Architecture, 20.Electrical, etc.
-    if '10.architecture' in lower_path or '/architecture/' in lower_path:
-        return 'architectural'
-    if '20.electrical' in lower_path or '/electrical/' in lower_path:
-        return 'electrical'
-    if '30.air conditioning' in lower_path or '/ac/' in lower_path or 'hvac' in lower_path:
-        return 'mechanical'
-    if '40.fire fighting' in lower_path or '/fire' in lower_path:
-        return 'fire'
-    if '50.plumbing' in lower_path or '/plumbing/' in lower_path:
-        return 'plumbing'
-    
-    # OLD structure memo folders
+    # Folder-based subject detection
+    if '10.architecture' in lower_path or '/architecture/' in lower_path: return 'architectural'
+    if '20.electrical' in lower_path or '/electrical/' in lower_path: return 'electrical'
+    if '30.air conditioning' in lower_path or '/ac/' in lower_path or 'hvac' in lower_path: return 'mechanical'
+    if '40.fire fighting' in lower_path or '/fire' in lower_path: return 'fire'
+    if '50.plumbing' in lower_path or '/plumbing/' in lower_path: return 'plumbing'
     if '01.interior' in lower_path: return 'interior'
     if '04.lighting' in lower_path: return 'lighting'
     if '08.floor' in lower_path: return 'flooring'
     if '09.door' in lower_path: return 'door'
-    
-    if 'mep' in lower_path or 'x0.mep' in lower_path:
-        return 'mep'
+    if 'mep' in lower_path or 'x0.mep' in lower_path: return 'mep'
     
     # Filename-based fallback
     subjects = {
@@ -355,7 +310,6 @@ def extract_subject(filename, path):
         'signage': ['signage', 'sign', 'wayfinding', 'graphics'],
         'architectural': ['layout', 'plan', 'elevation', 'section', 'setting out', 'construction'],
     }
-    
     for subject, keywords in subjects.items():
         for kw in keywords:
             if kw in lower or kw in lower_path:
@@ -364,56 +318,44 @@ def extract_subject(filename, path):
     code_match = re.search(r'-([aempf])-', lower)
     if code_match:
         code_map = {'a': 'architectural', 'e': 'electrical', 'm': 'mechanical', 'p': 'plumbing', 'f': 'fire'}
-        code = code_match.group(1)
-        if code in code_map:
-            return code_map[code]
+        if code_match.group(1) in code_map:
+            return code_map[code_match.group(1)]
     
     return 'general'
 
 def is_valid_document(filename):
-    """Filter out non-document files like fonts, system files, etc."""
     lower = filename.lower()
     ext = os.path.splitext(lower)[1]
-    
     valid_ext = {'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'}
-    if ext not in valid_ext:
-        return False
-    
-    skip_patterns = [
-        'font', 'arial', 'calibri', 'times', 'helvetica',
-        'template', 'blank', 'empty',
-        'backup', 'copy of', 'old_', '~$',
-        'desktop.ini', 'thumbs.db', '.ds_store',
-    ]
-    
+    if ext not in valid_ext: return False
+    skip_patterns = ['font', 'arial', 'calibri', 'times', 'helvetica', 'template', 'blank', 'empty', 'backup', 'copy of', 'old_', '~$', 'desktop.ini', 'thumbs.db', '.ds_store']
     for pattern in skip_patterns:
-        if pattern in lower:
-            return False
-    
+        if pattern in lower: return False
     return True
 
 def get_latest_by_type(project_name):
-    """Get latest documents - grouped by TYPE and SUBJECT, sorted by REVISION"""
+    """Get latest documents - separated into APPROVED and RECENT sections"""
     bucket = storage_client.bucket(GCS_BUCKET)
     prefix = f"{project_name}/"
     
-    all_docs = []
+    approved_docs = []
+    recent_docs = []
     
     for blob in bucket.list_blobs(prefix=prefix):
         if blob.name.endswith('/') or '_extracted/' in blob.name:
             continue
         
         filename = os.path.basename(blob.name)
-        
         if not is_valid_document(filename):
             continue
         
         rel_path = blob.name[len(prefix):]
+        lower_path = rel_path.lower()
         doc_type = detect_document_type(filename, rel_path)
         subject = extract_subject(filename, rel_path)
         rev_num, rev_str = extract_revision(filename)
         
-        all_docs.append({
+        doc = {
             'name': filename,
             'path': rel_path,
             'fullPath': blob.name,
@@ -425,29 +367,37 @@ def get_latest_by_type(project_name):
             'revisionStr': rev_str,
             'typeLabel': DOCUMENT_HIERARCHY.get(doc_type, {}).get('label', 'Document'),
             'typeDescription': DOCUMENT_HIERARCHY.get(doc_type, {}).get('description', 'Document')
-        })
-    
-    # Group by type+subject, keep highest revision
-    groups = {}
-    for doc in all_docs:
-        key = f"{doc['type']}_{doc['subject']}"
+        }
         
-        if key not in groups:
-            groups[key] = doc
+        # Check if in Approved folder
+        if '/approved/' in lower_path or '05-approved' in lower_path or 'approved/' in lower_path:
+            approved_docs.append(doc)
         else:
-            if doc['revision'] > groups[key]['revision']:
+            recent_docs.append(doc)
+    
+    # Group and keep highest revision
+    def group_docs(docs):
+        groups = {}
+        for doc in docs:
+            key = f"{doc['type']}_{doc['subject']}"
+            if key not in groups:
                 groups[key] = doc
-            elif doc['revision'] == groups[key]['revision']:
-                if doc['updated'] > groups[key]['updated']:
-                    groups[key] = doc
+            elif doc['revision'] > groups[key]['revision']:
+                groups[key] = doc
+            elif doc['revision'] == groups[key]['revision'] and doc['updated'] > groups[key]['updated']:
+                groups[key] = doc
+        return groups
     
-    result = list(groups.values())
-    result.sort(key=lambda x: (
-        DOCUMENT_HIERARCHY.get(x['type'], {}).get('priority', 0),
-        x['revision']
-    ), reverse=True)
+    approved_groups = group_docs(approved_docs)
+    recent_groups = group_docs(recent_docs)
     
-    return result[:12]
+    def sort_key(x):
+        return (DOCUMENT_HIERARCHY.get(x['type'], {}).get('priority', 0), x['revision'])
+    
+    return {
+        'approved': sorted(approved_groups.values(), key=sort_key, reverse=True)[:12],
+        'recent': sorted(recent_groups.values(), key=sort_key, reverse=True)[:12]
+    }
 
 # =============================================================================
 # SEARCH
@@ -459,7 +409,6 @@ def is_arabic(text):
 def search_documents(query, project_name=None):
     client = discoveryengine.SearchServiceClient()
     serving_config = f"projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/engines/{ENGINE_ID}/servingConfigs/default_search"
-    
     search_query = f"{query} {project_name}" if project_name else query
     
     request = discoveryengine.SearchRequest(
@@ -472,7 +421,6 @@ def search_documents(query, project_name=None):
     
     try: response = client.search(request)
     except Exception as e:
-        print(f"Vertex AI Search error: {e}")
         return {'summary': f'Search error: {str(e)}', 'results': [], 'total': 0}
     
     results = []
@@ -518,48 +466,41 @@ def generate_enhanced_response(query, results, project_name):
         context_parts = []
         for i, r in enumerate(results[:5]):
             doc_info = DOCUMENT_HIERARCHY.get(r['docType'], {})
-            context_parts.append(f"Document {i+1}: {r['title']}\n   Type: {doc_info.get('description', 'Document')} (Priority: {r['priority']})\n   Path: {r['link']}\n   Content: {' ... '.join(r['snippets'][:2])}")
+            context_parts.append(f"[{i+1}] {r['title']} | {doc_info.get('label', 'Doc')} | {' '.join(r['snippets'][:1])[:200]}")
         
-        prompt = f"""You are a Senior Technical Office Engineer AI assistant at Sigma Contractors.
+        prompt = f"""You are a Technical Office AI for Sigma Contractors. Be BRIEF and use BULLETS.
 
 PROJECT: {project_name or 'All Projects'}
 QUESTION: {query}
 
-DOCUMENT AUTHORITY (highest to lowest):
-- Shop Drawings - Latest revision is authoritative for execution
-- Approved Materials/Submittals - Confirmed specifications
-- RFI Responses - Official clarifications
-- MOMs - Recorded decisions
-- Specifications & BOQ - Technical requirements
-- VO (Variation Order) - Financial/scope changes
-- Contract - Base reference
-
-RETRIEVED DOCUMENTS:
+DOCUMENTS FOUND:
 {chr(10).join(context_parts)}
 
-RESPOND IN {lang.upper()}:
+RESPOND IN {lang.upper()}. USE THIS EXACT FORMAT:
 
-**Answer:**
-Direct, specific answer in 1-2 sentences with exact values.
+**Answer**
+• [Direct answer - one line, specific value/material/dimension]
 
-**Key Details:**
-- Specific facts: dimensions, quantities, dates, revisions
-- State which document takes precedence if multiple exist
+**History** (if multiple sources exist)
+• [Oldest] Source → value/decision
+• [Newer] Source → changed to X
+• [Latest] Source → current value ✓
 
-**Source:**
-Most authoritative document (type + name + revision)
+**Source**
+• Document name (Rev XX) - most recent
 
 RULES:
-1. Be SPECIFIC with exact values
-2. Latest Shop Drawing revision is the authority
-3. Mention revision numbers
-4. If not found: "Not found in indexed documents. Check [folder]."
+- Bullets only, no paragraphs
+- One line per bullet
+- Most recent = most likely truth
+- If sources conflict: show both, note "⚠️ Verify which applies"
+- If not found: "❌ Not in indexed docs. Check [folder]."
+- Skip History section if only one source
 """
 
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        print(f"Gemini error: {e}")
         return None
 
 # =============================================================================
@@ -633,12 +574,11 @@ def compare_documents(file1_path, file2_path):
         
         prompt = f"""Compare these two document revisions. File 1 (Older): {file1_name}, File 2 (Newer): {file2_name}
 Focus on: Layout changes, Added/removed items, Specification changes, Notes changes.
-Format: ## Layout Changes, ## Added Elements, ## Removed Elements, ## Specification Changes, ## Notes & Annotations"""
+Use bullets, be brief."""
         
         response = model.generate_content([prompt, {'mime_type': mime1, 'data': base64.standard_b64encode(content1).decode('utf-8')}, {'mime_type': mime2, 'data': base64.standard_b64encode(content2).decode('utf-8')}])
         return {'comparison': response.text, 'file1': file1_name, 'file2': file2_name}
     except Exception as e:
-        print(f"Compare error: {e}")
         return {'error': str(e)}
 
 # =============================================================================
@@ -654,7 +594,7 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.4', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v5.5', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
     
     if request.method == 'GET' and path == '/view':
         try:
@@ -679,7 +619,8 @@ def sync_drive_folder(request):
             data = request.get_json(silent=True) or {}
             project = data.get('projectName', '')
             if not project: return (jsonify({'error': 'Missing projectName'}), 400, headers)
-            return (jsonify({'latest': get_latest_by_type(project)}), 200, headers)
+            result = get_latest_by_type(project)
+            return (jsonify({'approved': result['approved'], 'recent': result['recent']}), 200, headers)
         except Exception as e: return (jsonify({'error': str(e)}), 500, headers)
     
     if request.method == 'POST' and path == '/stats':
