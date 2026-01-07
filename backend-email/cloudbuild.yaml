@@ -25,7 +25,7 @@ steps:
       - '--set-env-vars'
       - 'GCS_BUCKET=sigma-docs-repository,IMAP_SERVER=mail.sigmadd-egypt.com,IMAP_PORT=993'
       - '--set-secrets'
-      - 'EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest'
+      - 'EMAIL_USER=email-user:latest,EMAIL_PASS=email-pass:latest,GEMINI_API_KEY=gemini-api-key:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
