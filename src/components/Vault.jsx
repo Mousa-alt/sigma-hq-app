@@ -3,7 +3,6 @@ import Icon from './Icon';
 import { SYNC_WORKER_URL } from '../config';
 import FolderPopup from './FolderPopup';
 import FileViewer from './FileViewer';
-import { parseFilename } from '../utils/documentUtils';
 
 const FOLDER_ICONS = {
   'contract': { icon: 'file-text', color: 'blue' },
@@ -36,9 +35,7 @@ const FOLDER_ICONS = {
   'material': { icon: 'box', color: 'amber' },
 };
 
-// Document type config
 const DOC_TYPE_CONFIG = {
-  cvi: { icon: 'alert-circle', color: 'red', label: 'CVI' },
   vo: { icon: 'file-signature', color: 'orange', label: 'VO' },
   approval: { icon: 'check-circle', color: 'green', label: 'Approval' },
   mom: { icon: 'users', color: 'purple', label: 'MOM' },
@@ -55,25 +52,12 @@ const DOC_TYPE_CONFIG = {
   other: { icon: 'file', color: 'slate', label: 'Document' },
 };
 
-// Subject/discipline labels
 const SUBJECT_LABELS = {
-  flooring: 'Flooring',
-  kitchen: 'Kitchen',
-  bathroom: 'Bathroom',
-  ceiling: 'Ceiling',
-  wall: 'Wall',
-  door: 'Door',
-  window: 'Window',
-  electrical: 'Electrical',
-  mechanical: 'Mechanical',
-  plumbing: 'Plumbing',
-  fire: 'Fire',
-  furniture: 'Furniture',
-  signage: 'Signage',
-  landscape: 'Landscape',
-  structure: 'Structure',
-  architectural: 'Architectural',
-  mep: 'MEP',
+  flooring: 'Flooring', kitchen: 'Kitchen', bathroom: 'Bathroom', ceiling: 'Ceiling',
+  wall: 'Wall', door: 'Door', window: 'Window', electrical: 'Electrical',
+  mechanical: 'Mechanical', plumbing: 'Plumbing', fire: 'Fire', furniture: 'Furniture',
+  signage: 'Signage', landscape: 'Landscape', structure: 'Structure',
+  architectural: 'Architectural', mep: 'MEP', interior: 'Interior', lighting: 'Lighting',
   general: 'General',
 };
 
@@ -91,8 +75,9 @@ export default function Vault({ project }) {
   const [folders, setFolders] = useState([]);
   const [loadingFolders, setLoadingFolders] = useState(true);
   const [activePopup, setActivePopup] = useState(null);
-  const [latestDocs, setLatestDocs] = useState([]);
-  const [loadingLatest, setLoadingLatest] = useState(true);
+  const [approvedDocs, setApprovedDocs] = useState([]);
+  const [recentDocs, setRecentDocs] = useState([]);
+  const [loadingDocs, setLoadingDocs] = useState(true);
   const [viewingFile, setViewingFile] = useState(null);
 
   useEffect(() => {
@@ -123,7 +108,7 @@ export default function Vault({ project }) {
   };
 
   const loadLatestDocs = async () => {
-    setLoadingLatest(true);
+    setLoadingDocs(true);
     try {
       const res = await fetch(`${SYNC_WORKER_URL}/latest`, {
         method: 'POST',
@@ -132,13 +117,18 @@ export default function Vault({ project }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setLatestDocs(data.latest || []);
-      } else setLatestDocs([]);
+        setApprovedDocs(data.approved || []);
+        setRecentDocs(data.recent || []);
+      } else {
+        setApprovedDocs([]);
+        setRecentDocs([]);
+      }
     } catch (err) {
-      console.error('Error loading latest docs:', err);
-      setLatestDocs([]);
+      console.error('Error loading docs:', err);
+      setApprovedDocs([]);
+      setRecentDocs([]);
     } finally {
-      setLoadingLatest(false);
+      setLoadingDocs(false);
     }
   };
 
@@ -158,10 +148,76 @@ export default function Vault({ project }) {
     slate: 'bg-slate-100 text-slate-600',
   };
 
-  const handleLatestDocClick = (doc) => {
+  const handleDocClick = (doc) => {
     const filePath = `${project.name.replace(/\s+/g, '_')}/${doc.path}`;
     setViewingFile({ name: doc.name, path: filePath });
   };
+
+  const DocCard = ({ doc, isApproved }) => {
+    const config = DOC_TYPE_CONFIG[doc.type] || DOC_TYPE_CONFIG.other;
+    const subjectLabel = SUBJECT_LABELS[doc.subject] || doc.subject;
+    
+    return (
+      <button
+        onClick={() => handleDocClick(doc)}
+        className={`flex-shrink-0 w-52 p-3 bg-white border rounded-xl hover:shadow-md transition-all text-left group ${
+          isApproved ? 'border-green-200 hover:border-green-400' : 'border-slate-200 hover:border-blue-300'
+        }`}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1.5">
+            <div className={`p-1 rounded ${colorClasses[config.color] || 'bg-slate-100 text-slate-500'}`}>
+              <Icon name={config.icon} size={10} />
+            </div>
+            <span className="text-[9px] font-bold uppercase text-slate-500">{config.label}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            {isApproved && (
+              <span className="text-[8px] font-bold bg-green-100 text-green-700 px-1 py-0.5 rounded">
+                ✓
+              </span>
+            )}
+            {doc.revisionStr && (
+              <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                {doc.revisionStr}
+              </span>
+            )}
+          </div>
+        </div>
+        
+        <p className="text-sm font-semibold text-slate-900 mb-1 capitalize">{subjectLabel}</p>
+        <p className="text-[10px] text-slate-500 truncate mb-2" title={doc.name}>{doc.name}</p>
+        
+        <div className="flex items-center justify-between text-[9px] text-slate-400">
+          <span>{doc.updated ? new Date(doc.updated).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</span>
+          <Icon name="chevron-right" size={10} className="text-slate-300 group-hover:text-blue-500" />
+        </div>
+      </button>
+    );
+  };
+
+  const DocSection = ({ title, docs, isApproved, icon, emptyText }) => (
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <Icon name={icon} size={14} className={isApproved ? 'text-green-500' : 'text-blue-500'} />
+        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{title}</h3>
+        <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">{docs.length}</span>
+      </div>
+      {loadingDocs ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 text-center">
+          <Icon name="loader-2" size={20} className="animate-spin text-slate-400 mx-auto" />
+        </div>
+      ) : docs.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-4 text-center">
+          <p className="text-xs text-slate-400">{emptyText}</p>
+        </div>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 -mx-2 px-2">
+          {docs.map((doc, i) => <DocCard key={i} doc={doc} isApproved={isApproved} />)}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="h-full flex flex-col overflow-y-auto no-scrollbar">
@@ -180,70 +236,23 @@ export default function Vault({ project }) {
         </div>
       </div>
 
-      {/* Latest Documents - by Subject + Revision */}
-      <div className="mb-8">
-        <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-3">Latest Revisions</h3>
-        {loadingLatest ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-6 text-center">
-            <Icon name="loader-2" size={20} className="animate-spin text-slate-400 mx-auto" />
-          </div>
-        ) : latestDocs.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-6 text-center">
-            <Icon name="file" size={24} className="text-slate-300 mx-auto mb-2" />
-            <p className="text-sm text-slate-400">No documents found yet</p>
-            <p className="text-xs text-slate-400 mt-1">Sync your project to load documents</p>
-          </div>
-        ) : (
-          <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 -mx-2 px-2">
-            {latestDocs.map((doc, i) => {
-              const config = DOC_TYPE_CONFIG[doc.type] || DOC_TYPE_CONFIG.other;
-              const subjectLabel = SUBJECT_LABELS[doc.subject] || doc.subject;
-              
-              return (
-                <button
-                  key={i}
-                  onClick={() => handleLatestDocClick(doc)}
-                  className="flex-shrink-0 w-52 p-3 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group"
-                >
-                  {/* Header: Type + Subject */}
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1.5">
-                      <div className={`p-1 rounded ${colorClasses[config.color] || 'bg-slate-100 text-slate-500'}`}>
-                        <Icon name={config.icon} size={10} />
-                      </div>
-                      <span className="text-[9px] font-bold uppercase text-slate-500">{config.label}</span>
-                    </div>
-                    {doc.revisionStr && (
-                      <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
-                        {doc.revisionStr}
-                      </span>
-                    )}
-                  </div>
-                  
-                  {/* Subject - the main info */}
-                  <p className="text-sm font-semibold text-slate-900 mb-1 capitalize">
-                    {subjectLabel}
-                  </p>
-                  
-                  {/* Filename */}
-                  <p 
-                    className="text-[10px] text-slate-500 truncate mb-2"
-                    title={doc.name}
-                  >
-                    {doc.name}
-                  </p>
-                  
-                  {/* Footer */}
-                  <div className="flex items-center justify-between text-[9px] text-slate-400">
-                    <span>{doc.updated ? new Date(doc.updated).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</span>
-                    <Icon name="chevron-right" size={10} className="text-slate-300 group-hover:text-blue-500" />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {/* Approved Documents */}
+      <DocSection 
+        title="Approved Drawings" 
+        docs={approvedDocs} 
+        isApproved={true}
+        icon="check-circle"
+        emptyText="No approved drawings yet"
+      />
+
+      {/* Recent Documents */}
+      <DocSection 
+        title="Recent Revisions" 
+        docs={recentDocs} 
+        isApproved={false}
+        icon="clock"
+        emptyText="No recent documents found"
+      />
 
       {/* Folders Grid */}
       <div>
