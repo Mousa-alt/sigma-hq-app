@@ -1,26 +1,32 @@
 steps:
-  # Deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/sigma-sync-worker', '.']
+    dir: 'backend'
+  
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/sigma-sync-worker']
+  
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       - 'run'
       - 'deploy'
       - 'sigma-sync-worker'
-      - '--source'
-      - '.'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/sigma-sync-worker'
       - '--region'
       - 'europe-west1'
+      - '--platform'
+      - 'managed'
       - '--allow-unauthenticated'
       - '--memory'
       - '4Gi'
       - '--timeout'
       - '540'
-      - '--set-env-vars'
-      - 'GEMINI_API_KEY=${_GEMINI_API_KEY}'
-    dir: 'backend'
-
-substitutions:
-  _GEMINI_API_KEY: ''
+      - '--set-secrets'
+      - 'GEMINI_API_KEY=gemini-api-key:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+timeout: '1200s'
