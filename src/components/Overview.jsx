@@ -13,7 +13,6 @@ export default function Overview({ projects, onSelectProject }) {
   useEffect(() => {
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
     
-    // Simple query without orderBy (no index needed) - sort client-side
     const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
       const items = [];
       const unmapped = [];
@@ -31,19 +30,15 @@ export default function Overview({ projects, onSelectProject }) {
         }
       });
       
-      // Sort by urgency: high > medium > low, then by date
-      const urgencyOrder = { high: 0, medium: 1, low: 2 };
-      const sortByUrgency = (a, b) => {
-        const aOrder = urgencyOrder[a.urgency] ?? 2;
-        const bOrder = urgencyOrder[b.urgency] ?? 2;
-        if (aOrder !== bOrder) return aOrder - bOrder;
+      // Sort by date (newest first)
+      const sortByDate = (a, b) => {
         const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
         const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
         return dateB - dateA;
       };
       
-      items.sort(sortByUrgency);
-      unmapped.sort(sortByUrgency);
+      items.sort(sortByDate);
+      unmapped.sort(sortByDate);
       
       setNeedsAttention(items.slice(0, 10));
       setUnmappedMessages(unmapped.slice(0, 10));
@@ -71,22 +66,17 @@ export default function Overview({ projects, onSelectProject }) {
     }
   };
 
-  const getUrgencyStyle = (urgency) => {
-    switch (urgency) {
-      case 'high': return 'bg-red-100 text-red-700 border-red-200';
-      case 'medium': return 'bg-amber-100 text-amber-700 border-amber-200';
-      default: return 'bg-slate-100 text-slate-600 border-slate-200';
-    }
-  };
-
-  const getActionIcon = (type) => {
-    switch (type) {
-      case 'decision_needed': return 'help-circle';
-      case 'approval_request': return 'check-circle';
-      case 'task': return 'clipboard-list';
-      case 'deadline': return 'clock';
-      case 'invoice': return 'receipt';
-      default: return 'message-circle';
+  // Action type labels and colors - same as ProjectHome
+  const getActionTypeStyle = (actionType) => {
+    switch (actionType) {
+      case 'task': return { label: 'Task', color: 'bg-blue-100 text-blue-700', icon: 'clipboard-list' };
+      case 'query': return { label: 'Query', color: 'bg-purple-100 text-purple-700', icon: 'help-circle' };
+      case 'info': return { label: 'Info', color: 'bg-slate-100 text-slate-600', icon: 'info' };
+      case 'decision_needed': return { label: 'Decision', color: 'bg-red-100 text-red-700', icon: 'help-circle' };
+      case 'approval_request': return { label: 'Approval', color: 'bg-amber-100 text-amber-700', icon: 'check-circle' };
+      case 'deadline': return { label: 'Deadline', color: 'bg-red-100 text-red-700', icon: 'clock' };
+      case 'invoice': return { label: 'Invoice', color: 'bg-emerald-100 text-emerald-700', icon: 'receipt' };
+      default: return { label: 'Message', color: 'bg-slate-100 text-slate-600', icon: 'message-circle' };
     }
   };
 
@@ -117,6 +107,7 @@ export default function Overview({ projects, onSelectProject }) {
 
   const renderMessageItem = (item, showProject = true) => {
     const isExpanded = expandedItem === item.id;
+    const actionStyle = getActionTypeStyle(item.action_type);
     
     return (
       <div 
@@ -126,10 +117,15 @@ export default function Overview({ projects, onSelectProject }) {
       >
         <div className="p-3">
           <div className="flex items-start gap-2">
-            <div className={`p-1 rounded-lg flex-shrink-0 ${getUrgencyStyle(item.urgency)}`}>
-              <Icon name={getActionIcon(item.action_type)} size={12} />
+            <div className={`p-1 rounded-lg flex-shrink-0 ${actionStyle.color}`}>
+              <Icon name={actionStyle.icon} size={12} />
             </div>
             <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className={`text-[8px] font-medium px-1 py-0.5 rounded ${actionStyle.color}`}>
+                  {actionStyle.label}
+                </span>
+              </div>
               <p className={`text-xs text-slate-800 ${isExpanded ? '' : 'line-clamp-2'}`}>
                 {item.summary || item.text}
               </p>
@@ -242,7 +238,7 @@ export default function Overview({ projects, onSelectProject }) {
                     </div>
                     <div>
                       <h3 className="text-xs font-semibold text-slate-900">Action Items</h3>
-                      <p className="text-[9px] text-slate-500">Sorted by priority</p>
+                      <p className="text-[9px] text-slate-500">Recent messages needing action</p>
                     </div>
                   </div>
                   <span className="text-[10px] font-medium text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full">
