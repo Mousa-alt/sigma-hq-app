@@ -15,11 +15,12 @@ export const FIREBASE_CONFIG = {
 export const APP_ID = 'sigma-hq-production';
 
 export const SYNC_WORKER_URL = "https://sigma-sync-worker-71025980302.europe-west1.run.app";
+export const EMAIL_SYNC_URL = "https://sigma-email-sync-71025980302.europe-west1.run.app";
 
 export const COLORS = {
-  navy: '#0A1628',      // Deeper Sigma blue for sidebar
-  blue: '#00A8E8',      // Accent blue
-  gold: '#F7941D',      // Warning/sync color
+  navy: '#0A1628',
+  blue: '#00A8E8',
+  gold: '#F7941D',
   background: '#F1F5F9',
   white: '#FFFFFF'
 };
