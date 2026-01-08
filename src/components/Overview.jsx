@@ -8,33 +8,37 @@ export default function Overview({ projects, onSelectProject }) {
   const [needsAttention, setNeedsAttention] = useState([]);
   const [unmappedMessages, setUnmappedMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandedItem, setExpandedItem] = useState(null);
 
   useEffect(() => {
-    // Real-time listener for actionable items across all projects
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
     
-    const actionableQuery = query(
+    // Simple query - get recent messages, filter client-side to avoid index issues
+    const recentQuery = query(
       messagesRef,
-      where('is_actionable', '==', true),
       orderBy('created_at', 'desc'),
-      limit(20)
+      limit(50)
     );
 
-    const unsubscribe = onSnapshot(actionableQuery, (snapshot) => {
+    const unsubscribe = onSnapshot(recentQuery, (snapshot) => {
       const items = [];
       const unmapped = [];
       
       snapshot.docs.forEach(doc => {
         const data = { id: doc.id, ...doc.data() };
-        if (data.project_name && data.project_name !== '__general__') {
-          items.push(data);
-        } else {
-          unmapped.push(data);
+        
+        // Only show actionable items
+        if (data.is_actionable) {
+          if (data.project_name && data.project_name !== '__general__') {
+            items.push(data);
+          } else {
+            unmapped.push(data);
+          }
         }
       });
       
-      setNeedsAttention(items.slice(0, 5));
-      setUnmappedMessages(unmapped.slice(0, 5));
+      setNeedsAttention(items.slice(0, 10));
+      setUnmappedMessages(unmapped.slice(0, 10));
       setLoading(false);
     }, (error) => {
       console.error('Error loading attention items:', error);
@@ -77,6 +81,95 @@ export default function Overview({ projects, onSelectProject }) {
     } catch { return ''; }
   };
 
+  const handleItemClick = (item, e) => {
+    e.stopPropagation();
+    setExpandedItem(expandedItem === item.id ? null : item.id);
+  };
+
+  const handleGoToProject = (item, e) => {
+    e.stopPropagation();
+    const project = projects.find(p => p.name === item.project_name);
+    if (project) onSelectProject(project);
+  };
+
+  const renderMessageItem = (item, showProject = true) => {
+    const isExpanded = expandedItem === item.id;
+    
+    return (
+      <div 
+        key={item.id} 
+        onClick={(e) => handleItemClick(item, e)}
+        className={`transition-all cursor-pointer ${
+          isExpanded ? 'bg-blue-50' : 'hover:bg-slate-50'
+        }`}
+      >
+        <div className="p-4">
+          <div className="flex items-start gap-3">
+            <div className={`p-1.5 rounded-lg ${getUrgencyStyle(item.urgency)}`}>
+              <Icon name={getActionIcon(item.action_type)} size={14} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm text-slate-800 ${isExpanded ? '' : 'line-clamp-2'}`}>
+                {item.summary || item.text}
+              </p>
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                {showProject && item.project_name && (
+                  <button 
+                    onClick={(e) => handleGoToProject(item, e)}
+                    className="text-[10px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded hover:bg-blue-100 transition-colors"
+                  >
+                    {item.project_name} →
+                  </button>
+                )}
+                <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                  <Icon name="message-circle" size={10} className="text-green-500" />
+                  {item.group_name || 'WhatsApp'}
+                </span>
+                <span className="text-[10px] text-slate-400">{formatTime(item.created_at)}</span>
+              </div>
+            </div>
+            <Icon 
+              name={isExpanded ? 'chevron-up' : 'chevron-down'} 
+              size={16} 
+              className="text-slate-300 flex-shrink-0" 
+            />
+          </div>
+          
+          {/* Expanded content */}
+          {isExpanded && (
+            <div className="mt-3 pt-3 border-t border-slate-200 ml-9">
+              <p className="text-sm text-slate-700 whitespace-pre-wrap">{item.text}</p>
+              
+              {item.summary && item.summary !== item.text && (
+                <div className="mt-3 p-2 bg-blue-100 rounded-lg">
+                  <p className="text-[10px] font-medium text-blue-700 mb-1">AI Summary</p>
+                  <p className="text-xs text-blue-900">{item.summary}</p>
+                </div>
+              )}
+              
+              <div className="mt-3 flex gap-2 flex-wrap">
+                <button className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors">
+                  ✓ Mark Done
+                </button>
+                <button className="px-3 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-300 transition-colors">
+                  Snooze
+                </button>
+                {item.project_name && (
+                  <button 
+                    onClick={(e) => handleGoToProject(item, e)}
+                    className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-medium hover:bg-blue-600 transition-colors"
+                  >
+                    Go to {item.project_name} →
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 animate-in">
       {/* Header */}
@@ -89,8 +182,15 @@ export default function Overview({ projects, onSelectProject }) {
         </div>
       </div>
 
+      {/* Loading State */}
+      {loading && (
+        <div className="flex items-center justify-center py-8">
+          <Icon name="loader-2" size={24} className="animate-spin text-slate-400" />
+        </div>
+      )}
+
       {/* Needs Attention Section */}
-      {(needsAttention.length > 0 || unmappedMessages.length > 0) && (
+      {!loading && (needsAttention.length > 0 || unmappedMessages.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Action Items Across Projects */}
           {needsAttention.length > 0 && (
@@ -102,44 +202,15 @@ export default function Overview({ projects, onSelectProject }) {
                   </div>
                   <div>
                     <h3 className="text-sm font-semibold text-slate-900">Needs Your Attention</h3>
-                    <p className="text-[10px] text-slate-500">Action items from all channels</p>
+                    <p className="text-[10px] text-slate-500">Click to expand • Action items from all channels</p>
                   </div>
                 </div>
                 <span className="text-xs font-medium text-red-600 bg-red-100 px-2 py-1 rounded-full">
                   {needsAttention.length} items
                 </span>
               </div>
-              <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
-                {needsAttention.map(item => (
-                  <div 
-                    key={item.id} 
-                    onClick={() => {
-                      const project = projects.find(p => p.name === item.project_name);
-                      if (project) onSelectProject(project);
-                    }}
-                    className="p-4 hover:bg-slate-50 cursor-pointer transition-colors"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`p-1.5 rounded-lg ${getUrgencyStyle(item.urgency)}`}>
-                        <Icon name={getActionIcon(item.action_type)} size={14} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-slate-800 line-clamp-2">{item.summary || item.text}</p>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="text-[10px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                            {item.project_name}
-                          </span>
-                          <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                            <Icon name="message-circle" size={10} className="text-green-500" />
-                            {item.group_name || 'WhatsApp'}
-                          </span>
-                          <span className="text-[10px] text-slate-400">{formatTime(item.created_at)}</span>
-                        </div>
-                      </div>
-                      <Icon name="chevron-right" size={16} className="text-slate-300" />
-                    </div>
-                  </div>
-                ))}
+              <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
+                {needsAttention.map(item => renderMessageItem(item, true))}
               </div>
             </div>
           )}
@@ -161,25 +232,8 @@ export default function Overview({ projects, onSelectProject }) {
                   {unmappedMessages.length} items
                 </span>
               </div>
-              <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
-                {unmappedMessages.map(item => (
-                  <div key={item.id} className="p-4 hover:bg-slate-50 transition-colors">
-                    <div className="flex items-start gap-3">
-                      <div className="p-1.5 rounded-lg bg-slate-100">
-                        <Icon name="message-circle" size={14} className="text-green-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-slate-800 line-clamp-2">{item.summary || item.text}</p>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                            {item.group_name || 'Unknown Group'}
-                          </span>
-                          <span className="text-[10px] text-slate-400">{formatTime(item.created_at)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
+                {unmappedMessages.map(item => renderMessageItem(item, false))}
               </div>
             </div>
           )}
