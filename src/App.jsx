@@ -13,7 +13,7 @@ import AIChat from './components/AIChat';
 import Vault from './components/Vault';
 import Actions from './components/Actions';
 import ProjectSettings from './components/ProjectSettings';
-import WhatsAppSettings from './components/WhatsAppSettings';
+import ChannelSettings from './components/ChannelSettings';
 import Modal from './components/Modal';
 import ChatPanel from './components/ChatPanel';
 import Icon from './components/Icon';
@@ -178,8 +178,8 @@ export default function App() {
     setSyncError(null);
   };
 
-  const handleGoToWhatsApp = () => {
-    setView('whatsapp');
+  const handleGoToSettings = () => {
+    setView('settings');
     setSelectedProject(null);
     setLastSyncTime(null);
     setSyncError(null);
@@ -203,7 +203,7 @@ export default function App() {
         isSidebarOpen={isSidebarOpen}
         onSelectProject={handleSelectProject}
         onGoToOverview={handleGoToOverview}
-        onGoToWhatsApp={handleGoToWhatsApp}
+        onGoToSettings={handleGoToSettings}
         onOpenModal={() => setIsModalOpen(true)}
         onCloseSidebar={() => setIsSidebarOpen(false)}
       />
@@ -224,9 +224,9 @@ export default function App() {
         <div className="flex-1 overflow-y-auto no-scrollbar p-6 lg:p-10">
           {view === 'overview' ? (
             <Overview projects={projects} onSelectProject={handleSelectProject} />
-          ) : view === 'whatsapp' ? (
+          ) : view === 'settings' ? (
             <div className="bg-white rounded-xl border border-slate-200 min-h-[600px] overflow-hidden animate-in">
-              <WhatsAppSettings projects={projects} />
+              <ChannelSettings projects={projects} />
             </div>
           ) : (
             <div className="h-full flex flex-col animate-in">
