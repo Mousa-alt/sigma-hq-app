@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { db } from '../firebase';
-import { EMAIL_SYNC_URL } from '../config';
-import { collection, doc, setDoc, deleteDoc, addDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { EMAIL_SYNC_URL, SYNC_WORKER_URL } from '../config';
+import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
 const GROUP_TYPES = [
   { value: 'client', label: 'Client', color: 'blue' },
@@ -19,6 +19,19 @@ const PRIORITY_OPTIONS = [
   { value: 'low', label: 'Low' },
 ];
 
+const EMAIL_TYPES = [
+  { value: 'correspondence', label: 'General' },
+  { value: 'rfi', label: 'RFI' },
+  { value: 'approval', label: 'Approval' },
+  { value: 'shop_drawing', label: 'Shop Drawing' },
+  { value: 'submittal', label: 'Submittal' },
+  { value: 'vo', label: 'Variation Order' },
+  { value: 'invoice', label: 'Invoice' },
+  { value: 'procurement', label: 'Procurement' },
+  { value: 'mom', label: 'MOM' },
+  { value: 'report', label: 'Report' },
+];
+
 export default function ChannelSettings({ projects }) {
   const [activeTab, setActiveTab] = useState('whatsapp');
   const [groups, setGroups] = useState([]);
@@ -31,8 +44,13 @@ export default function ChannelSettings({ projects }) {
   // Email sync state
   const [emailSyncing, setEmailSyncing] = useState(false);
   const [emailSyncResult, setEmailSyncResult] = useState(null);
-  const [recentEmails, setRecentEmails] = useState([]);
-  const [addingEmail, setAddingEmail] = useState(false);
+  
+  // Unclassified emails state
+  const [unclassifiedEmails, setUnclassifiedEmails] = useState([]);
+  const [loadingUnclassified, setLoadingUnclassified] = useState(false);
+  const [classifyingEmail, setClassifyingEmail] = useState(null);
+  const [expandedEmail, setExpandedEmail] = useState(null);
+  const [emailAssignments, setEmailAssignments] = useState({});
 
   useEffect(() => {
     // Real-time listener for mapped groups
@@ -60,27 +78,121 @@ export default function ChannelSettings({ projects }) {
       setRecentMessages(messages.slice(0, 6));
     });
 
-    // Real-time listener for emails
-    const emailsRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails');
-    const unsubEmails = onSnapshot(emailsRef, (snapshot) => {
-      const emails = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort by date descending
-      emails.sort((a, b) => {
-        const dateA = new Date(a.date || a.created_at || 0);
-        const dateB = new Date(b.date || b.created_at || 0);
-        return dateB - dateA;
-      });
-      setRecentEmails(emails.slice(0, 15));
-    }, (error) => {
-      console.log('Emails collection may not exist yet');
-    });
-
     return () => {
       unsubGroups();
       unsubMessages();
-      unsubEmails();
     };
   }, []);
+
+  // Load unclassified emails when email tab is active
+  useEffect(() => {
+    if (activeTab === 'email') {
+      loadUnclassifiedEmails();
+    }
+  }, [activeTab]);
+
+  const loadUnclassifiedEmails = async () => {
+    setLoadingUnclassified(true);
+    try {
+      const res = await fetch(`${SYNC_WORKER_URL}/unclassified`);
+      if (res.ok) {
+        const data = await res.json();
+        setUnclassifiedEmails(data.emails || []);
+        // Initialize assignments
+        const assignments = {};
+        data.emails?.forEach(email => {
+          assignments[email.id] = { project: '', type: email.type || 'correspondence' };
+        });
+        setEmailAssignments(assignments);
+      }
+    } catch (err) {
+      console.error('Error loading unclassified emails:', err);
+    } finally {
+      setLoadingUnclassified(false);
+    }
+  };
+
+  const classifyEmail = async (email) => {
+    const assignment = emailAssignments[email.id];
+    if (!assignment?.project) {
+      alert('Please select a project first');
+      return;
+    }
+    
+    setClassifyingEmail(email.id);
+    try {
+      const res = await fetch(`${SYNC_WORKER_URL}/classify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: email.path,
+          project: assignment.project,
+          type: assignment.type
+        })
+      });
+      
+      const result = await res.json();
+      if (result.success) {
+        // Remove from list
+        setUnclassifiedEmails(prev => prev.filter(e => e.id !== email.id));
+        // Show success feedback
+        alert(`✅ Email moved to ${assignment.project}/09-Correspondence/`);
+      } else {
+        alert(`❌ Error: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('Error classifying email:', err);
+      alert(`❌ Error: ${err.message}`);
+    } finally {
+      setClassifyingEmail(null);
+    }
+  };
+
+  const classifyAllWithProject = async (projectName) => {
+    const emailsToClassify = unclassifiedEmails
+      .filter(email => emailAssignments[email.id]?.project === projectName)
+      .map(email => ({
+        path: email.path,
+        project: projectName,
+        type: emailAssignments[email.id]?.type || 'correspondence'
+      }));
+    
+    if (emailsToClassify.length === 0) {
+      alert('No emails selected for this project');
+      return;
+    }
+    
+    setClassifyingEmail('batch');
+    try {
+      const res = await fetch(`${SYNC_WORKER_URL}/classify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emails: emailsToClassify })
+      });
+      
+      const result = await res.json();
+      if (result.success_count > 0) {
+        // Reload list
+        loadUnclassifiedEmails();
+        alert(`✅ Moved ${result.success_count} emails to ${projectName}`);
+      }
+      if (result.error_count > 0) {
+        alert(`⚠️ ${result.error_count} emails failed to move`);
+      }
+    } catch (err) {
+      console.error('Error batch classifying:', err);
+      alert(`❌ Error: ${err.message}`);
+    } finally {
+      setClassifyingEmail(null);
+    }
+  };
+
+  const updateEmailAssignment = (emailId, field, value) => {
+    setEmailAssignments(prev => ({
+      ...prev,
+      [emailId]: { ...prev[emailId], [field]: value }
+    }));
+  };
 
   const saveGroup = async (groupId, updates) => {
     setSaving(groupId);
@@ -132,7 +244,6 @@ export default function ChannelSettings({ projects }) {
     
     try {
       if (reset) {
-        // First reset the state
         await fetch(EMAIL_SYNC_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -140,7 +251,6 @@ export default function ChannelSettings({ projects }) {
         });
       }
       
-      // Then process emails
       const res = await fetch(EMAIL_SYNC_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -149,6 +259,9 @@ export default function ChannelSettings({ projects }) {
       
       const result = await res.json();
       setEmailSyncResult(result);
+      
+      // Reload unclassified after sync
+      loadUnclassifiedEmails();
       
       if (result.processed > 0) {
         alert(`✅ Email Sync Complete!\n\nProcessed: ${result.processed}\nSkipped: ${result.skipped || 0}\nErrors: ${result.errors || 0}`);
@@ -166,56 +279,23 @@ export default function ChannelSettings({ projects }) {
     }
   };
 
-  // Add test email to Firestore
-  const addTestEmail = async () => {
-    setAddingEmail(true);
-    try {
-      const emailRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails');
-      await addDoc(emailRef, {
-        message_id: `test-agora-${Date.now()}`,
-        subject: 'Re: AGORA-GEM-Updated Outdoor layout',
-        from: 'samira.belal@sigmadd-egypt.com',
-        to: 'Ahmed Abdelraoof Saleh <ahmed.abdelraoof@Hassanallam.com>',
-        date: '2026-01-06T16:58:00+02:00',
-        body: 'Dear Eng.Ahmed,\n\nPlease find attached the revised outdoor drawings, updated based on yesterday\'s requested modifications.\n\n11.AGORA-GEM-A-Updated Outdoor(06.01.2026) -SB-00\n\nThe revision includes reducing the pergola width by 120 cm from the building side and removing one column from the tent.\n\nKindly review and confirm your approval of the attached drawings so we can proceed with the works accordingly.\n\nThank you for your cooperation.\n\nBest regards,\nSamira',
-        project_name: 'Agora-GEM',
-        doc_type: 'approval',
-        confidence: 'high',
-        source: 'email',
-        is_read: false,
-        is_actionable: true,
-        status: 'new',
-        created_at: new Date().toISOString(),
-        attachments_count: 1
-      });
-      alert('✅ Test email added to Agora-GEM!\n\nGo to Agora-GEM → Home to see it.');
-    } catch (err) {
-      console.error('Error adding test email:', err);
-      alert('❌ Error: ' + err.message);
-    } finally {
-      setAddingEmail(false);
-    }
-  };
-
-  // Delete email
-  const deleteEmail = async (emailId) => {
-    try {
-      const emailRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails', emailId);
-      await deleteDoc(emailRef);
-    } catch (err) {
-      console.error('Error deleting email:', err);
-    }
-  };
-
   const unmappedGroups = detectedGroups.filter(
     name => !groups.some(g => g.name === name)
   );
 
   const tabs = [
     { id: 'whatsapp', label: 'WhatsApp', icon: 'message-circle', color: 'green', connected: true },
-    { id: 'email', label: 'Outlook', icon: 'mail', color: 'blue', connected: true },
+    { id: 'email', label: 'Email', icon: 'mail', color: 'blue', connected: true, badge: unclassifiedEmails.length },
     { id: 'slack', label: 'Slack', icon: 'hash', color: 'purple', connected: false },
   ];
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch { return dateStr; }
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -239,9 +319,15 @@ export default function ChannelSettings({ projects }) {
           >
             <Icon name={tab.icon} size={16} />
             {tab.label}
-            {tab.connected ? (
+            {tab.badge > 0 && (
+              <span className="px-1.5 py-0.5 bg-red-500 text-white text-[10px] font-bold rounded-full">
+                {tab.badge}
+              </span>
+            )}
+            {tab.connected && !tab.badge ? (
               <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-            ) : (
+            ) : null}
+            {!tab.connected && (
               <span className="text-[10px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded">Soon</span>
             )}
           </button>
@@ -320,7 +406,6 @@ export default function ChannelSettings({ projects }) {
                     }`}
                   >
                     <div className="flex items-center gap-4 flex-wrap">
-                      {/* Group Name */}
                       <div className="flex-1 min-w-[150px]">
                         <p className="text-sm font-medium text-slate-900">{group.name}</p>
                         {savedId === group.id && (
@@ -330,7 +415,6 @@ export default function ChannelSettings({ projects }) {
                         )}
                       </div>
 
-                      {/* Project Dropdown */}
                       <select
                         value={group.project || ''}
                         onChange={(e) => saveGroup(group.id, { project: e.target.value || null })}
@@ -344,7 +428,6 @@ export default function ChannelSettings({ projects }) {
                         ))}
                       </select>
 
-                      {/* Type Dropdown */}
                       <select
                         value={group.type || 'internal'}
                         onChange={(e) => saveGroup(group.id, { type: e.target.value })}
@@ -356,7 +439,6 @@ export default function ChannelSettings({ projects }) {
                         ))}
                       </select>
 
-                      {/* Priority Dropdown */}
                       <select
                         value={group.priority || 'medium'}
                         onChange={(e) => saveGroup(group.id, { priority: e.target.value })}
@@ -368,7 +450,6 @@ export default function ChannelSettings({ projects }) {
                         ))}
                       </select>
 
-                      {/* Status Indicators */}
                       <div className="flex items-center gap-2">
                         {saving === group.id && (
                           <Icon name="loader-2" size={14} className="animate-spin text-blue-500" />
@@ -445,7 +526,7 @@ export default function ChannelSettings({ projects }) {
               </div>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <button
                 onClick={() => syncEmails(false)}
                 disabled={emailSyncing}
@@ -469,141 +550,171 @@ export default function ChannelSettings({ projects }) {
                 ) : (
                   <Icon name="rotate-ccw" size={18} />
                 )}
-                Reprocess All
-              </button>
-
-              <button
-                onClick={addTestEmail}
-                disabled={addingEmail}
-                className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-all disabled:opacity-50"
-              >
-                {addingEmail ? (
-                  <Icon name="loader-2" size={18} className="animate-spin" />
-                ) : (
-                  <Icon name="plus" size={18} />
-                )}
-                Add Test Email
+                Reprocess All Emails
               </button>
             </div>
-            
-            {/* Sync Result */}
-            {emailSyncResult && (
-              <div className={`mt-4 p-4 rounded-lg ${emailSyncResult.error ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
-                {emailSyncResult.error ? (
-                  <div className="flex items-center gap-2 text-red-700">
-                    <Icon name="alert-circle" size={16} />
-                    <span className="text-sm">Error: {emailSyncResult.error}</span>
-                  </div>
-                ) : (
-                  <div className="text-sm text-green-700">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Icon name="check-circle" size={16} />
-                      <span className="font-medium">Sync Complete</span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-4 mt-2">
-                      <div className="text-center">
-                        <p className="text-2xl font-bold">{emailSyncResult.processed || 0}</p>
-                        <p className="text-xs text-green-600">Processed</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-2xl font-bold">{emailSyncResult.skipped || 0}</p>
-                        <p className="text-xs text-green-600">Skipped</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-2xl font-bold">{emailSyncResult.errors || 0}</p>
-                        <p className="text-xs text-green-600">Errors</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
-
-          {/* Recent Emails in Firestore */}
+          
+          {/* Unclassified Emails */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-slate-100 bg-blue-50 flex items-center justify-between">
+            <div className="p-4 border-b border-slate-100 bg-gradient-to-r from-red-50 to-amber-50 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Icon name="inbox" size={16} className="text-blue-600" />
-                <h3 className="text-sm font-medium text-slate-700">Emails in Database</h3>
+                <div className="p-1.5 bg-red-100 rounded-lg">
+                  <Icon name="inbox" size={16} className="text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Unclassified Emails</h3>
+                  <p className="text-[10px] text-slate-500">Assign to projects manually</p>
+                </div>
               </div>
-              <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
-                {recentEmails.length} emails
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={loadUnclassifiedEmails}
+                  disabled={loadingUnclassified}
+                  className="p-1.5 text-slate-500 hover:text-blue-600 transition-colors"
+                >
+                  <Icon name="refresh-cw" size={14} className={loadingUnclassified ? 'animate-spin' : ''} />
+                </button>
+                <span className="text-[10px] font-medium text-red-600 bg-red-100 px-2 py-1 rounded-full">
+                  {unclassifiedEmails.length} pending
+                </span>
+              </div>
             </div>
             
-            {recentEmails.length === 0 ? (
+            {loadingUnclassified ? (
+              <div className="p-8 text-center">
+                <Icon name="loader-2" size={24} className="animate-spin text-slate-400 mx-auto" />
+              </div>
+            ) : unclassifiedEmails.length === 0 ? (
               <div className="p-8 text-center text-slate-400">
-                <Icon name="mail" size={32} className="mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No emails in database yet</p>
-                <p className="text-xs mt-1">Click "Add Test Email" or "Sync New Emails" above</p>
+                <Icon name="check-circle" size={32} className="mx-auto mb-2 text-green-400" />
+                <p className="text-sm font-medium text-green-600">All emails classified!</p>
+                <p className="text-xs mt-1">No pending emails to process</p>
               </div>
             ) : (
-              <div className="divide-y divide-slate-100 max-h-[350px] overflow-y-auto">
-                {recentEmails.map(email => (
-                  <div key={email.id} className="p-3 hover:bg-slate-50 group">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          {!email.is_read && <span className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />}
-                          <span className="text-xs font-medium text-slate-800 truncate">{email.subject}</span>
+              <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
+                {unclassifiedEmails.map(email => (
+                  <div 
+                    key={email.id} 
+                    className={`transition-all ${expandedEmail === email.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                  >
+                    <div 
+                      className="p-4 cursor-pointer"
+                      onClick={() => setExpandedEmail(expandedEmail === email.id ? null : email.id)}
+                    >
+                      <div className="flex items-start gap-3">
+                        {/* Email Icon */}
+                        <div className="p-2 bg-blue-100 rounded-lg flex-shrink-0">
+                          <Icon name="mail" size={14} className="text-blue-600" />
                         </div>
-                        <p className="text-[10px] text-slate-500 truncate">
-                          From: {email.from?.split('<')[0]?.trim() || 'Unknown'}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          {email.project_name && (
-                            <span className="text-[9px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">
-                              → {email.project_name}
+                        
+                        <div className="flex-1 min-w-0">
+                          {/* Subject */}
+                          <p className="text-sm font-medium text-slate-900 line-clamp-1">{email.subject}</p>
+                          
+                          {/* From & Date */}
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-slate-500 truncate max-w-[200px]">{email.from}</span>
+                            <span className="text-xs text-slate-400">•</span>
+                            <span className="text-xs text-slate-400">{formatDate(email.date)}</span>
+                          </div>
+                          
+                          {/* Type Badge */}
+                          <div className="flex items-center gap-2 mt-2">
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+                              email.type === 'procurement' ? 'bg-emerald-100 text-emerald-700' :
+                              email.type === 'invoice' ? 'bg-amber-100 text-amber-700' :
+                              email.type === 'approval' ? 'bg-purple-100 text-purple-700' :
+                              email.type === 'rfi' ? 'bg-red-100 text-red-700' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {email.typeLabel}
                             </span>
-                          )}
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded ${
-                            email.doc_type === 'approval' ? 'bg-amber-100 text-amber-600' :
-                            email.doc_type === 'rfi' ? 'bg-purple-100 text-purple-600' :
-                            email.doc_type === 'submittal' ? 'bg-blue-100 text-blue-600' :
-                            email.doc_type === 'invoice' ? 'bg-emerald-100 text-emerald-600' :
-                            'bg-slate-100 text-slate-600'
-                          }`}>
-                            {email.doc_type || 'email'}
-                          </span>
-                          {email.is_actionable && email.status !== 'done' && (
-                            <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded">
-                              ACTION
-                            </span>
-                          )}
+                            {email.hasAttachments && (
+                              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                <Icon name="paperclip" size={10} /> Attachments
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <Icon 
+                          name={expandedEmail === email.id ? 'chevron-up' : 'chevron-down'} 
+                          size={16} 
+                          className="text-slate-400 flex-shrink-0" 
+                        />
+                      </div>
+                    </div>
+                    
+                    {/* Expanded Content */}
+                    {expandedEmail === email.id && (
+                      <div className="px-4 pb-4 pt-0">
+                        {/* Preview */}
+                        {email.body_preview && (
+                          <div className="mb-4 p-3 bg-white border border-slate-200 rounded-lg">
+                            <p className="text-xs text-slate-600 whitespace-pre-wrap">{email.body_preview}</p>
+                          </div>
+                        )}
+                        
+                        {/* Assignment Controls */}
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <select
+                            value={emailAssignments[email.id]?.project || ''}
+                            onChange={(e) => updateEmailAssignment(email.id, 'project', e.target.value)}
+                            className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white min-w-[180px]"
+                          >
+                            <option value="">Select Project...</option>
+                            {projects?.map(p => (
+                              <option key={p.id} value={p.name}>{p.name}</option>
+                            ))}
+                          </select>
+                          
+                          <select
+                            value={emailAssignments[email.id]?.type || 'correspondence'}
+                            onChange={(e) => updateEmailAssignment(email.id, 'type', e.target.value)}
+                            className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white min-w-[130px]"
+                          >
+                            {EMAIL_TYPES.map(t => (
+                              <option key={t.value} value={t.value}>{t.label}</option>
+                            ))}
+                          </select>
+                          
+                          <button
+                            onClick={() => classifyEmail(email)}
+                            disabled={classifyingEmail === email.id || !emailAssignments[email.id]?.project}
+                            className="flex items-center gap-1.5 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+                          >
+                            {classifyingEmail === email.id ? (
+                              <Icon name="loader-2" size={12} className="animate-spin" />
+                            ) : (
+                              <Icon name="check" size={12} />
+                            )}
+                            Assign
+                          </button>
                         </div>
                       </div>
-                      <button
-                        onClick={() => deleteEmail(email.id)}
-                        className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                      >
-                        <Icon name="trash-2" size={14} />
-                      </button>
-                    </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
           
-          {/* Email Classification Info */}
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <div className="flex items-start gap-3">
-              <Icon name="zap" size={20} className="text-blue-600 mt-0.5" />
-              <div>
-                <h3 className="text-sm font-medium text-blue-900">AI-Powered Classification</h3>
-                <p className="text-xs text-blue-700 mt-1">
-                  Emails are automatically classified by project using AI. The system looks for:
-                </p>
-                <ul className="text-xs text-blue-700 mt-2 list-disc list-inside space-y-1">
-                  <li>Project names in subject line and body</li>
-                  <li>Common misspellings (AGURA → Agora-GEM)</li>
-                  <li>Client names and site references</li>
-                  <li>Document types: RFI, Approval, Submittal, VO, Invoice</li>
-                </ul>
+          {/* Quick Batch Assign */}
+          {unclassifiedEmails.length > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <Icon name="zap" size={20} className="text-blue-600 mt-0.5" />
+                <div>
+                  <h3 className="text-sm font-medium text-blue-900">Quick Tip</h3>
+                  <p className="text-xs text-blue-700 mt-1">
+                    Click on each email to expand, select a project, and click Assign. 
+                    Emails will be moved to <code className="bg-blue-100 px-1 rounded">Project/09-Correspondence/</code> folder.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
