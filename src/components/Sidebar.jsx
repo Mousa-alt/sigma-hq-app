@@ -17,27 +17,61 @@ export default function Sidebar({
 }) {
   const [projectBadges, setProjectBadges] = useState({});
 
-  // Real-time badges for pending action items per project
+  // Real-time badges from both WhatsApp AND Email
   useEffect(() => {
-    const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
+    const whatsappRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
+    const emailRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails');
     
-    // Simple query without where clause (no index needed)
-    const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
-      const badges = {};
+    let whatsappBadges = {};
+    let emailBadges = {};
+    
+    const updateBadges = () => {
+      const combined = {};
+      // Combine WhatsApp badges
+      Object.entries(whatsappBadges).forEach(([project, count]) => {
+        combined[project] = (combined[project] || 0) + count;
+      });
+      // Combine Email badges
+      Object.entries(emailBadges).forEach(([project, count]) => {
+        combined[project] = (combined[project] || 0) + count;
+      });
+      setProjectBadges(combined);
+    };
+    
+    // Listen to WhatsApp
+    const unsubWhatsapp = onSnapshot(whatsappRef, (snapshot) => {
+      whatsappBadges = {};
       snapshot.docs.forEach(doc => {
         const data = doc.data();
         const projectName = data.project_name;
-        // Count actionable messages that aren't done
         if (projectName && data.is_actionable === true && data.status !== 'done') {
-          badges[projectName] = (badges[projectName] || 0) + 1;
+          whatsappBadges[projectName] = (whatsappBadges[projectName] || 0) + 1;
         }
       });
-      setProjectBadges(badges);
+      updateBadges();
     }, (error) => {
-      console.error('Sidebar badges error:', error);
+      console.error('Sidebar WhatsApp badges error:', error);
     });
     
-    return () => unsubscribe();
+    // Listen to Emails
+    const unsubEmail = onSnapshot(emailRef, (snapshot) => {
+      emailBadges = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const projectName = data.project_name;
+        if (projectName && data.is_actionable === true && data.status !== 'done') {
+          emailBadges[projectName] = (emailBadges[projectName] || 0) + 1;
+        }
+      });
+      updateBadges();
+    }, (error) => {
+      console.error('Sidebar Email badges error:', error);
+    });
+    
+    return () => {
+      unsubWhatsapp();
+      unsubEmail();
+    };
   }, []);
 
   const totalPending = Object.values(projectBadges).reduce((a, b) => a + b, 0);
