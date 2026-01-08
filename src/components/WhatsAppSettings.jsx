@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { db } from '../firebase';
-import { collection, doc, getDocs, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
 const GROUP_TYPES = [
   { value: 'client', label: 'Client', color: 'blue' },
@@ -23,49 +23,45 @@ export default function WhatsAppSettings({ projects }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
   const [detectedGroups, setDetectedGroups] = useState([]);
+  const [recentMessages, setRecentMessages] = useState([]);
 
   useEffect(() => {
-    loadGroups();
-    loadDetectedGroups();
-  }, []);
-
-  const loadGroups = async () => {
-    try {
-      const groupsRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_groups');
-      const snapshot = await getDocs(groupsRef);
+    // Real-time listener for mapped groups
+    const groupsRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_groups');
+    const unsubGroups = onSnapshot(groupsRef, (snapshot) => {
       const groupList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setGroups(groupList);
-    } catch (err) {
-      console.error('Error loading groups:', err);
-    } finally {
       setLoading(false);
-    }
-  };
+    });
 
-  const loadDetectedGroups = async () => {
-    try {
-      // Get unique group names from messages
-      const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
-      const snapshot = await getDocs(messagesRef);
+    // Real-time listener for messages to detect new groups
+    const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
+    const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'), limit(100));
+    const unsubMessages = onSnapshot(messagesQuery, (snapshot) => {
       const groupNames = new Set();
+      const messages = [];
       snapshot.docs.forEach(doc => {
         const data = doc.data();
+        messages.push({ id: doc.id, ...data });
         if (data.group_name) {
           groupNames.add(data.group_name);
         }
       });
       setDetectedGroups(Array.from(groupNames));
-    } catch (err) {
-      console.error('Error loading detected groups:', err);
-    }
-  };
+      setRecentMessages(messages.slice(0, 10));
+    });
+
+    return () => {
+      unsubGroups();
+      unsubMessages();
+    };
+  }, []);
 
   const saveGroup = async (groupId, updates) => {
     setSaving(groupId);
     try {
       const groupRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_groups', groupId);
       await setDoc(groupRef, updates, { merge: true });
-      setGroups(prev => prev.map(g => g.id === groupId ? { ...g, ...updates } : g));
     } catch (err) {
       console.error('Error saving group:', err);
     } finally {
@@ -88,7 +84,6 @@ export default function WhatsAppSettings({ projects }) {
     try {
       const groupRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_groups', groupId);
       await setDoc(groupRef, newGroup);
-      setGroups(prev => [...prev, newGroup]);
     } catch (err) {
       console.error('Error adding group:', err);
     }
@@ -98,7 +93,6 @@ export default function WhatsAppSettings({ projects }) {
     try {
       const groupRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_groups', groupId);
       await deleteDoc(groupRef);
-      setGroups(prev => prev.filter(g => g.id !== groupId));
     } catch (err) {
       console.error('Error deleting group:', err);
     }
@@ -124,7 +118,7 @@ export default function WhatsAppSettings({ projects }) {
         <div className="flex items-center gap-2">
           <span className="flex items-center gap-2 px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-xs font-medium">
             <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            Connected
+            Live Sync
           </span>
         </div>
       </div>
@@ -269,6 +263,32 @@ export default function WhatsAppSettings({ projects }) {
           </div>
         )}
       </div>
+
+      {/* Recent Messages */}
+      {recentMessages.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+            <h3 className="text-sm font-medium text-slate-700">Live Message Stream</h3>
+          </div>
+          <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
+            {recentMessages.map(msg => (
+              <div key={msg.id} className="p-4 hover:bg-slate-50">
+                <div className="flex items-start justify-between mb-1">
+                  <span className="text-xs font-medium text-green-600">{msg.group_name || 'Unknown'}</span>
+                  <span className="text-xs text-slate-400">
+                    {msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleTimeString() : ''}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-700">{msg.text}</p>
+                {msg.summary && (
+                  <p className="text-xs text-blue-500 mt-1">AI: {msg.summary}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Processing Rules */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
