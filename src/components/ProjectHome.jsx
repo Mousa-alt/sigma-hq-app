@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import FolderPopup from './FolderPopup';
 import { SYNC_WORKER_URL } from '../config';
+import { db } from '../firebase';
+import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 
 const EMAIL_SYNC_URL = 'https://sigma-email-sync-p2hbneatwa-ew.a.run.app';
 
@@ -23,11 +25,14 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
   const [loadingStats, setLoadingStats] = useState(true);
   const [recentEmails, setRecentEmails] = useState([]);
   const [loadingEmails, setLoadingEmails] = useState(true);
+  const [whatsappMessages, setWhatsappMessages] = useState([]);
+  const [loadingWhatsapp, setLoadingWhatsapp] = useState(true);
 
   useEffect(() => {
     if (project) {
       loadStats();
       loadRecentEmails();
+      loadWhatsappMessages();
       setDates({
         startDate: project.startDate || '',
         expectedEndDate: project.expectedEndDate || '',
@@ -67,6 +72,43 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       console.error('Error loading emails:', err);
     } finally {
       setLoadingEmails(false);
+    }
+  };
+
+  const loadWhatsappMessages = async () => {
+    setLoadingWhatsapp(true);
+    try {
+      const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
+      
+      // Try to get messages for this project, or all recent messages
+      let q;
+      if (project?.name) {
+        // First try to get project-specific messages
+        q = query(
+          messagesRef,
+          where('project_name', '==', project.name),
+          orderBy('created_at', 'desc'),
+          limit(10)
+        );
+      } else {
+        q = query(messagesRef, orderBy('created_at', 'desc'), limit(10));
+      }
+      
+      const snapshot = await getDocs(q);
+      let messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // If no project-specific messages, get all recent actionable ones
+      if (messages.length === 0) {
+        const allQuery = query(messagesRef, orderBy('created_at', 'desc'), limit(10));
+        const allSnapshot = await getDocs(allQuery);
+        messages = allSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      }
+      
+      setWhatsappMessages(messages);
+    } catch (err) {
+      console.error('Error loading WhatsApp messages:', err);
+    } finally {
+      setLoadingWhatsapp(false);
     }
   };
 
@@ -175,6 +217,15 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       case 'invoice': return 'text-emerald-500 bg-emerald-50';
       case 'mom': return 'text-blue-500 bg-blue-50';
       case 'vo': return 'text-orange-500 bg-orange-50';
+      default: return 'text-slate-500 bg-slate-50';
+    }
+  };
+
+  const getUrgencyColor = (urgency) => {
+    switch (urgency?.toLowerCase()) {
+      case 'high': return 'text-red-500 bg-red-50';
+      case 'medium': return 'text-amber-500 bg-amber-50';
+      case 'low': return 'text-green-500 bg-green-50';
       default: return 'text-slate-500 bg-slate-50';
     }
   };
@@ -309,7 +360,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         <div>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Activity Feed</h3>
-            <button onClick={loadRecentEmails} className="text-[9px] text-blue-500 hover:text-blue-600 flex items-center gap-1">
+            <button onClick={() => { loadRecentEmails(); loadWhatsappMessages(); }} className="text-[9px] text-blue-500 hover:text-blue-600 flex items-center gap-1">
               <Icon name="refresh-cw" size={10} /> Refresh
             </button>
           </div>
@@ -348,15 +399,48 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
             </div>
           </div>
 
-          {/* WhatsApp Summaries Placeholder */}
+          {/* WhatsApp Messages */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
             <div className="p-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
               <Icon name="message-circle" size={14} className="text-green-500" />
               <span className="text-xs font-medium text-slate-700">WhatsApp Discussions</span>
-              <span className="text-[9px] text-slate-400 bg-slate-200 px-1.5 py-0.5 rounded ml-auto">Coming soon</span>
+              {whatsappMessages.length > 0 && (
+                <span className="text-[9px] text-green-600 bg-green-100 px-1.5 py-0.5 rounded ml-auto">
+                  {whatsappMessages.filter(m => m.is_actionable).length} actionable
+                </span>
+              )}
             </div>
-            <div className="p-4 text-center text-slate-400 text-xs">
-              Connect WhatsApp to see discussion summaries
+            <div className="divide-y divide-slate-100 max-h-[200px] overflow-y-auto">
+              {loadingWhatsapp ? (
+                <div className="p-4 flex items-center justify-center">
+                  <Icon name="loader-2" size={16} className="animate-spin text-slate-400" />
+                </div>
+              ) : whatsappMessages.length > 0 ? (
+                whatsappMessages.map((msg) => (
+                  <div key={msg.id} className={`p-3 hover:bg-slate-50 transition-colors ${msg.is_actionable ? 'border-l-2 border-l-amber-400' : ''}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-slate-800 truncate">{msg.summary || msg.text?.substring(0, 60)}</p>
+                        <p className="text-[10px] text-slate-500 truncate">
+                          {msg.group_name} • {msg.sender?.split('@')[0]}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {msg.is_actionable && (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded ${getUrgencyColor(msg.urgency)}`}>
+                            {msg.action_type?.toUpperCase() || 'ACTION'}
+                          </span>
+                        )}
+                        <span className="text-[9px] text-slate-400">{formatEmailDate(msg.created_at)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-4 text-center text-slate-400 text-xs">
+                  No WhatsApp messages yet
+                </div>
+              )}
             </div>
           </div>
 
