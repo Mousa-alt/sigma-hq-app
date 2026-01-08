@@ -7,7 +7,8 @@ export default function Sidebar({
   view, 
   isSidebarOpen, 
   onSelectProject, 
-  onGoToOverview, 
+  onGoToOverview,
+  onGoToWhatsApp,
   onOpenModal,
   onCloseSidebar 
 }) {
@@ -37,6 +38,17 @@ export default function Sidebar({
         >
           <Icon name="layout-dashboard" size={18} /> 
           <span className="font-medium text-sm">Dashboard</span>
+        </button>
+
+        {/* WhatsApp Settings */}
+        <button 
+          onClick={() => { onGoToWhatsApp?.(); onCloseSidebar(); }} 
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all mb-2 ${view === 'whatsapp' ? 'text-white shadow-lg' : 'text-slate-400 hover:text-white'}`} 
+          style={view === 'whatsapp' ? { backgroundColor: '#25D366' } : {}}
+        >
+          <Icon name="message-circle" size={18} /> 
+          <span className="font-medium text-sm">WhatsApp</span>
+          <span className="ml-auto text-[9px] bg-green-500 text-white px-1.5 py-0.5 rounded">NEW</span>
         </button>
 
         {/* Projects section */}
