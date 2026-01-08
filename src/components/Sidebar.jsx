@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { COLORS, BRANDING } from '../config';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 
 export default function Sidebar({ 
   projects, 
@@ -18,24 +18,25 @@ export default function Sidebar({
   const [projectBadges, setProjectBadges] = useState({});
 
   // Real-time badges for pending action items per project
-  // Badge shows when is_actionable === true (mark as done sets is_actionable to false)
   useEffect(() => {
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
-    const unsubscribe = onSnapshot(
-      query(messagesRef, where('is_actionable', '==', true)),
-      (snapshot) => {
-        const badges = {};
-        snapshot.docs.forEach(doc => {
-          const data = doc.data();
-          const projectName = data.project_name;
-          // Only count if not marked as done
-          if (projectName && data.status !== 'done') {
-            badges[projectName] = (badges[projectName] || 0) + 1;
-          }
-        });
-        setProjectBadges(badges);
-      }
-    );
+    
+    // Simple query without where clause (no index needed)
+    const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
+      const badges = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const projectName = data.project_name;
+        // Count actionable messages that aren't done
+        if (projectName && data.is_actionable === true && data.status !== 'done') {
+          badges[projectName] = (badges[projectName] || 0) + 1;
+        }
+      });
+      setProjectBadges(badges);
+    }, (error) => {
+      console.error('Sidebar badges error:', error);
+    });
+    
     return () => unsubscribe();
   }, []);
 
@@ -53,7 +54,6 @@ export default function Sidebar({
 
       {/* Navigation */}
       <nav className="flex-1 p-4 overflow-y-auto no-scrollbar">
-        {/* Main Navigation */}
         <p className="px-4 mb-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Navigation</p>
         
         <button 
@@ -70,7 +70,7 @@ export default function Sidebar({
           )}
         </button>
 
-        {/* Projects Section */}
+        {/* Projects */}
         <div className="mt-6">
           <div className="flex items-center justify-between px-4 mb-3">
             <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Projects</span>
@@ -113,7 +113,7 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* Settings Section */}
+        {/* Settings */}
         <div className="mt-8">
           <p className="px-4 mb-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Settings</p>
           
@@ -125,7 +125,6 @@ export default function Sidebar({
           >
             <Icon name="sliders" size={16} /> 
             <span className="text-xs font-medium">Channel Mapping</span>
-            <span className="ml-auto text-[9px] text-slate-500">WhatsApp, Email</span>
           </button>
         </div>
       </nav>
