@@ -160,31 +160,26 @@ export default function Vault({ project }) {
     return (
       <button
         onClick={() => handleDocClick(doc)}
-        className={`flex-shrink-0 w-44 sm:w-52 p-2.5 sm:p-3 bg-white border rounded-xl hover:shadow-md transition-all text-left group ${
+        className={`flex-shrink-0 w-40 sm:w-48 p-2.5 sm:p-3 bg-white border rounded-xl hover:shadow-md transition-all text-left group ${
           isApproved ? 'border-green-200 hover:border-green-400' : 'border-slate-200 hover:border-blue-300'
         }`}
       >
-        <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-          <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-1">
             <div className={`p-1 rounded ${colorClasses[config.color] || 'bg-slate-100 text-slate-500'}`}>
               <Icon name={config.icon} size={10} />
             </div>
-            <span className="text-[8px] sm:text-[9px] font-bold uppercase text-slate-500">{config.label}</span>
+            <span className="text-[8px] font-bold uppercase text-slate-500">{config.label}</span>
           </div>
-          <div className="flex items-center gap-1">
-            {isApproved && (
-              <span className="text-[7px] sm:text-[8px] font-bold bg-green-100 text-green-700 px-1 py-0.5 rounded">✓</span>
-            )}
-            {doc.revisionStr && (
-              <span className="text-[8px] sm:text-[9px] font-bold bg-blue-100 text-blue-700 px-1 sm:px-1.5 py-0.5 rounded">{doc.revisionStr}</span>
-            )}
-          </div>
+          {doc.revisionStr && (
+            <span className="text-[8px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded">{doc.revisionStr}</span>
+          )}
         </div>
         
-        <p className="text-xs sm:text-sm font-semibold text-slate-900 mb-0.5 sm:mb-1 capitalize truncate">{subjectLabel}</p>
-        <p className="text-[9px] sm:text-[10px] text-slate-500 truncate mb-1.5 sm:mb-2" title={doc.name}>{doc.name}</p>
+        <p className="text-xs font-semibold text-slate-900 mb-0.5 capitalize truncate">{subjectLabel}</p>
+        <p className="text-[9px] text-slate-500 truncate mb-1" title={doc.name}>{doc.name}</p>
         
-        <div className="flex items-center justify-between text-[8px] sm:text-[9px] text-slate-400">
+        <div className="flex items-center justify-between text-[8px] text-slate-400">
           <span>{doc.updated ? new Date(doc.updated).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</span>
           <Icon name="chevron-right" size={10} className="text-slate-300 group-hover:text-blue-500" />
         </div>
@@ -193,47 +188,49 @@ export default function Vault({ project }) {
   };
 
   const DocSection = ({ title, docs, isApproved, icon, emptyText }) => (
-    <div className="mb-4 sm:mb-6">
+    <div className="mb-4 sm:mb-6 overflow-hidden">
       <div className="flex items-center gap-2 mb-2 sm:mb-3">
-        <Icon name={icon} size={12} className={`sm:w-3.5 sm:h-3.5 ${isApproved ? 'text-green-500' : 'text-blue-500'}`} />
+        <Icon name={icon} size={12} className={isApproved ? 'text-green-500' : 'text-blue-500'} />
         <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400">{title}</h3>
-        <span className="text-[8px] sm:text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">{docs.length}</span>
+        <span className="text-[8px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">{docs.length}</span>
       </div>
       {loadingDocs ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 text-center">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 text-center">
           <Icon name="loader-2" size={18} className="animate-spin text-slate-400 mx-auto" />
         </div>
       ) : docs.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 text-center">
-          <p className="text-[10px] sm:text-xs text-slate-400">{emptyText}</p>
+        <div className="bg-white border border-slate-200 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-slate-400">{emptyText}</p>
         </div>
       ) : (
-        <div className="flex gap-2 sm:gap-3 overflow-x-auto no-scrollbar pb-2 -mx-2 px-2">
-          {docs.map((doc, i) => <DocCard key={i} doc={doc} isApproved={isApproved} />)}
+        <div className="overflow-x-auto no-scrollbar -mx-4 px-4">
+          <div className="flex gap-2 sm:gap-3 pb-2 w-max">
+            {docs.map((doc, i) => <DocCard key={i} doc={doc} isApproved={isApproved} />)}
+          </div>
         </div>
       )}
     </div>
   );
 
   return (
-    <div className="h-full flex flex-col overflow-y-auto no-scrollbar pb-24">
-      {/* Header - Mobile Optimized with equal button heights */}
+    <div className="h-full flex flex-col overflow-x-hidden overflow-y-auto no-scrollbar pb-40 sm:pb-24">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-6">
         <div>
-          <h2 className="text-base sm:text-lg font-semibold text-slate-900 mb-0.5 sm:mb-1">Project Documents</h2>
+          <h2 className="text-base sm:text-lg font-semibold text-slate-900 mb-0.5">Project Documents</h2>
           <p className="text-xs sm:text-sm text-slate-500">Browse and access all project files</p>
         </div>
         <div className="flex items-stretch gap-2">
           <button 
             onClick={() => { loadFolders(); loadLatestDocs(); }} 
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-[10px] sm:text-xs font-medium text-slate-600"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-[10px] sm:text-xs font-medium text-slate-600"
           >
             <Icon name="refresh-cw" size={12} />
             <span>Refresh</span>
           </button>
           <button 
             onClick={() => project?.driveLink && window.open(project.driveLink, '_blank')} 
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 bg-slate-900 hover:bg-slate-800 rounded-lg text-[10px] sm:text-xs font-medium text-white"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-900 hover:bg-slate-800 rounded-lg text-[10px] sm:text-xs font-medium text-white"
           >
             <Icon name="external-link" size={12} />
             <span>Open Drive</span>
@@ -263,12 +260,12 @@ export default function Vault({ project }) {
       <div>
         <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-2 sm:mb-3">All Folders</h3>
         {loadingFolders ? (
-          <div className="flex items-center justify-center py-8 sm:py-12"><Icon name="loader-2" size={20} className="animate-spin text-slate-400" /></div>
+          <div className="flex items-center justify-center py-8"><Icon name="loader-2" size={20} className="animate-spin text-slate-400" /></div>
         ) : folders.length === 0 ? (
-          <div className="text-center py-8 sm:py-12 bg-slate-50 rounded-xl border border-slate-200">
-            <Icon name="folder" size={28} className="text-slate-300 mx-auto mb-2 sm:mb-3" />
-            <p className="text-xs sm:text-sm text-slate-500">No folders found</p>
-            <p className="text-[10px] sm:text-xs text-slate-400 mt-1">Sync your project to load folders</p>
+          <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
+            <Icon name="folder" size={28} className="text-slate-300 mx-auto mb-2" />
+            <p className="text-xs text-slate-500">No folders found</p>
+            <p className="text-[10px] text-slate-400 mt-1">Sync your project to load folders</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
@@ -276,12 +273,12 @@ export default function Vault({ project }) {
               const style = getFolderStyle(folder.name);
               const displayName = cleanFolderName(folder.name);
               return (
-                <button key={i} onClick={() => setActivePopup({ folder: folder.name, title: displayName })} className="p-3 sm:p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group">
-                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center mb-2 sm:mb-3 ${colorClasses[style.color]}`}>
-                    <Icon name={style.icon} size={16} className="sm:w-[18px] sm:h-[18px]" />
+                <button key={i} onClick={() => setActivePopup({ folder: folder.name, title: displayName })} className="p-3 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-left group">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${colorClasses[style.color]}`}>
+                    <Icon name={style.icon} size={16} />
                   </div>
                   <p className="text-[10px] sm:text-xs font-medium text-slate-900 group-hover:text-blue-600 truncate">{displayName}</p>
-                  <p className="text-[9px] sm:text-[10px] text-slate-400 mt-0.5 truncate">{folder.name}</p>
+                  <p className="text-[9px] text-slate-400 mt-0.5 truncate">{folder.name}</p>
                 </button>
               );
             })}
