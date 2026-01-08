@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { COLORS } from '../config';
 import { db } from '../firebase';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 
 export default function Overview({ projects, onSelectProject }) {
   const [needsAttention, setNeedsAttention] = useState([]);
@@ -13,20 +13,16 @@ export default function Overview({ projects, onSelectProject }) {
   useEffect(() => {
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
     
-    const recentQuery = query(
-      messagesRef,
-      orderBy('created_at', 'desc'),
-      limit(100)
-    );
-
-    const unsubscribe = onSnapshot(recentQuery, (snapshot) => {
+    // Simple query without orderBy (no index needed) - sort client-side
+    const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
       const items = [];
       const unmapped = [];
       
       snapshot.docs.forEach(doc => {
         const data = { id: doc.id, ...doc.data() };
         
-        if (data.is_actionable) {
+        // Only show actionable items that aren't done
+        if (data.is_actionable && data.status !== 'done') {
           if (data.project_name && data.project_name !== '__general__') {
             items.push(data);
           } else {
@@ -35,14 +31,15 @@ export default function Overview({ projects, onSelectProject }) {
         }
       });
       
-      // Sort by urgency: high > medium > low
+      // Sort by urgency: high > medium > low, then by date
       const urgencyOrder = { high: 0, medium: 1, low: 2 };
       const sortByUrgency = (a, b) => {
         const aOrder = urgencyOrder[a.urgency] ?? 2;
         const bOrder = urgencyOrder[b.urgency] ?? 2;
         if (aOrder !== bOrder) return aOrder - bOrder;
-        // Secondary sort by date
-        return new Date(b.created_at) - new Date(a.created_at);
+        const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
+        const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
+        return dateB - dateA;
       };
       
       items.sort(sortByUrgency);
@@ -58,6 +55,21 @@ export default function Overview({ projects, onSelectProject }) {
 
     return () => unsubscribe();
   }, []);
+
+  // Mark message as done
+  const markItemDone = async (itemId, e) => {
+    e.stopPropagation();
+    try {
+      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages', itemId);
+      await updateDoc(msgRef, { 
+        status: 'done',
+        is_actionable: false,
+        updated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Error marking done:', err);
+    }
+  };
 
   const getUrgencyStyle = (urgency) => {
     switch (urgency) {
@@ -112,22 +124,22 @@ export default function Overview({ projects, onSelectProject }) {
         onClick={(e) => handleItemClick(item, e)}
         className={`transition-all cursor-pointer ${isExpanded ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
       >
-        <div className="p-3 sm:p-4">
-          <div className="flex items-start gap-2 sm:gap-3">
-            <div className={`p-1 sm:p-1.5 rounded-lg flex-shrink-0 ${getUrgencyStyle(item.urgency)}`}>
-              <Icon name={getActionIcon(item.action_type)} size={12} className="sm:w-3.5 sm:h-3.5" />
+        <div className="p-3">
+          <div className="flex items-start gap-2">
+            <div className={`p-1 rounded-lg flex-shrink-0 ${getUrgencyStyle(item.urgency)}`}>
+              <Icon name={getActionIcon(item.action_type)} size={12} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className={`text-xs sm:text-sm text-slate-800 ${isExpanded ? '' : 'line-clamp-2'}`}>
+              <p className={`text-xs text-slate-800 ${isExpanded ? '' : 'line-clamp-2'}`}>
                 {item.summary || item.text}
               </p>
-              <div className="flex items-center gap-1.5 sm:gap-2 mt-1 flex-wrap">
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 {showProject && item.project_name && (
-                  <span className="text-[9px] sm:text-[10px] font-medium text-blue-600 bg-blue-50 px-1 sm:px-1.5 py-0.5 rounded">
+                  <span className="text-[9px] font-medium text-blue-600 bg-blue-50 px-1 py-0.5 rounded">
                     {item.project_name}
                   </span>
                 )}
-                <span className="text-[9px] sm:text-[10px] text-slate-400">
+                <span className="text-[9px] text-slate-400">
                   {item.group_name || 'WhatsApp'} • {formatTime(item.created_at)}
                 </span>
               </div>
@@ -136,24 +148,20 @@ export default function Overview({ projects, onSelectProject }) {
           </div>
           
           {isExpanded && (
-            <div className="mt-3 pt-3 border-t border-slate-200 ml-6 sm:ml-9">
-              <p className="text-xs sm:text-sm text-slate-700 whitespace-pre-wrap">{item.text}</p>
+            <div className="mt-2 pt-2 border-t border-slate-200 ml-6">
+              <p className="text-xs text-slate-700 whitespace-pre-wrap">{item.text}</p>
               
-              {item.summary && item.summary !== item.text && (
-                <div className="mt-2 sm:mt-3 p-2 bg-blue-100 rounded-lg">
-                  <p className="text-[9px] sm:text-[10px] font-medium text-blue-700 mb-1">AI Summary</p>
-                  <p className="text-[10px] sm:text-xs text-blue-900">{item.summary}</p>
-                </div>
-              )}
-              
-              <div className="mt-2 sm:mt-3 flex gap-2 flex-wrap">
-                <button className="px-2 sm:px-3 py-1 sm:py-1.5 bg-green-500 text-white rounded-lg text-[10px] sm:text-xs font-medium">
+              <div className="mt-2 flex gap-2 flex-wrap">
+                <button 
+                  onClick={(e) => markItemDone(item.id, e)}
+                  className="px-2 py-1 bg-green-500 text-white rounded-lg text-[10px] font-medium hover:bg-green-600"
+                >
                   ✓ Done
                 </button>
                 {item.project_name && (
                   <button 
                     onClick={(e) => handleGoToProject(item, e)}
-                    className="px-2 sm:px-3 py-1 sm:py-1.5 bg-blue-500 text-white rounded-lg text-[10px] sm:text-xs font-medium"
+                    className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[10px] font-medium"
                   >
                     Open Project →
                   </button>
@@ -167,30 +175,30 @@ export default function Overview({ projects, onSelectProject }) {
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8 animate-in">
+    <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 animate-in pb-24">
       {/* Header */}
       <div>
         <h1 className="text-lg sm:text-xl font-semibold text-slate-900">Dashboard</h1>
-        <p className="text-slate-500 text-xs sm:text-sm mt-0.5 sm:mt-1">
+        <p className="text-slate-500 text-xs mt-0.5">
           {projects.length} {projects.length === 1 ? 'Project' : 'Projects'} Active
         </p>
       </div>
 
       {/* Projects FIRST */}
       <div>
-        <h3 className="text-xs sm:text-sm font-semibold text-slate-700 mb-3 sm:mb-4">Your Projects</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4">
+        <h3 className="text-xs font-semibold text-slate-700 mb-3">Your Projects</h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
           {projects.map(p => (
             <div 
               key={p.id} 
               onClick={() => onSelectProject(p)} 
-              className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer p-3 sm:p-4 group" 
+              className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer p-3 group" 
             >
               <div className="flex justify-between items-start mb-2">
                 <div className="p-1.5 bg-slate-50 rounded-lg text-slate-600 group-hover:bg-blue-500 group-hover:text-white transition-all">
-                  <Icon name="folder" size={14} className="sm:w-4 sm:h-4" />
+                  <Icon name="folder" size={14} />
                 </div>
-                <span className={`px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] font-medium uppercase ${
+                <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium uppercase ${
                   p.status === 'Syncing...' ? 'bg-amber-50 text-amber-600 animate-pulse' : 
                   p.status === 'Sync Error' ? 'bg-red-50 text-red-600' : 
                   'bg-emerald-50 text-emerald-600'
@@ -199,8 +207,8 @@ export default function Overview({ projects, onSelectProject }) {
                 </span>
               </div>
               
-              <h3 className="text-xs sm:text-sm font-semibold text-slate-900 truncate">{p.name}</h3>
-              <p className="text-[9px] sm:text-xs text-slate-400 mt-0.5 truncate">
+              <h3 className="text-xs font-semibold text-slate-900 truncate">{p.name}</h3>
+              <p className="text-[9px] text-slate-400 mt-0.5 truncate">
                 {p.location || 'No location'}
               </p>
             </div>
@@ -218,30 +226,30 @@ export default function Overview({ projects, onSelectProject }) {
         </div>
       </div>
 
-      {/* Needs Attention SECOND - only show if there are items */}
+      {/* Needs Attention SECOND */}
       {!loading && (needsAttention.length > 0 || unmappedMessages.length > 0) && (
-        <div className="space-y-4">
-          <h3 className="text-xs sm:text-sm font-semibold text-slate-700">Needs Attention</h3>
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-slate-700">Needs Attention</h3>
           
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Action Items - sorted by urgency */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {/* Action Items */}
             {needsAttention.length > 0 && (
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <div className="p-3 sm:p-4 border-b border-slate-100 bg-gradient-to-r from-red-50 to-amber-50 flex items-center justify-between">
+                <div className="p-3 border-b border-slate-100 bg-gradient-to-r from-red-50 to-amber-50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="p-1 sm:p-1.5 bg-red-100 rounded-lg">
-                      <Icon name="alert-triangle" size={14} className="text-red-600" />
+                    <div className="p-1 bg-red-100 rounded-lg">
+                      <Icon name="alert-triangle" size={12} className="text-red-600" />
                     </div>
                     <div>
-                      <h3 className="text-xs sm:text-sm font-semibold text-slate-900">Action Items</h3>
-                      <p className="text-[9px] sm:text-[10px] text-slate-500">Sorted by priority</p>
+                      <h3 className="text-xs font-semibold text-slate-900">Action Items</h3>
+                      <p className="text-[9px] text-slate-500">Sorted by priority</p>
                     </div>
                   </div>
-                  <span className="text-[10px] sm:text-xs font-medium text-red-600 bg-red-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full">
+                  <span className="text-[10px] font-medium text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full">
                     {needsAttention.length}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 max-h-[300px] sm:max-h-[400px] overflow-y-auto">
+                <div className="divide-y divide-slate-100 max-h-[250px] overflow-y-auto">
                   {needsAttention.map(item => renderMessageItem(item, true))}
                 </div>
               </div>
@@ -250,21 +258,21 @@ export default function Overview({ projects, onSelectProject }) {
             {/* Unmapped Messages */}
             {unmappedMessages.length > 0 && (
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <div className="p-3 sm:p-4 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-slate-50 flex items-center justify-between">
+                <div className="p-3 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-slate-50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="p-1 sm:p-1.5 bg-blue-100 rounded-lg">
-                      <Icon name="inbox" size={14} className="text-blue-600" />
+                    <div className="p-1 bg-blue-100 rounded-lg">
+                      <Icon name="inbox" size={12} className="text-blue-600" />
                     </div>
                     <div>
-                      <h3 className="text-xs sm:text-sm font-semibold text-slate-900">Unmapped</h3>
-                      <p className="text-[9px] sm:text-[10px] text-slate-500">Assign in Settings</p>
+                      <h3 className="text-xs font-semibold text-slate-900">Unmapped</h3>
+                      <p className="text-[9px] text-slate-500">Assign in Settings</p>
                     </div>
                   </div>
-                  <span className="text-[10px] sm:text-xs font-medium text-blue-600 bg-blue-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full">
+                  <span className="text-[10px] font-medium text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">
                     {unmappedMessages.length}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 max-h-[300px] sm:max-h-[400px] overflow-y-auto">
+                <div className="divide-y divide-slate-100 max-h-[250px] overflow-y-auto">
                   {unmappedMessages.map(item => renderMessageItem(item, false))}
                 </div>
               </div>
