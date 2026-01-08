@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import Icon from './Icon';
-import { COLORS } from '../config';
+import { COLORS, SYNC_WORKER_URL } from '../config';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 
@@ -11,9 +11,8 @@ export default function Overview({ projects, onSelectProject }) {
   const [expandedItem, setExpandedItem] = useState(null);
 
   useEffect(() => {
-    // Listen to WhatsApp messages
+    // Listen to WhatsApp messages from Firestore
     const whatsappRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
-    const emailRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails');
     
     let whatsappItems = [];
     let emailItems = [];
@@ -24,7 +23,11 @@ export default function Overview({ projects, onSelectProject }) {
       const unmapped = [];
       
       allItems.forEach(item => {
-        if (item.is_actionable && item.status !== 'done') {
+        // Check if actionable and not done
+        const isActionable = item.is_actionable || 
+          (item.source === 'email' && ['rfi', 'approval', 'vo', 'submittal'].includes(item.doc_type));
+        
+        if (isActionable && item.status !== 'done') {
           if (item.project_name && item.project_name !== '__general__') {
             mapped.push(item);
           } else {
@@ -48,6 +51,7 @@ export default function Overview({ projects, onSelectProject }) {
       setLoading(false);
     };
     
+    // Listen to WhatsApp messages
     const unsubWhatsapp = onSnapshot(whatsappRef, (snapshot) => {
       whatsappItems = snapshot.docs.map(doc => ({ 
         id: doc.id, 
@@ -60,34 +64,57 @@ export default function Overview({ projects, onSelectProject }) {
       setLoading(false);
     });
     
-    const unsubEmail = onSnapshot(emailRef, (snapshot) => {
-      emailItems = snapshot.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data(),
-        source: 'email',
-        // Map email fields to common format
-        text: doc.data().subject,
-        summary: doc.data().subject,
-        created_at: doc.data().date,
-        action_type: doc.data().doc_type
-      }));
+    // Fetch emails from sync-worker API for all projects
+    const fetchAllEmails = async () => {
+      const allEmails = [];
+      for (const project of projects) {
+        try {
+          const res = await fetch(`${SYNC_WORKER_URL}/emails?project=${encodeURIComponent(project.name)}&limit=10`);
+          if (res.ok) {
+            const data = await res.json();
+            const emails = (data.emails || []).map(email => ({
+              id: `email-${email.subject}-${email.date}`,
+              source: 'email',
+              project_name: project.name,
+              subject: email.subject,
+              from: email.from,
+              date: email.date,
+              created_at: email.date,
+              doc_type: email.type || 'correspondence',
+              text: email.subject,
+              summary: email.subject,
+              is_actionable: ['rfi', 'approval', 'vo', 'submittal'].includes(email.type),
+              status: 'new'
+            }));
+            allEmails.push(...emails);
+          }
+        } catch (err) {
+          console.error(`Error fetching emails for ${project.name}:`, err);
+        }
+      }
+      emailItems = allEmails;
       processItems();
-    }, (error) => {
-      console.error('Email error:', error);
-    });
+    };
+    
+    if (projects.length > 0) {
+      fetchAllEmails();
+    }
 
     return () => {
       unsubWhatsapp();
-      unsubEmail();
     };
-  }, []);
+  }, [projects]);
 
   // Mark item as done
   const markItemDone = async (item, e) => {
     e.stopPropagation();
+    if (item.source === 'email') {
+      // For emails, just remove from local state (can't update GCS from client)
+      setActionItems(prev => prev.filter(i => i.id !== item.id));
+      return;
+    }
     try {
-      const collectionName = item.source === 'email' ? 'emails' : 'whatsapp_messages';
-      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', collectionName, item.id);
+      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages', item.id);
       await updateDoc(msgRef, { 
         status: 'done',
         is_actionable: false,
@@ -96,18 +123,6 @@ export default function Overview({ projects, onSelectProject }) {
       });
     } catch (err) {
       console.error('Error marking done:', err);
-    }
-  };
-
-  // Mark as read
-  const markAsRead = async (item) => {
-    if (item.is_read) return;
-    try {
-      const collectionName = item.source === 'email' ? 'emails' : 'whatsapp_messages';
-      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', collectionName, item.id);
-      await updateDoc(msgRef, { is_read: true });
-    } catch (err) {
-      console.error('Error marking read:', err);
     }
   };
 
@@ -120,10 +135,10 @@ export default function Overview({ projects, onSelectProject }) {
   };
 
   // Action type labels and colors
-  const getActionTypeStyle = (actionType, source) => {
+  const getActionTypeStyle = (item) => {
     // Email doc types
-    if (source === 'email') {
-      switch (actionType) {
+    if (item.source === 'email') {
+      switch (item.doc_type) {
         case 'rfi': return { label: 'RFI', color: 'bg-purple-100 text-purple-700', icon: 'help-circle' };
         case 'approval': return { label: 'Approval', color: 'bg-amber-100 text-amber-700', icon: 'check-circle' };
         case 'vo': return { label: 'Variation', color: 'bg-red-100 text-red-700', icon: 'file-plus' };
@@ -133,7 +148,7 @@ export default function Overview({ projects, onSelectProject }) {
       }
     }
     // WhatsApp types
-    switch (actionType) {
+    switch (item.action_type) {
       case 'task': return { label: 'Task', color: 'bg-blue-100 text-blue-700', icon: 'clipboard-list' };
       case 'query': return { label: 'Query', color: 'bg-purple-100 text-purple-700', icon: 'help-circle' };
       case 'info': return { label: 'Info', color: 'bg-slate-100 text-slate-600', icon: 'info' };
@@ -165,7 +180,6 @@ export default function Overview({ projects, onSelectProject }) {
   const handleItemClick = (item, e) => {
     e.stopPropagation();
     setExpandedItem(expandedItem === item.id ? null : item.id);
-    markAsRead(item);
   };
 
   const handleGoToProject = (item, e) => {
@@ -177,7 +191,7 @@ export default function Overview({ projects, onSelectProject }) {
   const renderItem = (item, showProject = true) => {
     const isExpanded = expandedItem === item.id;
     const sourceStyle = getSourceStyle(item.source);
-    const actionStyle = getActionTypeStyle(item.action_type, item.source);
+    const actionStyle = getActionTypeStyle(item);
     const isUnread = !item.is_read;
     
     return (
@@ -194,7 +208,7 @@ export default function Overview({ projects, onSelectProject }) {
             </div>
             
             <div className="flex-1 min-w-0">
-              {/* Type Badge + Unread indicator */}
+              {/* Type Badge */}
               <div className="flex items-center gap-1.5 mb-0.5">
                 <span className={`text-[8px] font-medium px-1.5 py-0.5 rounded ${actionStyle.color}`}>
                   {actionStyle.label}
@@ -221,7 +235,7 @@ export default function Overview({ projects, onSelectProject }) {
                 </span>
                 {item.from && (
                   <span className="text-[9px] text-slate-400 truncate max-w-[120px]">
-                    • {item.from.split('<')[0].trim()}
+                    • {item.from.split('<')[0].trim().substring(0, 20)}
                   </span>
                 )}
               </div>
