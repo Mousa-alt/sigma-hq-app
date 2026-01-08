@@ -3,7 +3,7 @@ import Icon from './Icon';
 import FolderPopup from './FolderPopup';
 import { SYNC_WORKER_URL } from '../config';
 import { db } from '../firebase';
-import { collection, query, orderBy, limit, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 
 export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow, onUpdateProject }) {
   const [tasks, setTasks] = useState([
@@ -39,18 +39,28 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   }, [project?.id]);
 
-  // Real-time WhatsApp messages listener
+  // Real-time WhatsApp messages listener - simple query, sort client-side
   useEffect(() => {
     if (!project?.name) return;
     
     setLoadingWhatsapp(true);
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
-    const q = query(messagesRef, orderBy('created_at', 'desc'), limit(100));
     
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    // Simple query without orderBy (no index needed)
+    const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
       const allMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const projectMessages = allMessages.filter(msg => msg.project_name === project.name);
-      setWhatsappMessages(projectMessages.slice(0, 10));
+      
+      // Filter by project and sort by created_at descending (client-side)
+      const projectMessages = allMessages
+        .filter(msg => msg.project_name === project.name)
+        .sort((a, b) => {
+          const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
+          const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
+          return dateB - dateA;
+        })
+        .slice(0, 10);
+      
+      setWhatsappMessages(projectMessages);
       setLoadingWhatsapp(false);
     }, (error) => {
       console.error('WhatsApp messages error:', error);
@@ -94,7 +104,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   };
 
-  // Mark message as read/done
+  // Mark message as done - removes red badge
   const markMessageDone = async (msgId) => {
     try {
       const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages', msgId);
@@ -196,7 +206,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 pb-36 sm:pb-24">
+    <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-24">
       {/* Sync Status Bar */}
       <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100">
         <div className="flex items-center justify-between gap-3">
@@ -223,41 +233,41 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         </div>
       </div>
 
-      {/* Status & Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-4">
-        <div className="p-3 sm:p-5 bg-slate-50 rounded-xl border border-slate-100">
-          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1 sm:mb-2">Status</p>
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${project?.completionDate ? 'bg-blue-500' : project?.status === 'Active' || !project?.status ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+      {/* Stats Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-3">
+        <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100">
+          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Status</p>
+          <div className="flex items-center gap-1.5">
+            <div className={`w-2 h-2 rounded-full ${project?.completionDate ? 'bg-blue-500' : project?.status === 'Active' || !project?.status ? 'bg-emerald-500' : 'bg-amber-500'}`} />
             <span className="text-xs sm:text-sm font-medium text-slate-900">{project?.completionDate ? 'Done' : (project?.status || 'Active')}</span>
           </div>
         </div>
-        <div className="p-3 sm:p-5 bg-slate-50 rounded-xl border border-slate-100">
-          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1 sm:mb-2">Docs</p>
+        <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100">
+          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Docs</p>
           {loadingStats ? (
             <Icon name="loader-2" size={14} className="animate-spin text-slate-400" />
           ) : (
-            <span className="text-lg sm:text-2xl font-semibold text-slate-900">{stats.fileCount}</span>
+            <span className="text-lg sm:text-xl font-semibold text-slate-900">{stats.fileCount}</span>
           )}
         </div>
-        <div className="p-3 sm:p-5 bg-slate-50 rounded-xl border border-slate-100">
-          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1 sm:mb-2">Start</p>
-          <span className="text-[10px] sm:text-sm font-semibold text-slate-900">{formatDate(project?.startDate)}</span>
+        <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100">
+          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Start</p>
+          <span className="text-[10px] sm:text-xs font-semibold text-slate-900">{formatDate(project?.startDate)}</span>
         </div>
-        <div className="p-3 sm:p-5 bg-slate-50 rounded-xl border border-slate-100">
-          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1 sm:mb-2">End</p>
-          <span className="text-[10px] sm:text-sm font-semibold text-slate-900">{formatDate(project?.expectedEndDate)}</span>
+        <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100">
+          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">End</p>
+          <span className="text-[10px] sm:text-xs font-semibold text-slate-900">{formatDate(project?.expectedEndDate)}</span>
         </div>
-        <div className="p-3 sm:p-5 bg-slate-50 rounded-xl border border-slate-100 col-span-2 sm:col-span-1">
-          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1 sm:mb-2">Completion</p>
-          <span className="text-[10px] sm:text-sm font-semibold text-slate-900">{formatDate(project?.completionDate)}</span>
+        <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100 col-span-2 sm:col-span-1">
+          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Completion</p>
+          <span className="text-[10px] sm:text-xs font-semibold text-slate-900">{formatDate(project?.completionDate)}</span>
         </div>
       </div>
 
       {/* Edit Dates */}
       <div className="flex justify-end">
         {editingDates ? (
-          <div className="w-full p-3 sm:p-4 bg-blue-50 rounded-xl border border-blue-200">
+          <div className="w-full p-3 bg-blue-50 rounded-xl border border-blue-200">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 mb-3">
               <div>
                 <label className="block text-[9px] sm:text-[10px] text-slate-500 mb-1">Start</label>
@@ -286,11 +296,11 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
 
       {/* Quick Links */}
       <div>
-        <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-2 sm:mb-4">Quick Links</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+        <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-2 sm:mb-3">Quick Links</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {quickLinks.map(link => (
-            <button key={link.id} onClick={() => handleQuickLink(link)} className={`flex items-center gap-2 sm:gap-3 p-3 sm:p-4 bg-white border border-slate-200 rounded-xl transition-all group ${colorClasses[link.color]}`}>
-              <Icon name={link.icon} size={16} className={`sm:w-[18px] sm:h-[18px] ${colorClasses[link.color].split(' ').pop()}`} />
+            <button key={link.id} onClick={() => handleQuickLink(link)} className={`flex items-center gap-2 p-3 bg-white border border-slate-200 rounded-xl transition-all group ${colorClasses[link.color]}`}>
+              <Icon name={link.icon} size={14} className={colorClasses[link.color].split(' ').pop()} />
               <span className="text-[10px] sm:text-xs font-medium text-slate-700">{link.label}</span>
             </button>
           ))}
@@ -299,40 +309,40 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
 
       {/* Tasks Hub */}
       <div>
-        <div className="flex items-center justify-between mb-2 sm:mb-4">
+        <div className="flex items-center justify-between mb-2">
           <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400">Tasks Hub</h3>
-          <span className="text-[8px] sm:text-[9px] text-slate-400 bg-slate-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full">AI coming soon</span>
+          <span className="text-[8px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">AI coming soon</span>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="p-3 sm:p-4 border-b border-slate-100 flex gap-2 sm:gap-3">
+          <div className="p-3 border-b border-slate-100 flex gap-2">
             <input 
               type="text" 
               value={newTask} 
               onChange={(e) => setNewTask(e.target.value)} 
               onKeyPress={(e) => e.key === 'Enter' && addTask()} 
               placeholder="Add task..." 
-              className="flex-1 text-xs sm:text-sm outline-none text-slate-900 placeholder:text-slate-400 min-w-0" 
+              className="flex-1 text-xs outline-none text-slate-900 placeholder:text-slate-400 min-w-0" 
             />
-            <button onClick={addTask} className="px-2.5 sm:px-3 py-1 sm:py-1.5 bg-blue-500 text-white rounded-lg text-[10px] sm:text-xs font-medium hover:bg-blue-600 transition-colors flex-shrink-0">Add</button>
+            <button onClick={addTask} className="px-2.5 py-1 bg-blue-500 text-white rounded-lg text-[10px] font-medium hover:bg-blue-600 flex-shrink-0">Add</button>
           </div>
-          <div className="divide-y divide-slate-100 max-h-[180px] sm:max-h-[250px] overflow-y-auto">
+          <div className="divide-y divide-slate-100 max-h-[150px] overflow-y-auto">
             {tasks.map(task => (
-              <div key={task.id} className="flex items-center gap-2 sm:gap-3 p-3 sm:p-4 hover:bg-slate-50 transition-colors">
-                <button onClick={() => toggleTask(task.id)} className={`w-4 h-4 sm:w-5 sm:h-5 rounded border-2 flex items-center justify-center transition-colors flex-shrink-0 ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-blue-400'}`}>
+              <div key={task.id} className="flex items-center gap-2 p-3 hover:bg-slate-50">
+                <button onClick={() => toggleTask(task.id)} className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'}`}>
                   {task.done && <Icon name="check" size={10} />}
                 </button>
-                <span className={`flex-1 text-xs sm:text-sm min-w-0 ${task.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.text}</span>
-                <button onClick={() => deleteTask(task.id)} className="p-1 text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"><Icon name="x" size={12} /></button>
+                <span className={`flex-1 text-xs ${task.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.text}</span>
+                <button onClick={() => deleteTask(task.id)} className="p-1 text-slate-400 hover:text-red-500 flex-shrink-0"><Icon name="x" size={12} /></button>
               </div>
             ))}
-            {tasks.length === 0 && <div className="p-6 text-center text-slate-400 text-xs">No tasks yet</div>}
+            {tasks.length === 0 && <div className="p-4 text-center text-slate-400 text-xs">No tasks yet</div>}
           </div>
         </div>
       </div>
 
       {/* Activity Feed */}
       <div>
-        <div className="flex items-center justify-between mb-2 sm:mb-4">
+        <div className="flex items-center justify-between mb-2">
           <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400">Activity Feed</h3>
           <button onClick={loadRecentEmails} className="text-[9px] text-blue-500 hover:text-blue-600 flex items-center gap-1">
             <Icon name="refresh-cw" size={10} /> Refresh
@@ -341,62 +351,62 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         
         {/* Recent Emails */}
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-3">
-          <div className="p-2.5 sm:p-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+          <div className="p-2.5 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
             <Icon name="mail" size={12} className="text-blue-500" />
-            <span className="text-[10px] sm:text-xs font-medium text-slate-700">Recent Emails</span>
+            <span className="text-[10px] font-medium text-slate-700">Recent Emails</span>
           </div>
-          <div className="divide-y divide-slate-100 max-h-[120px] sm:max-h-[150px] overflow-y-auto">
+          <div className="divide-y divide-slate-100 max-h-[100px] overflow-y-auto">
             {loadingEmails ? (
-              <div className="p-4 flex items-center justify-center">
+              <div className="p-3 flex items-center justify-center">
                 <Icon name="loader-2" size={14} className="animate-spin text-slate-400" />
               </div>
             ) : recentEmails.length > 0 ? (
               recentEmails.map((email, idx) => (
-                <div key={idx} className="p-2.5 sm:p-3 hover:bg-slate-50">
-                  <p className="text-[10px] sm:text-xs font-medium text-slate-800 truncate">{email.subject}</p>
+                <div key={idx} className="p-2.5 hover:bg-slate-50">
+                  <p className="text-[10px] font-medium text-slate-800 truncate">{email.subject}</p>
                   <p className="text-[9px] text-slate-500 truncate mt-0.5">{email.from}</p>
                 </div>
               ))
             ) : (
-              <div className="p-4 text-center text-slate-400 text-[10px]">No emails yet</div>
+              <div className="p-3 text-center text-slate-400 text-[10px]">No emails yet</div>
             )}
           </div>
         </div>
 
         {/* WhatsApp Messages */}
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="p-2.5 sm:p-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+          <div className="p-2.5 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
             <Icon name="message-circle" size={12} className="text-green-500" />
-            <span className="text-[10px] sm:text-xs font-medium text-slate-700">WhatsApp</span>
-            {whatsappMessages.filter(m => m.is_actionable).length > 0 && (
+            <span className="text-[10px] font-medium text-slate-700">WhatsApp</span>
+            {whatsappMessages.filter(m => m.is_actionable && m.status !== 'done').length > 0 && (
               <span className="text-[8px] text-green-600 bg-green-100 px-1.5 py-0.5 rounded ml-auto">
-                {whatsappMessages.filter(m => m.is_actionable).length} action
+                {whatsappMessages.filter(m => m.is_actionable && m.status !== 'done').length} action
               </span>
             )}
           </div>
-          <div className="divide-y divide-slate-100 max-h-[180px] sm:max-h-[220px] overflow-y-auto">
+          <div className="divide-y divide-slate-100 max-h-[180px] overflow-y-auto">
             {loadingWhatsapp ? (
-              <div className="p-4 flex items-center justify-center">
+              <div className="p-3 flex items-center justify-center">
                 <Icon name="loader-2" size={14} className="animate-spin text-slate-400" />
               </div>
             ) : whatsappMessages.length > 0 ? (
               whatsappMessages.map((msg) => (
                 <div 
                   key={msg.id} 
-                  className={`transition-colors cursor-pointer ${msg.is_actionable ? 'border-l-2 border-l-amber-400' : ''} ${expandedMessage === msg.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                  className={`cursor-pointer ${msg.is_actionable && msg.status !== 'done' ? 'border-l-2 border-l-amber-400' : ''} ${expandedMessage === msg.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
                   onClick={() => setExpandedMessage(expandedMessage === msg.id ? null : msg.id)}
                 >
-                  <div className="p-2.5 sm:p-3">
+                  <div className="p-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className={`text-[10px] sm:text-xs font-medium text-slate-800 ${expandedMessage === msg.id ? '' : 'truncate'}`}>
+                        <p className={`text-[10px] font-medium text-slate-800 ${expandedMessage === msg.id ? '' : 'truncate'}`}>
                           {msg.summary || msg.text?.substring(0, 60)}
                         </p>
                         <p className="text-[9px] text-slate-500 mt-0.5 truncate">
                           {msg.group_name || 'WhatsApp'} • {formatEmailDate(msg.created_at)}
                         </p>
                       </div>
-                      {msg.is_actionable && (
+                      {msg.is_actionable && msg.status !== 'done' && (
                         <span className={`text-[8px] px-1 py-0.5 rounded border flex-shrink-0 ${getUrgencyColor(msg.urgency)}`}>
                           {msg.urgency?.toUpperCase() || 'ACTION'}
                         </span>
@@ -406,8 +416,8 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
                     {expandedMessage === msg.id && (
                       <div className="mt-2 pt-2 border-t border-slate-200">
                         <p className="text-xs text-slate-700 whitespace-pre-wrap">{msg.text}</p>
-                        {msg.is_actionable && (
-                          <div className="mt-2 flex gap-2">
+                        {msg.is_actionable && msg.status !== 'done' && (
+                          <div className="mt-2">
                             <button 
                               onClick={(e) => { e.stopPropagation(); markMessageDone(msg.id); }}
                               className="px-2 py-1 bg-green-500 text-white rounded text-[9px] font-medium hover:bg-green-600"
@@ -422,8 +432,8 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
                 </div>
               ))
             ) : (
-              <div className="p-4 text-center text-slate-400 text-[10px]">
-                <p>No WhatsApp messages yet</p>
+              <div className="p-3 text-center text-slate-400 text-[10px]">
+                No WhatsApp messages yet
               </div>
             )}
           </div>
