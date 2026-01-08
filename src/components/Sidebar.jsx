@@ -18,16 +18,18 @@ export default function Sidebar({
   const [projectBadges, setProjectBadges] = useState({});
 
   // Real-time badges for pending action items per project
+  // Badge shows when is_actionable === true (mark as done sets is_actionable to false)
   useEffect(() => {
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
     const unsubscribe = onSnapshot(
-      query(messagesRef, where('is_actionable', '==', true), where('status', '==', 'pending')),
+      query(messagesRef, where('is_actionable', '==', true)),
       (snapshot) => {
         const badges = {};
         snapshot.docs.forEach(doc => {
           const data = doc.data();
           const projectName = data.project_name;
-          if (projectName) {
+          // Only count if not marked as done
+          if (projectName && data.status !== 'done') {
             badges[projectName] = (badges[projectName] || 0) + 1;
           }
         });
@@ -96,6 +98,7 @@ export default function Sidebar({
                 >
                   <div className={`shrink-0 w-2 h-2 rounded-full ${
                     p.status === 'Syncing...' ? 'bg-amber-500 animate-pulse' : 
+                    p.status === 'Sync Error' ? 'bg-red-500' :
                     badge > 0 ? 'bg-red-400' : 'bg-emerald-400'
                   }`} />
                   <span className="text-xs font-medium truncate flex-1">{p.name}</span>
