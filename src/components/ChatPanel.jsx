@@ -54,7 +54,6 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
       
       if (data.summary) {
         response = data.summary;
-        // Sort by hierarchy and take top sources
         const sorted = sortByHierarchy(data.results || []);
         sources = sorted.slice(0, 5).map(r => {
           const { filename } = parseGCSLink(r.link);
@@ -104,7 +103,6 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
     }
   };
 
-  // Get badge color classes
   const getBadgeClasses = (color) => {
     const colors = {
       red: 'bg-red-100 text-red-700 border-red-200',
@@ -117,7 +115,6 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
     return colors[color] || colors.slate;
   };
 
-  // Parse markdown-style bold
   const renderContent = (content) => {
     return content.split('**').map((part, i) => 
       i % 2 === 1 ? <strong key={i}>{part}</strong> : part
@@ -126,66 +123,69 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
 
   return (
     <div 
-      className={`fixed bottom-0 right-0 bg-white border-t border-l border-slate-200 transition-all duration-300 z-40 shadow-xl ${isExpanded ? 'h-[60vh] w-full lg:w-[calc(100%-18rem)]' : 'h-14 w-full lg:w-[calc(100%-18rem)]'}`}
+      className={`fixed bottom-0 right-0 bg-white border-t border-l border-slate-200 transition-all duration-300 z-40 shadow-xl 
+        ${isExpanded 
+          ? 'h-[70vh] sm:h-[60vh] w-full lg:w-[calc(100%-18rem)]' 
+          : 'h-12 sm:h-14 w-full lg:w-[calc(100%-18rem)]'
+        }`}
       style={{ left: 'auto' }}
     >
-      {/* Header bar */}
+      {/* Header bar - Smaller on mobile when collapsed */}
       <div 
-        className="h-14 px-6 flex items-center justify-between cursor-pointer border-b border-slate-100" 
+        className={`${isExpanded ? 'h-12 sm:h-14' : 'h-12 sm:h-14'} px-3 sm:px-6 flex items-center justify-between cursor-pointer border-b border-slate-100`}
         onClick={onToggle}
       >
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center text-white">
-            <Icon name="sparkles" size={14} />
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center text-white">
+            <Icon name="sparkles" size={12} className="sm:w-3.5 sm:h-3.5" />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-slate-900">Project AI</span>
-            <span className="flex items-center gap-1 text-[10px] text-emerald-500">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Ready
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <span className="text-[10px] sm:text-xs font-medium text-slate-900">Project AI</span>
+            <span className="flex items-center gap-1 text-[9px] sm:text-[10px] text-emerald-500">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> 
+              <span className="hidden sm:inline">Ready</span>
             </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-slate-400 hidden sm:block">Understands document hierarchy</span>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 hidden md:block">Understands document hierarchy</span>
           <Icon 
             name={isExpanded ? "chevron-down" : "chevron-up"} 
-            size={18} 
-            className="text-slate-400" 
+            size={16} 
+            className="text-slate-400 sm:w-[18px] sm:h-[18px]" 
           />
         </div>
       </div>
 
       {/* Expanded content */}
       {isExpanded && (
-        <div className="p-6 flex flex-col h-[calc(100%-3.5rem)]">
+        <div className="p-3 sm:p-6 flex flex-col h-[calc(100%-3rem)] sm:h-[calc(100%-3.5rem)]">
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto mb-4 space-y-4 no-scrollbar">
+          <div className="flex-1 overflow-y-auto mb-3 sm:mb-4 space-y-3 sm:space-y-4 no-scrollbar">
             {messages.map((msg, i) => (
               <div key={i} className={`${msg.role === 'user' ? 'flex justify-end' : ''}`}>
                 <div 
-                  className={`rounded-xl text-sm leading-relaxed max-w-[85%] ${
+                  className={`rounded-xl text-xs sm:text-sm leading-relaxed max-w-[90%] sm:max-w-[85%] ${
                     msg.role === 'user' 
-                      ? 'bg-slate-900 text-white p-4' 
-                      : 'bg-slate-50 text-slate-700 p-4'
+                      ? 'bg-slate-900 text-white p-3 sm:p-4' 
+                      : 'bg-slate-50 text-slate-700 p-3 sm:p-4'
                   }`}
                 >
-                  {/* Message content */}
                   <div className="whitespace-pre-wrap">{renderContent(msg.content)}</div>
                   
-                  {/* Sources */}
                   {msg.sources && msg.sources.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-200">
-                      <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-2">Sources (by authority)</p>
-                      <div className="flex flex-wrap gap-2">
+                    <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-slate-200">
+                      <p className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-1.5 sm:mb-2">Sources</p>
+                      <div className="flex flex-wrap gap-1.5 sm:gap-2">
                         {msg.sources.map((src, j) => (
                           <button 
                             key={j}
                             onClick={(e) => { e.stopPropagation(); handleSourceClick(src); }}
-                            className={`inline-flex items-center gap-1.5 px-2 py-1 border rounded text-[10px] hover:shadow-sm transition-all cursor-pointer ${getBadgeClasses(src.typeInfo?.color)}`}
+                            className={`inline-flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-0.5 sm:py-1 border rounded text-[9px] sm:text-[10px] hover:shadow-sm transition-all cursor-pointer ${getBadgeClasses(src.typeInfo?.color)}`}
                             title={src.title}
                           >
                             <span className="font-semibold">{src.typeInfo?.label}</span>
-                            <span className="text-slate-500 max-w-[100px] truncate">{src.title}</span>
+                            <span className="text-slate-500 max-w-[60px] sm:max-w-[100px] truncate">{src.title}</span>
                           </button>
                         ))}
                       </div>
@@ -195,13 +195,13 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
               </div>
             ))}
             {loading && (
-              <div className="bg-slate-50 p-4 rounded-xl max-w-[85%]">
+              <div className="bg-slate-50 p-3 sm:p-4 rounded-xl max-w-[90%] sm:max-w-[85%]">
                 <div className="flex items-center gap-2">
                   <div className="relative">
-                    <div className="w-5 h-5 rounded-full border-2 border-blue-100" />
-                    <div className="absolute inset-0 w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                    <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-full border-2 border-blue-100" />
+                    <div className="absolute inset-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
                   </div>
-                  <span className="text-sm text-slate-500">Searching documents...</span>
+                  <span className="text-xs sm:text-sm text-slate-500">Searching...</span>
                 </div>
               </div>
             )}
@@ -213,16 +213,16 @@ export default function ChatPanel({ project, isExpanded, onToggle }) {
             <input 
               value={input} 
               onChange={e => setInput(e.target.value)} 
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-5 py-4 text-sm outline-none pr-14 text-slate-900 placeholder:text-slate-400 focus:border-blue-300 focus:bg-white transition-all" 
-              placeholder="Ask about materials, approvals, specifications..." 
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 sm:px-5 py-3 sm:py-4 text-xs sm:text-sm outline-none pr-12 sm:pr-14 text-slate-900 placeholder:text-slate-400 focus:border-blue-300 focus:bg-white transition-all" 
+              placeholder="Ask about documents..." 
               disabled={loading} 
             />
             <button 
               type="submit" 
               disabled={loading || !input.trim()} 
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg disabled:opacity-30 transition-opacity"
+              className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 p-1.5 sm:p-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg disabled:opacity-30 transition-opacity"
             >
-              <Icon name="send" size={14} />
+              <Icon name="send" size={12} className="sm:w-3.5 sm:h-3.5" />
             </button>
           </form>
         </div>
