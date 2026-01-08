@@ -14,7 +14,7 @@ export default function Header({
   const getTitle = () => {
     switch (view) {
       case 'overview': return 'Projects';
-      case 'whatsapp': return 'WhatsApp Integration';
+      case 'settings': return 'Channel Settings';
       case 'project': return selectedProject?.name;
       default: return 'Sigma HQ';
     }
@@ -24,8 +24,8 @@ export default function Header({
     if (view === 'project' && selectedProject?.location) {
       return selectedProject.location;
     }
-    if (view === 'whatsapp') {
-      return 'Configure groups and message processing';
+    if (view === 'settings') {
+      return 'Configure WhatsApp, Email, and Slack';
     }
     return null;
   };
@@ -40,7 +40,7 @@ export default function Header({
           <Icon name="menu" size={20} />
         </button>
         
-        {(view === 'project' || view === 'whatsapp') && (
+        {(view === 'project' || view === 'settings') && (
           <button 
             onClick={onGoBack} 
             className="p-2 bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors"
@@ -51,8 +51,8 @@ export default function Header({
         
         <div className="truncate">
           <div className="flex items-center gap-2">
-            {view === 'whatsapp' && (
-              <Icon name="message-circle" size={20} className="text-green-500" />
+            {view === 'settings' && (
+              <Icon name="sliders" size={20} className="text-blue-500" />
             )}
             <h1 className="text-lg font-semibold text-slate-900 truncate">
               {getTitle()}
