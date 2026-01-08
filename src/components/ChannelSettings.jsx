@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { db } from '../firebase';
 import { EMAIL_SYNC_URL } from '../config';
-import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, addDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
 const GROUP_TYPES = [
   { value: 'client', label: 'Client', color: 'blue' },
@@ -31,6 +31,8 @@ export default function ChannelSettings({ projects }) {
   // Email sync state
   const [emailSyncing, setEmailSyncing] = useState(false);
   const [emailSyncResult, setEmailSyncResult] = useState(null);
+  const [recentEmails, setRecentEmails] = useState([]);
+  const [addingEmail, setAddingEmail] = useState(false);
 
   useEffect(() => {
     // Real-time listener for mapped groups
@@ -58,9 +60,25 @@ export default function ChannelSettings({ projects }) {
       setRecentMessages(messages.slice(0, 6));
     });
 
+    // Real-time listener for emails
+    const emailsRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails');
+    const unsubEmails = onSnapshot(emailsRef, (snapshot) => {
+      const emails = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort by date descending
+      emails.sort((a, b) => {
+        const dateA = new Date(a.date || a.created_at || 0);
+        const dateB = new Date(b.date || b.created_at || 0);
+        return dateB - dateA;
+      });
+      setRecentEmails(emails.slice(0, 15));
+    }, (error) => {
+      console.log('Emails collection may not exist yet');
+    });
+
     return () => {
       unsubGroups();
       unsubMessages();
+      unsubEmails();
     };
   }, []);
 
@@ -145,6 +163,47 @@ export default function ChannelSettings({ projects }) {
       alert(`❌ Email Sync Failed\n\n${err.message}`);
     } finally {
       setEmailSyncing(false);
+    }
+  };
+
+  // Add test email to Firestore
+  const addTestEmail = async () => {
+    setAddingEmail(true);
+    try {
+      const emailRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails');
+      await addDoc(emailRef, {
+        message_id: `test-agora-${Date.now()}`,
+        subject: 'Re: AGORA-GEM-Updated Outdoor layout',
+        from: 'samira.belal@sigmadd-egypt.com',
+        to: 'Ahmed Abdelraoof Saleh <ahmed.abdelraoof@Hassanallam.com>',
+        date: '2026-01-06T16:58:00+02:00',
+        body: 'Dear Eng.Ahmed,\n\nPlease find attached the revised outdoor drawings, updated based on yesterday\'s requested modifications.\n\n11.AGORA-GEM-A-Updated Outdoor(06.01.2026) -SB-00\n\nThe revision includes reducing the pergola width by 120 cm from the building side and removing one column from the tent.\n\nKindly review and confirm your approval of the attached drawings so we can proceed with the works accordingly.\n\nThank you for your cooperation.\n\nBest regards,\nSamira',
+        project_name: 'Agora-GEM',
+        doc_type: 'approval',
+        confidence: 'high',
+        source: 'email',
+        is_read: false,
+        is_actionable: true,
+        status: 'new',
+        created_at: new Date().toISOString(),
+        attachments_count: 1
+      });
+      alert('✅ Test email added to Agora-GEM!\n\nGo to Agora-GEM → Home to see it.');
+    } catch (err) {
+      console.error('Error adding test email:', err);
+      alert('❌ Error: ' + err.message);
+    } finally {
+      setAddingEmail(false);
+    }
+  };
+
+  // Delete email
+  const deleteEmail = async (emailId) => {
+    try {
+      const emailRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails', emailId);
+      await deleteDoc(emailRef);
+    } catch (err) {
+      console.error('Error deleting email:', err);
     }
   };
 
@@ -386,7 +445,7 @@ export default function ChannelSettings({ projects }) {
               </div>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <button
                 onClick={() => syncEmails(false)}
                 disabled={emailSyncing}
@@ -410,7 +469,20 @@ export default function ChannelSettings({ projects }) {
                 ) : (
                   <Icon name="rotate-ccw" size={18} />
                 )}
-                Reprocess All Emails
+                Reprocess All
+              </button>
+
+              <button
+                onClick={addTestEmail}
+                disabled={addingEmail}
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-all disabled:opacity-50"
+              >
+                {addingEmail ? (
+                  <Icon name="loader-2" size={18} className="animate-spin" />
+                ) : (
+                  <Icon name="plus" size={18} />
+                )}
+                Add Test Email
               </button>
             </div>
             
@@ -442,23 +514,74 @@ export default function ChannelSettings({ projects }) {
                         <p className="text-xs text-green-600">Errors</p>
                       </div>
                     </div>
-                    {emailSyncResult.emails && emailSyncResult.emails.length > 0 && (
-                      <div className="mt-4 pt-4 border-t border-green-200">
-                        <p className="text-xs font-medium mb-2">Recently Synced:</p>
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
-                          {emailSyncResult.emails.slice(0, 5).map((email, idx) => (
-                            <div key={idx} className="flex items-center gap-2 text-xs">
-                              <span className={`px-1.5 py-0.5 rounded text-[10px] ${email.project ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                                {email.project || 'Unclassified'}
-                              </span>
-                              <span className="truncate">{email.subject}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* Recent Emails in Firestore */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-slate-100 bg-blue-50 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Icon name="inbox" size={16} className="text-blue-600" />
+                <h3 className="text-sm font-medium text-slate-700">Emails in Database</h3>
+              </div>
+              <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
+                {recentEmails.length} emails
+              </span>
+            </div>
+            
+            {recentEmails.length === 0 ? (
+              <div className="p-8 text-center text-slate-400">
+                <Icon name="mail" size={32} className="mx-auto mb-2 opacity-50" />
+                <p className="text-sm">No emails in database yet</p>
+                <p className="text-xs mt-1">Click "Add Test Email" or "Sync New Emails" above</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 max-h-[350px] overflow-y-auto">
+                {recentEmails.map(email => (
+                  <div key={email.id} className="p-3 hover:bg-slate-50 group">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          {!email.is_read && <span className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />}
+                          <span className="text-xs font-medium text-slate-800 truncate">{email.subject}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 truncate">
+                          From: {email.from?.split('<')[0]?.trim() || 'Unknown'}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          {email.project_name && (
+                            <span className="text-[9px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">
+                              → {email.project_name}
+                            </span>
+                          )}
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                            email.doc_type === 'approval' ? 'bg-amber-100 text-amber-600' :
+                            email.doc_type === 'rfi' ? 'bg-purple-100 text-purple-600' :
+                            email.doc_type === 'submittal' ? 'bg-blue-100 text-blue-600' :
+                            email.doc_type === 'invoice' ? 'bg-emerald-100 text-emerald-600' :
+                            'bg-slate-100 text-slate-600'
+                          }`}>
+                            {email.doc_type || 'email'}
+                          </span>
+                          {email.is_actionable && email.status !== 'done' && (
+                            <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded">
+                              ACTION
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => deleteEmail(email.id)}
+                        className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                      >
+                        <Icon name="trash-2" size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
