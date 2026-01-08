@@ -3,9 +3,7 @@ import Icon from './Icon';
 import FolderPopup from './FolderPopup';
 import { SYNC_WORKER_URL } from '../config';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
-
-const EMAIL_SYNC_URL = 'https://sigma-email-sync-p2hbneatwa-ew.a.run.app';
+import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 
 export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow, onUpdateProject }) {
   const [tasks, setTasks] = useState([
@@ -27,12 +25,12 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
   const [loadingEmails, setLoadingEmails] = useState(true);
   const [whatsappMessages, setWhatsappMessages] = useState([]);
   const [loadingWhatsapp, setLoadingWhatsapp] = useState(true);
+  const [expandedMessage, setExpandedMessage] = useState(null);
 
   useEffect(() => {
     if (project) {
       loadStats();
       loadRecentEmails();
-      loadWhatsappMessages();
       setDates({
         startDate: project.startDate || '',
         expectedEndDate: project.expectedEndDate || '',
@@ -40,6 +38,35 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       });
     }
   }, [project?.id]);
+
+  // Real-time WhatsApp messages listener
+  useEffect(() => {
+    if (!project?.name) return;
+    
+    setLoadingWhatsapp(true);
+    const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
+    
+    // Simple query - just get recent messages, filter client-side
+    // This avoids needing composite indexes
+    const q = query(messagesRef, orderBy('created_at', 'desc'), limit(100));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const allMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Filter for this project client-side
+      const projectMessages = allMessages.filter(msg => 
+        msg.project_name === project.name
+      );
+      
+      setWhatsappMessages(projectMessages.slice(0, 10));
+      setLoadingWhatsapp(false);
+    }, (error) => {
+      console.error('WhatsApp messages error:', error);
+      setLoadingWhatsapp(false);
+    });
+
+    return () => unsubscribe();
+  }, [project?.name]);
 
   const loadStats = async () => {
     setLoadingStats(true);
@@ -72,43 +99,6 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       console.error('Error loading emails:', err);
     } finally {
       setLoadingEmails(false);
-    }
-  };
-
-  const loadWhatsappMessages = async () => {
-    setLoadingWhatsapp(true);
-    try {
-      const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
-      
-      // Try to get messages for this project, or all recent messages
-      let q;
-      if (project?.name) {
-        // First try to get project-specific messages
-        q = query(
-          messagesRef,
-          where('project_name', '==', project.name),
-          orderBy('created_at', 'desc'),
-          limit(10)
-        );
-      } else {
-        q = query(messagesRef, orderBy('created_at', 'desc'), limit(10));
-      }
-      
-      const snapshot = await getDocs(q);
-      let messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // If no project-specific messages, get all recent actionable ones
-      if (messages.length === 0) {
-        const allQuery = query(messagesRef, orderBy('created_at', 'desc'), limit(10));
-        const allSnapshot = await getDocs(allQuery);
-        messages = allSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      }
-      
-      setWhatsappMessages(messages);
-    } catch (err) {
-      console.error('Error loading WhatsApp messages:', err);
-    } finally {
-      setLoadingWhatsapp(false);
     }
   };
 
@@ -160,14 +150,6 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       if (diffHours < 24) return `${diffHours}h ago`;
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     } catch { return ''; }
-  };
-
-  const formatSize = (bytes) => {
-    if (!bytes) return '0 B';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
   const saveDates = () => {
@@ -223,10 +205,10 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
 
   const getUrgencyColor = (urgency) => {
     switch (urgency?.toLowerCase()) {
-      case 'high': return 'text-red-500 bg-red-50';
-      case 'medium': return 'text-amber-500 bg-amber-50';
-      case 'low': return 'text-green-500 bg-green-50';
-      default: return 'text-slate-500 bg-slate-50';
+      case 'high': return 'text-red-500 bg-red-50 border-red-200';
+      case 'medium': return 'text-amber-500 bg-amber-50 border-amber-200';
+      case 'low': return 'text-green-500 bg-green-50 border-green-200';
+      default: return 'text-slate-500 bg-slate-50 border-slate-200';
     }
   };
 
@@ -360,7 +342,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         <div>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Activity Feed</h3>
-            <button onClick={() => { loadRecentEmails(); loadWhatsappMessages(); }} className="text-[9px] text-blue-500 hover:text-blue-600 flex items-center gap-1">
+            <button onClick={loadRecentEmails} className="text-[9px] text-blue-500 hover:text-blue-600 flex items-center gap-1">
               <Icon name="refresh-cw" size={10} /> Refresh
             </button>
           </div>
@@ -399,7 +381,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
             </div>
           </div>
 
-          {/* WhatsApp Messages */}
+          {/* WhatsApp Messages - With expandable detail */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
             <div className="p-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
               <Icon name="message-circle" size={14} className="text-green-500" />
@@ -410,41 +392,80 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
                 </span>
               )}
             </div>
-            <div className="divide-y divide-slate-100 max-h-[200px] overflow-y-auto">
+            <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
               {loadingWhatsapp ? (
                 <div className="p-4 flex items-center justify-center">
                   <Icon name="loader-2" size={16} className="animate-spin text-slate-400" />
                 </div>
               ) : whatsappMessages.length > 0 ? (
                 whatsappMessages.map((msg) => (
-                  <div key={msg.id} className={`p-3 hover:bg-slate-50 transition-colors ${msg.is_actionable ? 'border-l-2 border-l-amber-400' : ''}`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-slate-800 truncate">{msg.summary || msg.text?.substring(0, 60)}</p>
-                        <p className="text-[10px] text-slate-500 truncate">
-                          {msg.group_name} • {msg.sender?.split('@')[0]}
-                        </p>
+                  <div 
+                    key={msg.id} 
+                    className={`transition-colors cursor-pointer ${
+                      msg.is_actionable ? 'border-l-2 border-l-amber-400' : ''
+                    } ${expandedMessage === msg.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                    onClick={() => setExpandedMessage(expandedMessage === msg.id ? null : msg.id)}
+                  >
+                    <div className="p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs font-medium text-slate-800 ${expandedMessage === msg.id ? '' : 'truncate'}`}>
+                            {msg.summary || msg.text?.substring(0, 80)}
+                          </p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            {msg.group_name || 'WhatsApp'} • {msg.sender?.split('@')[0]} • {formatEmailDate(msg.created_at)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {msg.is_actionable && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${getUrgencyColor(msg.urgency)}`}>
+                              {msg.action_type?.toUpperCase() || 'ACTION'}
+                            </span>
+                          )}
+                          <Icon 
+                            name={expandedMessage === msg.id ? 'chevron-up' : 'chevron-down'} 
+                            size={14} 
+                            className="text-slate-400" 
+                          />
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {msg.is_actionable && (
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded ${getUrgencyColor(msg.urgency)}`}>
-                            {msg.action_type?.toUpperCase() || 'ACTION'}
-                          </span>
-                        )}
-                        <span className="text-[9px] text-slate-400">{formatEmailDate(msg.created_at)}</span>
-                      </div>
+                      
+                      {/* Expanded content */}
+                      {expandedMessage === msg.id && (
+                        <div className="mt-3 pt-3 border-t border-slate-200">
+                          <p className="text-sm text-slate-700 whitespace-pre-wrap">{msg.text}</p>
+                          {msg.summary && msg.summary !== msg.text && (
+                            <div className="mt-2 p-2 bg-blue-100 rounded-lg">
+                              <p className="text-[10px] font-medium text-blue-700 mb-1">AI Summary</p>
+                              <p className="text-xs text-blue-900">{msg.summary}</p>
+                            </div>
+                          )}
+                          {msg.is_actionable && (
+                            <div className="mt-2 flex gap-2">
+                              <button className="px-2 py-1 bg-green-100 text-green-700 rounded text-[10px] font-medium hover:bg-green-200">
+                                Mark Done
+                              </button>
+                              <button className="px-2 py-1 bg-slate-100 text-slate-700 rounded text-[10px] font-medium hover:bg-slate-200">
+                                Snooze
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))
               ) : (
                 <div className="p-4 text-center text-slate-400 text-xs">
-                  No WhatsApp messages yet
+                  <Icon name="message-circle" size={24} className="mx-auto mb-2 opacity-30" />
+                  <p>No WhatsApp messages for this project yet</p>
+                  <p className="text-[10px] mt-1">Map a group to this project in Settings</p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Pending Decisions Placeholder */}
+          {/* Pending Decisions */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="p-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
               <Icon name="alert-circle" size={14} className="text-amber-500" />
