@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { COLORS } from '../config';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 
 export default function Overview({ projects, onSelectProject }) {
   const [needsAttention, setNeedsAttention] = useState([]);
@@ -13,11 +13,10 @@ export default function Overview({ projects, onSelectProject }) {
   useEffect(() => {
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
     
-    // Simple query - get recent messages, filter client-side to avoid index issues
     const recentQuery = query(
       messagesRef,
       orderBy('created_at', 'desc'),
-      limit(50)
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(recentQuery, (snapshot) => {
@@ -27,7 +26,6 @@ export default function Overview({ projects, onSelectProject }) {
       snapshot.docs.forEach(doc => {
         const data = { id: doc.id, ...doc.data() };
         
-        // Only show actionable items
         if (data.is_actionable) {
           if (data.project_name && data.project_name !== '__general__') {
             items.push(data);
@@ -36,6 +34,19 @@ export default function Overview({ projects, onSelectProject }) {
           }
         }
       });
+      
+      // Sort by urgency: high > medium > low
+      const urgencyOrder = { high: 0, medium: 1, low: 2 };
+      const sortByUrgency = (a, b) => {
+        const aOrder = urgencyOrder[a.urgency] ?? 2;
+        const bOrder = urgencyOrder[b.urgency] ?? 2;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        // Secondary sort by date
+        return new Date(b.created_at) - new Date(a.created_at);
+      };
+      
+      items.sort(sortByUrgency);
+      unmapped.sort(sortByUrgency);
       
       setNeedsAttention(items.slice(0, 10));
       setUnmappedMessages(unmapped.slice(0, 10));
@@ -99,67 +110,52 @@ export default function Overview({ projects, onSelectProject }) {
       <div 
         key={item.id} 
         onClick={(e) => handleItemClick(item, e)}
-        className={`transition-all cursor-pointer ${
-          isExpanded ? 'bg-blue-50' : 'hover:bg-slate-50'
-        }`}
+        className={`transition-all cursor-pointer ${isExpanded ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
       >
-        <div className="p-4">
-          <div className="flex items-start gap-3">
-            <div className={`p-1.5 rounded-lg ${getUrgencyStyle(item.urgency)}`}>
-              <Icon name={getActionIcon(item.action_type)} size={14} />
+        <div className="p-3 sm:p-4">
+          <div className="flex items-start gap-2 sm:gap-3">
+            <div className={`p-1 sm:p-1.5 rounded-lg flex-shrink-0 ${getUrgencyStyle(item.urgency)}`}>
+              <Icon name={getActionIcon(item.action_type)} size={12} className="sm:w-3.5 sm:h-3.5" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className={`text-sm text-slate-800 ${isExpanded ? '' : 'line-clamp-2'}`}>
+              <p className={`text-xs sm:text-sm text-slate-800 ${isExpanded ? '' : 'line-clamp-2'}`}>
                 {item.summary || item.text}
               </p>
-              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+              <div className="flex items-center gap-1.5 sm:gap-2 mt-1 flex-wrap">
                 {showProject && item.project_name && (
-                  <button 
-                    onClick={(e) => handleGoToProject(item, e)}
-                    className="text-[10px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded hover:bg-blue-100 transition-colors"
-                  >
-                    {item.project_name} →
-                  </button>
+                  <span className="text-[9px] sm:text-[10px] font-medium text-blue-600 bg-blue-50 px-1 sm:px-1.5 py-0.5 rounded">
+                    {item.project_name}
+                  </span>
                 )}
-                <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                  <Icon name="message-circle" size={10} className="text-green-500" />
-                  {item.group_name || 'WhatsApp'}
+                <span className="text-[9px] sm:text-[10px] text-slate-400">
+                  {item.group_name || 'WhatsApp'} • {formatTime(item.created_at)}
                 </span>
-                <span className="text-[10px] text-slate-400">{formatTime(item.created_at)}</span>
               </div>
             </div>
-            <Icon 
-              name={isExpanded ? 'chevron-up' : 'chevron-down'} 
-              size={16} 
-              className="text-slate-300 flex-shrink-0" 
-            />
+            <Icon name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} className="text-slate-300 flex-shrink-0" />
           </div>
           
-          {/* Expanded content */}
           {isExpanded && (
-            <div className="mt-3 pt-3 border-t border-slate-200 ml-9">
-              <p className="text-sm text-slate-700 whitespace-pre-wrap">{item.text}</p>
+            <div className="mt-3 pt-3 border-t border-slate-200 ml-6 sm:ml-9">
+              <p className="text-xs sm:text-sm text-slate-700 whitespace-pre-wrap">{item.text}</p>
               
               {item.summary && item.summary !== item.text && (
-                <div className="mt-3 p-2 bg-blue-100 rounded-lg">
-                  <p className="text-[10px] font-medium text-blue-700 mb-1">AI Summary</p>
-                  <p className="text-xs text-blue-900">{item.summary}</p>
+                <div className="mt-2 sm:mt-3 p-2 bg-blue-100 rounded-lg">
+                  <p className="text-[9px] sm:text-[10px] font-medium text-blue-700 mb-1">AI Summary</p>
+                  <p className="text-[10px] sm:text-xs text-blue-900">{item.summary}</p>
                 </div>
               )}
               
-              <div className="mt-3 flex gap-2 flex-wrap">
-                <button className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors">
-                  ✓ Mark Done
-                </button>
-                <button className="px-3 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-300 transition-colors">
-                  Snooze
+              <div className="mt-2 sm:mt-3 flex gap-2 flex-wrap">
+                <button className="px-2 sm:px-3 py-1 sm:py-1.5 bg-green-500 text-white rounded-lg text-[10px] sm:text-xs font-medium">
+                  ✓ Done
                 </button>
                 {item.project_name && (
                   <button 
                     onClick={(e) => handleGoToProject(item, e)}
-                    className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-medium hover:bg-blue-600 transition-colors"
+                    className="px-2 sm:px-3 py-1 sm:py-1.5 bg-blue-500 text-white rounded-lg text-[10px] sm:text-xs font-medium"
                   >
-                    Go to {item.project_name} →
+                    Open Project →
                   </button>
                 )}
               </div>
@@ -171,90 +167,30 @@ export default function Overview({ projects, onSelectProject }) {
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8 animate-in">
+    <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8 animate-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">Dashboard</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            {projects.length} {projects.length === 1 ? 'Project' : 'Projects'} Active
-          </p>
-        </div>
+      <div>
+        <h1 className="text-lg sm:text-xl font-semibold text-slate-900">Dashboard</h1>
+        <p className="text-slate-500 text-xs sm:text-sm mt-0.5 sm:mt-1">
+          {projects.length} {projects.length === 1 ? 'Project' : 'Projects'} Active
+        </p>
       </div>
 
-      {/* Loading State */}
-      {loading && (
-        <div className="flex items-center justify-center py-8">
-          <Icon name="loader-2" size={24} className="animate-spin text-slate-400" />
-        </div>
-      )}
-
-      {/* Needs Attention Section */}
-      {!loading && (needsAttention.length > 0 || unmappedMessages.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Action Items Across Projects */}
-          {needsAttention.length > 0 && (
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-100 bg-gradient-to-r from-red-50 to-amber-50 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 bg-red-100 rounded-lg">
-                    <Icon name="alert-triangle" size={16} className="text-red-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900">Needs Your Attention</h3>
-                    <p className="text-[10px] text-slate-500">Click to expand • Action items from all channels</p>
-                  </div>
-                </div>
-                <span className="text-xs font-medium text-red-600 bg-red-100 px-2 py-1 rounded-full">
-                  {needsAttention.length} items
-                </span>
-              </div>
-              <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
-                {needsAttention.map(item => renderMessageItem(item, true))}
-              </div>
-            </div>
-          )}
-
-          {/* Unmapped / Cross-Project Messages */}
-          {unmappedMessages.length > 0 && (
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-slate-50 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 bg-blue-100 rounded-lg">
-                    <Icon name="inbox" size={16} className="text-blue-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900">Unmapped Messages</h3>
-                    <p className="text-[10px] text-slate-500">Assign to projects in Settings</p>
-                  </div>
-                </div>
-                <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
-                  {unmappedMessages.length} items
-                </span>
-              </div>
-              <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
-                {unmappedMessages.map(item => renderMessageItem(item, false))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* Project Cards */}
+      {/* Projects FIRST */}
       <div>
-        <h3 className="text-sm font-semibold text-slate-700 mb-4">Your Projects</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+        <h3 className="text-xs sm:text-sm font-semibold text-slate-700 mb-3 sm:mb-4">Your Projects</h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4">
           {projects.map(p => (
             <div 
               key={p.id} 
               onClick={() => onSelectProject(p)} 
-              className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer overflow-hidden p-3 sm:p-4 group" 
+              className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer p-3 sm:p-4 group" 
             >
-              <div className="flex justify-between items-start mb-2 sm:mb-3">
-                <div className="p-1.5 sm:p-2 bg-slate-50 rounded-lg text-slate-600 group-hover:bg-blue-500 group-hover:text-white transition-all">
-                  <Icon name="file-text" size={16} className="sm:w-5 sm:h-5" />
+              <div className="flex justify-between items-start mb-2">
+                <div className="p-1.5 bg-slate-50 rounded-lg text-slate-600 group-hover:bg-blue-500 group-hover:text-white transition-all">
+                  <Icon name="folder" size={14} className="sm:w-4 sm:h-4" />
                 </div>
-                <span className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md text-[8px] sm:text-[10px] font-medium uppercase tracking-wide ${
+                <span className={`px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] font-medium uppercase ${
                   p.status === 'Syncing...' ? 'bg-amber-50 text-amber-600 animate-pulse' : 
                   p.status === 'Sync Error' ? 'bg-red-50 text-red-600' : 
                   'bg-emerald-50 text-emerald-600'
@@ -263,29 +199,79 @@ export default function Overview({ projects, onSelectProject }) {
                 </span>
               </div>
               
-              <h3 className="text-sm sm:text-base font-semibold text-slate-900 mb-0.5 sm:mb-1 truncate">{p.name}</h3>
-              <p className="text-[10px] sm:text-xs text-slate-400 flex items-center gap-1 mb-2 sm:mb-3">
-                <Icon name="map-pin" size={10} /> {p.location || 'No location'}
+              <h3 className="text-xs sm:text-sm font-semibold text-slate-900 truncate">{p.name}</h3>
+              <p className="text-[9px] sm:text-xs text-slate-400 mt-0.5 truncate">
+                {p.location || 'No location'}
               </p>
-              
-              <div className="pt-2 sm:pt-3 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-blue-500 font-medium text-[10px] sm:text-xs uppercase tracking-wide">Open</span>
-                <Icon name="arrow-right" size={12} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
-              </div>
             </div>
           ))}
 
           {projects.length === 0 && (
-            <div className="col-span-full flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mb-3">
-                <Icon name="folder-plus" size={24} style={{ color: COLORS.blue }} />
+            <div className="col-span-full flex flex-col items-center justify-center py-12 text-center">
+              <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mb-3">
+                <Icon name="folder-plus" size={20} style={{ color: COLORS.blue }} />
               </div>
-              <h3 className="text-base font-semibold text-slate-900">No Projects Yet</h3>
-              <p className="text-slate-500 mt-1 text-sm">Register a project to get started.</p>
+              <h3 className="text-sm font-semibold text-slate-900">No Projects Yet</h3>
+              <p className="text-slate-500 mt-1 text-xs">Register a project to get started.</p>
             </div>
           )}
         </div>
       </div>
+
+      {/* Needs Attention SECOND - only show if there are items */}
+      {!loading && (needsAttention.length > 0 || unmappedMessages.length > 0) && (
+        <div className="space-y-4">
+          <h3 className="text-xs sm:text-sm font-semibold text-slate-700">Needs Attention</h3>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Action Items - sorted by urgency */}
+            {needsAttention.length > 0 && (
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="p-3 sm:p-4 border-b border-slate-100 bg-gradient-to-r from-red-50 to-amber-50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 sm:p-1.5 bg-red-100 rounded-lg">
+                      <Icon name="alert-triangle" size={14} className="text-red-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs sm:text-sm font-semibold text-slate-900">Action Items</h3>
+                      <p className="text-[9px] sm:text-[10px] text-slate-500">Sorted by priority</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] sm:text-xs font-medium text-red-600 bg-red-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full">
+                    {needsAttention.length}
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-100 max-h-[300px] sm:max-h-[400px] overflow-y-auto">
+                  {needsAttention.map(item => renderMessageItem(item, true))}
+                </div>
+              </div>
+            )}
+
+            {/* Unmapped Messages */}
+            {unmappedMessages.length > 0 && (
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="p-3 sm:p-4 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-slate-50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 sm:p-1.5 bg-blue-100 rounded-lg">
+                      <Icon name="inbox" size={14} className="text-blue-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs sm:text-sm font-semibold text-slate-900">Unmapped</h3>
+                      <p className="text-[9px] sm:text-[10px] text-slate-500">Assign in Settings</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] sm:text-xs font-medium text-blue-600 bg-blue-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full">
+                    {unmappedMessages.length}
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-100 max-h-[300px] sm:max-h-[400px] overflow-y-auto">
+                  {unmappedMessages.map(item => renderMessageItem(item, false))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
