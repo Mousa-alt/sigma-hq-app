@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { db } from '../firebase';
+import { EMAIL_SYNC_URL } from '../config';
 import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
 const GROUP_TYPES = [
@@ -26,6 +27,10 @@ export default function ChannelSettings({ projects }) {
   const [savedId, setSavedId] = useState(null);
   const [detectedGroups, setDetectedGroups] = useState([]);
   const [recentMessages, setRecentMessages] = useState([]);
+  
+  // Email sync state
+  const [emailSyncing, setEmailSyncing] = useState(false);
+  const [emailSyncResult, setEmailSyncResult] = useState(null);
 
   useEffect(() => {
     // Real-time listener for mapped groups
@@ -99,6 +104,47 @@ export default function ChannelSettings({ projects }) {
       await deleteDoc(groupRef);
     } catch (err) {
       console.error('Error deleting group:', err);
+    }
+  };
+
+  // Email sync functions
+  const syncEmails = async (reset = false) => {
+    setEmailSyncing(true);
+    setEmailSyncResult(null);
+    
+    try {
+      if (reset) {
+        // First reset the state
+        await fetch(EMAIL_SYNC_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reset: true })
+        });
+      }
+      
+      // Then process emails
+      const res = await fetch(EMAIL_SYNC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 100 })
+      });
+      
+      const result = await res.json();
+      setEmailSyncResult(result);
+      
+      if (result.processed > 0) {
+        alert(`✅ Email Sync Complete!\n\nProcessed: ${result.processed}\nSkipped: ${result.skipped || 0}\nErrors: ${result.errors || 0}`);
+      } else if (result.skipped > 0) {
+        alert(`ℹ️ No new emails to process.\n\nSkipped: ${result.skipped} (already processed)`);
+      } else {
+        alert(`ℹ️ No emails found to process.`);
+      }
+    } catch (err) {
+      console.error('Email sync error:', err);
+      setEmailSyncResult({ error: err.message });
+      alert(`❌ Email Sync Failed\n\n${err.message}`);
+    } finally {
+      setEmailSyncing(false);
     }
   };
 
@@ -323,22 +369,116 @@ export default function ChannelSettings({ projects }) {
 
       {/* Email Tab */}
       {activeTab === 'email' && (
-        <div className="p-8 text-center text-slate-400">
-          <Icon name="mail" size={48} className="mx-auto mb-4 opacity-30" />
-          <h3 className="text-lg font-medium text-slate-700">Outlook Integration</h3>
-          <p className="text-sm mt-2">Email sync is running. Messages are automatically classified and routed to projects.</p>
-          <div className="flex justify-center gap-4 mt-6">
-            <div className="text-center">
-              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                <Icon name="check" size={24} className="text-green-600" />
+        <div className="space-y-6">
+          {/* Email Sync Actions */}
+          <div className="bg-white border border-slate-200 rounded-xl p-6">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-14 h-14 bg-blue-100 rounded-xl flex items-center justify-center">
+                <Icon name="mail" size={28} className="text-blue-600" />
               </div>
-              <p className="text-xs text-slate-500">Connected</p>
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Email Sync</h3>
+                <p className="text-sm text-slate-500">Sync emails from mail.sigmadd-egypt.com</p>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                <span className="text-xs text-green-600 font-medium">Connected</span>
+              </div>
             </div>
-            <div className="text-center">
-              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                <Icon name="zap" size={24} className="text-blue-600" />
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <button
+                onClick={() => syncEmails(false)}
+                disabled={emailSyncing}
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-all disabled:opacity-50"
+              >
+                {emailSyncing ? (
+                  <Icon name="loader-2" size={18} className="animate-spin" />
+                ) : (
+                  <Icon name="refresh-cw" size={18} />
+                )}
+                {emailSyncing ? 'Syncing...' : 'Sync New Emails'}
+              </button>
+              
+              <button
+                onClick={() => syncEmails(true)}
+                disabled={emailSyncing}
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-all disabled:opacity-50"
+              >
+                {emailSyncing ? (
+                  <Icon name="loader-2" size={18} className="animate-spin" />
+                ) : (
+                  <Icon name="rotate-ccw" size={18} />
+                )}
+                Reprocess All Emails
+              </button>
+            </div>
+            
+            {/* Sync Result */}
+            {emailSyncResult && (
+              <div className={`mt-4 p-4 rounded-lg ${emailSyncResult.error ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
+                {emailSyncResult.error ? (
+                  <div className="flex items-center gap-2 text-red-700">
+                    <Icon name="alert-circle" size={16} />
+                    <span className="text-sm">Error: {emailSyncResult.error}</span>
+                  </div>
+                ) : (
+                  <div className="text-sm text-green-700">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icon name="check-circle" size={16} />
+                      <span className="font-medium">Sync Complete</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 mt-2">
+                      <div className="text-center">
+                        <p className="text-2xl font-bold">{emailSyncResult.processed || 0}</p>
+                        <p className="text-xs text-green-600">Processed</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold">{emailSyncResult.skipped || 0}</p>
+                        <p className="text-xs text-green-600">Skipped</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold">{emailSyncResult.errors || 0}</p>
+                        <p className="text-xs text-green-600">Errors</p>
+                      </div>
+                    </div>
+                    {emailSyncResult.emails && emailSyncResult.emails.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-green-200">
+                        <p className="text-xs font-medium mb-2">Recently Synced:</p>
+                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                          {emailSyncResult.emails.slice(0, 5).map((email, idx) => (
+                            <div key={idx} className="flex items-center gap-2 text-xs">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] ${email.project ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                                {email.project || 'Unclassified'}
+                              </span>
+                              <span className="truncate">{email.subject}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <p className="text-xs text-slate-500">Auto-sync</p>
+            )}
+          </div>
+          
+          {/* Email Classification Info */}
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="flex items-start gap-3">
+              <Icon name="zap" size={20} className="text-blue-600 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-medium text-blue-900">AI-Powered Classification</h3>
+                <p className="text-xs text-blue-700 mt-1">
+                  Emails are automatically classified by project using AI. The system looks for:
+                </p>
+                <ul className="text-xs text-blue-700 mt-2 list-disc list-inside space-y-1">
+                  <li>Project names in subject line and body</li>
+                  <li>Common misspellings (AGURA → Agora-GEM)</li>
+                  <li>Client names and site references</li>
+                  <li>Document types: RFI, Approval, Submittal, VO, Invoice</li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
