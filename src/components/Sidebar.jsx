@@ -1,5 +1,8 @@
+import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { COLORS, BRANDING } from '../config';
+import { db } from '../firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 export default function Sidebar({ 
   projects, 
@@ -8,27 +11,47 @@ export default function Sidebar({
   isSidebarOpen, 
   onSelectProject, 
   onGoToOverview,
-  onGoToWhatsApp,
+  onGoToSettings,
   onOpenModal,
   onCloseSidebar 
 }) {
+  const [projectBadges, setProjectBadges] = useState({});
+
+  // Real-time badges for pending action items per project
+  useEffect(() => {
+    const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
+    const unsubscribe = onSnapshot(
+      query(messagesRef, where('is_actionable', '==', true), where('status', '==', 'pending')),
+      (snapshot) => {
+        const badges = {};
+        snapshot.docs.forEach(doc => {
+          const data = doc.data();
+          const projectName = data.project_name;
+          if (projectName) {
+            badges[projectName] = (badges[projectName] || 0) + 1;
+          }
+        });
+        setProjectBadges(badges);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  const totalPending = Object.values(projectBadges).reduce((a, b) => a + b, 0);
+
   return (
     <aside 
       className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} flex flex-col text-white shadow-2xl`} 
       style={{ backgroundColor: COLORS.navy }}
     >
-      {/* Logo - centered */}
+      {/* Logo */}
       <div className="px-5 py-5 border-b border-white/5 flex justify-center">
-        <img 
-          src={BRANDING.logoWhite} 
-          alt="Sigma" 
-          className="h-12 w-auto" 
-        />
+        <img src={BRANDING.logoWhite} alt="Sigma" className="h-12 w-auto" />
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 p-4 overflow-y-auto no-scrollbar">
-        {/* Section title */}
+        {/* Main Navigation */}
         <p className="px-4 mb-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Navigation</p>
         
         <button 
@@ -38,23 +61,17 @@ export default function Sidebar({
         >
           <Icon name="layout-dashboard" size={18} /> 
           <span className="font-medium text-sm">Dashboard</span>
+          {totalPending > 0 && view !== 'overview' && (
+            <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+              {totalPending}
+            </span>
+          )}
         </button>
 
-        {/* WhatsApp Settings */}
-        <button 
-          onClick={() => { onGoToWhatsApp?.(); onCloseSidebar(); }} 
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all mb-2 ${view === 'whatsapp' ? 'text-white shadow-lg' : 'text-slate-400 hover:text-white'}`} 
-          style={view === 'whatsapp' ? { backgroundColor: '#25D366' } : {}}
-        >
-          <Icon name="message-circle" size={18} /> 
-          <span className="font-medium text-sm">WhatsApp</span>
-          <span className="ml-auto text-[9px] bg-green-500 text-white px-1.5 py-0.5 rounded">NEW</span>
-        </button>
-
-        {/* Projects section */}
+        {/* Projects Section */}
         <div className="mt-6">
           <div className="flex items-center justify-between px-4 mb-3">
-            <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Live Projects</span>
+            <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Projects</span>
             <button 
               onClick={onOpenModal} 
               className="p-1 rounded text-white shadow-lg" 
@@ -65,21 +82,52 @@ export default function Sidebar({
           </div>
 
           <div className="space-y-1">
-            {projects.map(p => (
-              <button 
-                key={p.id} 
-                onClick={() => { onSelectProject(p); onCloseSidebar(); }} 
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left transition-all ${selectedProject?.id === p.id ? 'bg-white/10 text-white border border-white/10' : 'text-slate-400 hover:text-white'}`}
-              >
-                <div className={`shrink-0 w-2 h-2 rounded-full ${p.status === 'Syncing...' ? 'bg-amber-500 animate-pulse' : 'bg-emerald-400'}`} />
-                <span className="text-xs font-medium truncate">{p.name}</span>
-              </button>
-            ))}
+            {projects.map(p => {
+              const badge = projectBadges[p.name] || 0;
+              return (
+                <button 
+                  key={p.id} 
+                  onClick={() => { onSelectProject(p); onCloseSidebar(); }} 
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left transition-all ${
+                    selectedProject?.id === p.id 
+                      ? 'bg-white/10 text-white border border-white/10' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <div className={`shrink-0 w-2 h-2 rounded-full ${
+                    p.status === 'Syncing...' ? 'bg-amber-500 animate-pulse' : 
+                    badge > 0 ? 'bg-red-400' : 'bg-emerald-400'
+                  }`} />
+                  <span className="text-xs font-medium truncate flex-1">{p.name}</span>
+                  {badge > 0 && (
+                    <span className="bg-red-500/20 text-red-400 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                      {badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
+        </div>
+
+        {/* Settings Section */}
+        <div className="mt-8">
+          <p className="px-4 mb-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Settings</p>
+          
+          <button 
+            onClick={() => { onGoToSettings?.(); onCloseSidebar(); }} 
+            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all ${
+              view === 'settings' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Icon name="sliders" size={16} /> 
+            <span className="text-xs font-medium">Channel Mapping</span>
+            <span className="ml-auto text-[9px] text-slate-500">WhatsApp, Email</span>
+          </button>
         </div>
       </nav>
 
-      {/* Chat with all projects */}
+      {/* AI Search */}
       <div className="border-t border-white/5 bg-black/20 p-4">
         <div className="flex items-center gap-2 text-white/50 mb-3">
           <Icon name="sparkles" size={14} /> 
