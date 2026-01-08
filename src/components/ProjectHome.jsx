@@ -39,18 +39,17 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   }, [project?.id]);
 
-  // Real-time WhatsApp messages listener - simple query, sort client-side
+  // Real-time WhatsApp messages listener
   useEffect(() => {
     if (!project?.name) return;
     
     setLoadingWhatsapp(true);
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
     
-    // Simple query without orderBy (no index needed)
     const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
       const allMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Filter by project and sort by created_at descending (client-side)
+      // Filter by project and sort by created_at descending
       const projectMessages = allMessages
         .filter(msg => msg.project_name === project.name)
         .sort((a, b) => {
@@ -104,7 +103,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   };
 
-  // Mark message as done - removes red badge
+  // Mark message as done
   const markMessageDone = async (msgId) => {
     try {
       const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages', msgId);
@@ -196,12 +195,17 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     orange: 'hover:border-orange-300 hover:bg-orange-50 text-orange-500',
   };
 
-  const getUrgencyColor = (urgency) => {
-    switch (urgency?.toLowerCase()) {
-      case 'high': return 'text-red-500 bg-red-50 border-red-200';
-      case 'medium': return 'text-amber-500 bg-amber-50 border-amber-200';
-      case 'low': return 'text-green-500 bg-green-50 border-green-200';
-      default: return 'text-slate-500 bg-slate-50 border-slate-200';
+  // Action type labels and colors
+  const getActionTypeStyle = (actionType) => {
+    switch (actionType) {
+      case 'task': return { label: 'Task', color: 'text-blue-600 bg-blue-50 border-blue-200' };
+      case 'query': return { label: 'Query', color: 'text-purple-600 bg-purple-50 border-purple-200' };
+      case 'info': return { label: 'Info', color: 'text-slate-600 bg-slate-50 border-slate-200' };
+      case 'decision_needed': return { label: 'Decision', color: 'text-red-600 bg-red-50 border-red-200' };
+      case 'approval_request': return { label: 'Approval', color: 'text-amber-600 bg-amber-50 border-amber-200' };
+      case 'deadline': return { label: 'Deadline', color: 'text-red-600 bg-red-50 border-red-200' };
+      case 'invoice': return { label: 'Invoice', color: 'text-emerald-600 bg-emerald-50 border-emerald-200' };
+      default: return { label: 'Message', color: 'text-slate-500 bg-slate-50 border-slate-200' };
     }
   };
 
@@ -390,47 +394,50 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
                 <Icon name="loader-2" size={14} className="animate-spin text-slate-400" />
               </div>
             ) : whatsappMessages.length > 0 ? (
-              whatsappMessages.map((msg) => (
-                <div 
-                  key={msg.id} 
-                  className={`cursor-pointer ${msg.is_actionable && msg.status !== 'done' ? 'border-l-2 border-l-amber-400' : ''} ${expandedMessage === msg.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
-                  onClick={() => setExpandedMessage(expandedMessage === msg.id ? null : msg.id)}
-                >
-                  <div className="p-2.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-[10px] font-medium text-slate-800 ${expandedMessage === msg.id ? '' : 'truncate'}`}>
-                          {msg.summary || msg.text?.substring(0, 60)}
-                        </p>
-                        <p className="text-[9px] text-slate-500 mt-0.5 truncate">
-                          {msg.group_name || 'WhatsApp'} • {formatEmailDate(msg.created_at)}
-                        </p>
-                      </div>
-                      {msg.is_actionable && msg.status !== 'done' && (
-                        <span className={`text-[8px] px-1 py-0.5 rounded border flex-shrink-0 ${getUrgencyColor(msg.urgency)}`}>
-                          {msg.urgency?.toUpperCase() || 'ACTION'}
-                        </span>
-                      )}
-                    </div>
-                    
-                    {expandedMessage === msg.id && (
-                      <div className="mt-2 pt-2 border-t border-slate-200">
-                        <p className="text-xs text-slate-700 whitespace-pre-wrap">{msg.text}</p>
+              whatsappMessages.map((msg) => {
+                const actionStyle = getActionTypeStyle(msg.action_type);
+                return (
+                  <div 
+                    key={msg.id} 
+                    className={`cursor-pointer ${msg.is_actionable && msg.status !== 'done' ? 'border-l-2 border-l-amber-400' : ''} ${expandedMessage === msg.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                    onClick={() => setExpandedMessage(expandedMessage === msg.id ? null : msg.id)}
+                  >
+                    <div className="p-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[10px] font-medium text-slate-800 ${expandedMessage === msg.id ? '' : 'truncate'}`}>
+                            {msg.summary || msg.text?.substring(0, 60)}
+                          </p>
+                          <p className="text-[9px] text-slate-500 mt-0.5 truncate">
+                            {msg.group_name || 'WhatsApp'} • {formatEmailDate(msg.created_at)}
+                          </p>
+                        </div>
                         {msg.is_actionable && msg.status !== 'done' && (
-                          <div className="mt-2">
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); markMessageDone(msg.id); }}
-                              className="px-2 py-1 bg-green-500 text-white rounded text-[9px] font-medium hover:bg-green-600"
-                            >
-                              ✓ Mark Done
-                            </button>
-                          </div>
+                          <span className={`text-[8px] px-1.5 py-0.5 rounded border flex-shrink-0 font-medium ${actionStyle.color}`}>
+                            {actionStyle.label}
+                          </span>
                         )}
                       </div>
-                    )}
+                      
+                      {expandedMessage === msg.id && (
+                        <div className="mt-2 pt-2 border-t border-slate-200">
+                          <p className="text-xs text-slate-700 whitespace-pre-wrap">{msg.text}</p>
+                          {msg.is_actionable && msg.status !== 'done' && (
+                            <div className="mt-2">
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); markMessageDone(msg.id); }}
+                                className="px-2 py-1 bg-green-500 text-white rounded text-[9px] font-medium hover:bg-green-600"
+                              >
+                                ✓ Mark Done
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="p-3 text-center text-slate-400 text-[10px]">
                 No WhatsApp messages yet
