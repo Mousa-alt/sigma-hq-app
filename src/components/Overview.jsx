@@ -5,60 +5,93 @@ import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 
 export default function Overview({ projects, onSelectProject }) {
-  const [needsAttention, setNeedsAttention] = useState([]);
-  const [unmappedMessages, setUnmappedMessages] = useState([]);
+  const [actionItems, setActionItems] = useState([]);
+  const [unmappedItems, setUnmappedItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedItem, setExpandedItem] = useState(null);
 
   useEffect(() => {
-    const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
+    // Listen to WhatsApp messages
+    const whatsappRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
+    const emailRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails');
     
-    const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
-      const items = [];
+    let whatsappItems = [];
+    let emailItems = [];
+    
+    const processItems = () => {
+      const allItems = [...whatsappItems, ...emailItems];
+      const mapped = [];
       const unmapped = [];
       
-      snapshot.docs.forEach(doc => {
-        const data = { id: doc.id, ...doc.data() };
-        
-        // Only show actionable items that aren't done
-        if (data.is_actionable && data.status !== 'done') {
-          if (data.project_name && data.project_name !== '__general__') {
-            items.push(data);
+      allItems.forEach(item => {
+        if (item.is_actionable && item.status !== 'done') {
+          if (item.project_name && item.project_name !== '__general__') {
+            mapped.push(item);
           } else {
-            unmapped.push(data);
+            unmapped.push(item);
           }
         }
       });
       
       // Sort by date (newest first)
       const sortByDate = (a, b) => {
-        const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
-        const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
+        const dateA = new Date(a.created_at || a.date || 0);
+        const dateB = new Date(b.created_at || b.date || 0);
         return dateB - dateA;
       };
       
-      items.sort(sortByDate);
+      mapped.sort(sortByDate);
       unmapped.sort(sortByDate);
       
-      setNeedsAttention(items.slice(0, 10));
-      setUnmappedMessages(unmapped.slice(0, 10));
+      setActionItems(mapped.slice(0, 15));
+      setUnmappedItems(unmapped.slice(0, 10));
       setLoading(false);
+    };
+    
+    const unsubWhatsapp = onSnapshot(whatsappRef, (snapshot) => {
+      whatsappItems = snapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data(),
+        source: 'whatsapp'
+      }));
+      processItems();
     }, (error) => {
-      console.error('Error loading attention items:', error);
+      console.error('WhatsApp error:', error);
       setLoading(false);
     });
+    
+    const unsubEmail = onSnapshot(emailRef, (snapshot) => {
+      emailItems = snapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data(),
+        source: 'email',
+        // Map email fields to common format
+        text: doc.data().subject,
+        summary: doc.data().subject,
+        created_at: doc.data().date,
+        action_type: doc.data().doc_type
+      }));
+      processItems();
+    }, (error) => {
+      console.error('Email error:', error);
+    });
 
-    return () => unsubscribe();
+    return () => {
+      unsubWhatsapp();
+      unsubEmail();
+    };
   }, []);
 
-  // Mark message as done
-  const markItemDone = async (itemId, e) => {
+  // Mark item as done
+  const markItemDone = async (item, e) => {
     e.stopPropagation();
     try {
-      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages', itemId);
+      const collectionName = item.source === 'email' ? 'emails' : 'whatsapp_messages';
+      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', collectionName, item.id);
       await updateDoc(msgRef, { 
         status: 'done',
         is_actionable: false,
+        is_read: true,
         updated_at: new Date().toISOString()
       });
     } catch (err) {
@@ -66,8 +99,40 @@ export default function Overview({ projects, onSelectProject }) {
     }
   };
 
-  // Action type labels and colors - same as ProjectHome
-  const getActionTypeStyle = (actionType) => {
+  // Mark as read
+  const markAsRead = async (item) => {
+    if (item.is_read) return;
+    try {
+      const collectionName = item.source === 'email' ? 'emails' : 'whatsapp_messages';
+      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', collectionName, item.id);
+      await updateDoc(msgRef, { is_read: true });
+    } catch (err) {
+      console.error('Error marking read:', err);
+    }
+  };
+
+  // Source icon and color
+  const getSourceStyle = (source) => {
+    if (source === 'email') {
+      return { icon: 'mail', color: 'text-blue-500', bg: 'bg-blue-50', label: 'Email' };
+    }
+    return { icon: 'message-circle', color: 'text-green-500', bg: 'bg-green-50', label: 'WhatsApp' };
+  };
+
+  // Action type labels and colors
+  const getActionTypeStyle = (actionType, source) => {
+    // Email doc types
+    if (source === 'email') {
+      switch (actionType) {
+        case 'rfi': return { label: 'RFI', color: 'bg-purple-100 text-purple-700', icon: 'help-circle' };
+        case 'approval': return { label: 'Approval', color: 'bg-amber-100 text-amber-700', icon: 'check-circle' };
+        case 'vo': return { label: 'Variation', color: 'bg-red-100 text-red-700', icon: 'file-plus' };
+        case 'submittal': return { label: 'Submittal', color: 'bg-blue-100 text-blue-700', icon: 'file-text' };
+        case 'invoice': return { label: 'Invoice', color: 'bg-emerald-100 text-emerald-700', icon: 'receipt' };
+        default: return { label: 'Email', color: 'bg-slate-100 text-slate-600', icon: 'mail' };
+      }
+    }
+    // WhatsApp types
     switch (actionType) {
       case 'task': return { label: 'Task', color: 'bg-blue-100 text-blue-700', icon: 'clipboard-list' };
       case 'query': return { label: 'Query', color: 'bg-purple-100 text-purple-700', icon: 'help-circle' };
@@ -88,8 +153,11 @@ export default function Overview({ projects, onSelectProject }) {
       const diffMs = now - date;
       const diffMins = Math.floor(diffMs / 60000);
       const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+      if (diffMins < 1) return 'Just now';
       if (diffMins < 60) return `${diffMins}m ago`;
       if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     } catch { return ''; }
   };
@@ -97,6 +165,7 @@ export default function Overview({ projects, onSelectProject }) {
   const handleItemClick = (item, e) => {
     e.stopPropagation();
     setExpandedItem(expandedItem === item.id ? null : item.id);
+    markAsRead(item);
   };
 
   const handleGoToProject = (item, e) => {
@@ -105,51 +174,76 @@ export default function Overview({ projects, onSelectProject }) {
     if (project) onSelectProject(project);
   };
 
-  const renderMessageItem = (item, showProject = true) => {
+  const renderItem = (item, showProject = true) => {
     const isExpanded = expandedItem === item.id;
-    const actionStyle = getActionTypeStyle(item.action_type);
+    const sourceStyle = getSourceStyle(item.source);
+    const actionStyle = getActionTypeStyle(item.action_type, item.source);
+    const isUnread = !item.is_read;
     
     return (
       <div 
         key={item.id} 
         onClick={(e) => handleItemClick(item, e)}
-        className={`transition-all cursor-pointer ${isExpanded ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+        className={`transition-all cursor-pointer ${isExpanded ? 'bg-blue-50' : 'hover:bg-slate-50'} ${isUnread ? 'border-l-2 border-l-blue-500' : ''}`}
       >
         <div className="p-3">
           <div className="flex items-start gap-2">
-            <div className={`p-1 rounded-lg flex-shrink-0 ${actionStyle.color}`}>
-              <Icon name={actionStyle.icon} size={12} />
+            {/* Source Icon */}
+            <div className={`p-1.5 rounded-lg flex-shrink-0 ${sourceStyle.bg}`}>
+              <Icon name={sourceStyle.icon} size={12} className={sourceStyle.color} />
             </div>
+            
             <div className="flex-1 min-w-0">
+              {/* Type Badge + Unread indicator */}
               <div className="flex items-center gap-1.5 mb-0.5">
-                <span className={`text-[8px] font-medium px-1 py-0.5 rounded ${actionStyle.color}`}>
+                <span className={`text-[8px] font-medium px-1.5 py-0.5 rounded ${actionStyle.color}`}>
                   {actionStyle.label}
                 </span>
+                {isUnread && (
+                  <span className="w-1.5 h-1.5 bg-blue-500 rounded-full" title="Unread" />
+                )}
               </div>
-              <p className={`text-xs text-slate-800 ${isExpanded ? '' : 'line-clamp-2'}`}>
-                {item.summary || item.text}
+              
+              {/* Content */}
+              <p className={`text-xs ${isUnread ? 'font-semibold text-slate-900' : 'text-slate-700'} ${isExpanded ? '' : 'line-clamp-2'}`}>
+                {item.summary || item.text || item.subject}
               </p>
+              
+              {/* Meta info */}
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 {showProject && item.project_name && (
-                  <span className="text-[9px] font-medium text-blue-600 bg-blue-50 px-1 py-0.5 rounded">
+                  <span className="text-[9px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
                     {item.project_name}
                   </span>
                 )}
                 <span className="text-[9px] text-slate-400">
-                  {item.group_name || 'WhatsApp'} • {formatTime(item.created_at)}
+                  {sourceStyle.label} • {formatTime(item.created_at || item.date)}
                 </span>
+                {item.from && (
+                  <span className="text-[9px] text-slate-400 truncate max-w-[120px]">
+                    • {item.from.split('<')[0].trim()}
+                  </span>
+                )}
               </div>
             </div>
+            
             <Icon name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} className="text-slate-300 flex-shrink-0" />
           </div>
           
+          {/* Expanded content */}
           {isExpanded && (
-            <div className="mt-2 pt-2 border-t border-slate-200 ml-6">
-              <p className="text-xs text-slate-700 whitespace-pre-wrap">{item.text}</p>
+            <div className="mt-2 pt-2 border-t border-slate-200 ml-8">
+              <p className="text-xs text-slate-700 whitespace-pre-wrap">
+                {item.text || item.body || item.summary}
+              </p>
+              
+              {item.from && (
+                <p className="text-[10px] text-slate-500 mt-1">From: {item.from}</p>
+              )}
               
               <div className="mt-2 flex gap-2 flex-wrap">
                 <button 
-                  onClick={(e) => markItemDone(item.id, e)}
+                  onClick={(e) => markItemDone(item, e)}
                   className="px-2 py-1 bg-green-500 text-white rounded-lg text-[10px] font-medium hover:bg-green-600"
                 >
                   ✓ Done
@@ -180,7 +274,7 @@ export default function Overview({ projects, onSelectProject }) {
         </p>
       </div>
 
-      {/* Projects FIRST */}
+      {/* Projects */}
       <div>
         <h3 className="text-xs font-semibold text-slate-700 mb-3">Your Projects</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
@@ -222,14 +316,20 @@ export default function Overview({ projects, onSelectProject }) {
         </div>
       </div>
 
-      {/* Needs Attention SECOND */}
-      {!loading && (needsAttention.length > 0 || unmappedMessages.length > 0) && (
+      {/* Needs Attention - Combined WhatsApp + Email */}
+      {!loading && (actionItems.length > 0 || unmappedItems.length > 0) && (
         <div className="space-y-3">
-          <h3 className="text-xs font-semibold text-slate-700">Needs Attention</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-slate-700">Needs Attention</h3>
+            <div className="flex items-center gap-2 text-[9px] text-slate-400">
+              <span className="flex items-center gap-1"><Icon name="message-circle" size={10} className="text-green-500" /> WhatsApp</span>
+              <span className="flex items-center gap-1"><Icon name="mail" size={10} className="text-blue-500" /> Email</span>
+            </div>
+          </div>
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {/* Action Items */}
-            {needsAttention.length > 0 && (
+            {/* Action Items (mapped to projects) */}
+            {actionItems.length > 0 && (
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                 <div className="p-3 border-b border-slate-100 bg-gradient-to-r from-red-50 to-amber-50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -237,43 +337,54 @@ export default function Overview({ projects, onSelectProject }) {
                       <Icon name="alert-triangle" size={12} className="text-red-600" />
                     </div>
                     <div>
-                      <h3 className="text-xs font-semibold text-slate-900">Action Items</h3>
-                      <p className="text-[9px] text-slate-500">Recent messages needing action</p>
+                      <h3 className="text-xs font-semibold text-slate-900">Action Required</h3>
+                      <p className="text-[9px] text-slate-500">Messages & emails needing response</p>
                     </div>
                   </div>
                   <span className="text-[10px] font-medium text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full">
-                    {needsAttention.length}
+                    {actionItems.length}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 max-h-[250px] overflow-y-auto">
-                  {needsAttention.map(item => renderMessageItem(item, true))}
+                <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
+                  {actionItems.map(item => renderItem(item, true))}
                 </div>
               </div>
             )}
 
-            {/* Unmapped Messages */}
-            {unmappedMessages.length > 0 && (
+            {/* Unmapped Items (no project assigned) */}
+            {unmappedItems.length > 0 && (
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <div className="p-3 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-slate-50 flex items-center justify-between">
+                <div className="p-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-blue-50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="p-1 bg-blue-100 rounded-lg">
-                      <Icon name="inbox" size={12} className="text-blue-600" />
+                    <div className="p-1 bg-slate-100 rounded-lg">
+                      <Icon name="inbox" size={12} className="text-slate-600" />
                     </div>
                     <div>
-                      <h3 className="text-xs font-semibold text-slate-900">Unmapped</h3>
-                      <p className="text-[9px] text-slate-500">Assign in Settings</p>
+                      <h3 className="text-xs font-semibold text-slate-900">No Project Assigned</h3>
+                      <p className="text-[9px] text-slate-500">Assign these to a project in Settings</p>
                     </div>
                   </div>
-                  <span className="text-[10px] font-medium text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">
-                    {unmappedMessages.length}
+                  <span className="text-[10px] font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded-full">
+                    {unmappedItems.length}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 max-h-[250px] overflow-y-auto">
-                  {unmappedMessages.map(item => renderMessageItem(item, false))}
+                <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
+                  {unmappedItems.map(item => renderItem(item, false))}
                 </div>
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && actionItems.length === 0 && unmappedItems.length === 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+          <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3">
+            <Icon name="check-circle" size={24} className="text-emerald-600" />
+          </div>
+          <h3 className="text-sm font-semibold text-slate-900">All Clear!</h3>
+          <p className="text-slate-500 mt-1 text-xs">No pending action items</p>
         </div>
       )}
     </div>
