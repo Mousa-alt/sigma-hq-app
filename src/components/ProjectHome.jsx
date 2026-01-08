@@ -26,11 +26,11 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
   const [whatsappMessages, setWhatsappMessages] = useState([]);
   const [loadingWhatsapp, setLoadingWhatsapp] = useState(true);
   const [expandedMessage, setExpandedMessage] = useState(null);
+  const [expandedEmail, setExpandedEmail] = useState(null);
 
   useEffect(() => {
     if (project) {
       loadStats();
-      loadRecentEmails();
       setDates({
         startDate: project.startDate || '',
         expectedEndDate: project.expectedEndDate || '',
@@ -38,6 +38,36 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       });
     }
   }, [project?.id]);
+
+  // Real-time Emails listener from Firestore
+  useEffect(() => {
+    if (!project?.name) return;
+    
+    setLoadingEmails(true);
+    const emailsRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails');
+    
+    const unsubscribe = onSnapshot(emailsRef, (snapshot) => {
+      const allEmails = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Filter by project and sort by date descending
+      const projectEmails = allEmails
+        .filter(email => email.project_name === project.name)
+        .sort((a, b) => {
+          const dateA = a.date ? new Date(a.date) : new Date(0);
+          const dateB = b.date ? new Date(b.date) : new Date(0);
+          return dateB - dateA;
+        })
+        .slice(0, 10);
+      
+      setRecentEmails(projectEmails);
+      setLoadingEmails(false);
+    }, (error) => {
+      console.error('Emails error:', error);
+      setLoadingEmails(false);
+    });
+
+    return () => unsubscribe();
+  }, [project?.name]);
 
   // Real-time WhatsApp messages listener
   useEffect(() => {
@@ -88,32 +118,29 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   };
 
-  const loadRecentEmails = async () => {
-    setLoadingEmails(true);
-    try {
-      const res = await fetch(`${SYNC_WORKER_URL}/emails?project=${encodeURIComponent(project.name)}&limit=5`);
-      if (res.ok) {
-        const data = await res.json();
-        setRecentEmails(data.emails || []);
-      }
-    } catch (err) {
-      console.error('Error loading emails:', err);
-    } finally {
-      setLoadingEmails(false);
-    }
-  };
-
   // Mark message as done
-  const markMessageDone = async (msgId) => {
+  const markMessageDone = async (msgId, type = 'whatsapp') => {
     try {
-      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages', msgId);
+      const collectionName = type === 'email' ? 'emails' : 'whatsapp_messages';
+      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', collectionName, msgId);
       await updateDoc(msgRef, { 
         status: 'done',
         is_actionable: false,
+        is_read: true,
         updated_at: new Date().toISOString()
       });
     } catch (err) {
       console.error('Error marking message done:', err);
+    }
+  };
+
+  // Mark email as read
+  const markEmailRead = async (emailId) => {
+    try {
+      const emailRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'emails', emailId);
+      await updateDoc(emailRef, { is_read: true });
+    } catch (err) {
+      console.error('Error marking email read:', err);
     }
   };
 
@@ -206,6 +233,19 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       case 'deadline': return { label: 'Deadline', color: 'text-red-600 bg-red-50 border-red-200' };
       case 'invoice': return { label: 'Invoice', color: 'text-emerald-600 bg-emerald-50 border-emerald-200' };
       default: return { label: 'Message', color: 'text-slate-500 bg-slate-50 border-slate-200' };
+    }
+  };
+
+  // Email doc type labels
+  const getEmailTypeStyle = (docType) => {
+    switch (docType) {
+      case 'rfi': return { label: 'RFI', color: 'text-purple-600 bg-purple-50 border-purple-200' };
+      case 'approval': return { label: 'Approval', color: 'text-amber-600 bg-amber-50 border-amber-200' };
+      case 'vo': return { label: 'Variation', color: 'text-red-600 bg-red-50 border-red-200' };
+      case 'submittal': return { label: 'Submittal', color: 'text-blue-600 bg-blue-50 border-blue-200' };
+      case 'invoice': return { label: 'Invoice', color: 'text-emerald-600 bg-emerald-50 border-emerald-200' };
+      case 'mom': return { label: 'Meeting', color: 'text-indigo-600 bg-indigo-50 border-indigo-200' };
+      default: return { label: 'Email', color: 'text-slate-500 bg-slate-50 border-slate-200' };
     }
   };
 
@@ -346,40 +386,89 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
 
       {/* Activity Feed */}
       <div>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400">Activity Feed</h3>
-          <button onClick={loadRecentEmails} className="text-[9px] text-blue-500 hover:text-blue-600 flex items-center gap-1">
-            <Icon name="refresh-cw" size={10} /> Refresh
-          </button>
-        </div>
+        <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-2">Activity Feed</h3>
         
-        {/* Recent Emails */}
+        {/* Recent Emails - Real-time from Firestore */}
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-3">
-          <div className="p-2.5 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+          <div className="p-2.5 border-b border-slate-100 bg-blue-50 flex items-center gap-2">
             <Icon name="mail" size={12} className="text-blue-500" />
-            <span className="text-[10px] font-medium text-slate-700">Recent Emails</span>
+            <span className="text-[10px] font-medium text-slate-700">Emails</span>
+            {recentEmails.filter(e => e.is_actionable && e.status !== 'done').length > 0 && (
+              <span className="text-[8px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded ml-auto">
+                {recentEmails.filter(e => e.is_actionable && e.status !== 'done').length} action
+              </span>
+            )}
           </div>
-          <div className="divide-y divide-slate-100 max-h-[100px] overflow-y-auto">
+          <div className="divide-y divide-slate-100 max-h-[200px] overflow-y-auto">
             {loadingEmails ? (
               <div className="p-3 flex items-center justify-center">
                 <Icon name="loader-2" size={14} className="animate-spin text-slate-400" />
               </div>
             ) : recentEmails.length > 0 ? (
-              recentEmails.map((email, idx) => (
-                <div key={idx} className="p-2.5 hover:bg-slate-50">
-                  <p className="text-[10px] font-medium text-slate-800 truncate">{email.subject}</p>
-                  <p className="text-[9px] text-slate-500 truncate mt-0.5">{email.from}</p>
-                </div>
-              ))
+              recentEmails.map((email) => {
+                const typeStyle = getEmailTypeStyle(email.doc_type);
+                const isUnread = !email.is_read;
+                return (
+                  <div 
+                    key={email.id} 
+                    className={`cursor-pointer ${email.is_actionable && email.status !== 'done' ? 'border-l-2 border-l-blue-400' : ''} ${isUnread ? 'bg-blue-50/50' : ''} ${expandedEmail === email.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                    onClick={() => { setExpandedEmail(expandedEmail === email.id ? null : email.id); markEmailRead(email.id); }}
+                  >
+                    <div className="p-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            {isUnread && <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />}
+                            <p className={`text-[10px] font-medium text-slate-800 ${expandedEmail === email.id ? '' : 'truncate'} ${isUnread ? 'font-semibold' : ''}`}>
+                              {email.subject}
+                            </p>
+                          </div>
+                          <p className="text-[9px] text-slate-500 truncate">
+                            {email.from?.split('<')[0]?.trim() || 'Unknown'} • {formatEmailDate(email.date)}
+                          </p>
+                        </div>
+                        <span className={`text-[8px] px-1.5 py-0.5 rounded border flex-shrink-0 font-medium ${typeStyle.color}`}>
+                          {typeStyle.label}
+                        </span>
+                      </div>
+                      
+                      {expandedEmail === email.id && (
+                        <div className="mt-2 pt-2 border-t border-slate-200">
+                          <p className="text-[9px] text-slate-600 mb-1">From: {email.from}</p>
+                          {email.to && <p className="text-[9px] text-slate-600 mb-2">To: {email.to}</p>}
+                          <p className="text-xs text-slate-700 whitespace-pre-wrap line-clamp-6">{email.body}</p>
+                          {email.attachments_count > 0 && (
+                            <p className="text-[9px] text-slate-500 mt-2 flex items-center gap-1">
+                              <Icon name="paperclip" size={10} /> {email.attachments_count} attachment(s)
+                            </p>
+                          )}
+                          {email.is_actionable && email.status !== 'done' && (
+                            <div className="mt-2">
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); markMessageDone(email.id, 'email'); }}
+                                className="px-2 py-1 bg-green-500 text-white rounded text-[9px] font-medium hover:bg-green-600"
+                              >
+                                ✓ Mark Done
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
             ) : (
-              <div className="p-3 text-center text-slate-400 text-[10px]">No emails yet</div>
+              <div className="p-4 text-center text-slate-400 text-[10px]">
+                No emails yet. Emails sync automatically.
+              </div>
             )}
           </div>
         </div>
 
         {/* WhatsApp Messages */}
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="p-2.5 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+          <div className="p-2.5 border-b border-slate-100 bg-green-50 flex items-center gap-2">
             <Icon name="message-circle" size={12} className="text-green-500" />
             <span className="text-[10px] font-medium text-slate-700">WhatsApp</span>
             {whatsappMessages.filter(m => m.is_actionable && m.status !== 'done').length > 0 && (
@@ -425,7 +514,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
                           {msg.is_actionable && msg.status !== 'done' && (
                             <div className="mt-2">
                               <button 
-                                onClick={(e) => { e.stopPropagation(); markMessageDone(msg.id); }}
+                                onClick={(e) => { e.stopPropagation(); markMessageDone(msg.id, 'whatsapp'); }}
                                 className="px-2 py-1 bg-green-500 text-white rounded text-[9px] font-medium hover:bg-green-600"
                               >
                                 ✓ Mark Done
