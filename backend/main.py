@@ -57,6 +57,7 @@ DOCUMENT_HIERARCHY = {
     'report': {'priority': 45, 'label': 'Report', 'description': 'Site/Progress Report'},
     'drawing': {'priority': 40, 'label': 'Drawing', 'description': 'Design Drawing'},
     'invoice': {'priority': 35, 'label': 'Invoice', 'description': 'Invoice/Payment'},
+    'procurement': {'priority': 33, 'label': 'Procurement', 'description': 'Purchase Order / Quotation'},
     'other': {'priority': 10, 'label': 'Document', 'description': 'General Document'},
 }
 
@@ -127,8 +128,25 @@ def detect_document_type(filename, path):
     if re.search(r'invoice|inv[-_]\d', lower_name): return 'invoice'
     if re.search(r'submittal', lower_name): return 'submittal'
     if re.search(r'report', lower_name): return 'report'
+    if re.search(r'أمر.?شراء|عرض.?سعر|purchase|quotation|po[-_]', lower_name): return 'procurement'
     
     return 'other'
+
+def detect_email_type(subject, body=''):
+    """Detect email document type from subject and body"""
+    text = f"{subject} {body}".lower()
+    
+    if re.search(r'\brfi\b|request.?for.?information', text): return 'rfi'
+    if re.search(r'approv|موافقة', text): return 'approval'
+    if re.search(r'shop.?draw|شوب', text): return 'shop_drawing'
+    if re.search(r'submittal|تقديم', text): return 'submittal'
+    if re.search(r'\bvo\b|variation|فارييشن', text): return 'vo'
+    if re.search(r'invoice|فاتورة|inv[-_]\d', text): return 'invoice'
+    if re.search(r'أمر.?شراء|عرض.?سعر|purchase|quotation|po[-_]|procurement', text): return 'procurement'
+    if re.search(r'mom|minute|محضر|اجتماع', text): return 'mom'
+    if re.search(r'report|تقرير', text): return 'report'
+    
+    return 'correspondence'
 
 def get_document_priority(filename, path):
     doc_type = detect_document_type(filename, path)
@@ -438,6 +456,129 @@ def get_project_emails(project_name, limit=10):
     
     return emails[:limit]
 
+
+def get_unclassified_emails():
+    """Get all unclassified emails from _Unclassified_Emails folder"""
+    bucket = storage_client.bucket(GCS_BUCKET)
+    prefix = "_Unclassified_Emails/"
+    
+    emails = []
+    
+    for blob in bucket.list_blobs(prefix=prefix):
+        if not blob.name.endswith('.json'):
+            continue
+        if '_attachments/' in blob.name:
+            continue
+        
+        try:
+            content = blob.download_as_string()
+            email_data = json.loads(content)
+            
+            # Detect email type from subject/body
+            subject = email_data.get('subject', '')
+            body = email_data.get('body', '')
+            doc_type = detect_email_type(subject, body)
+            
+            emails.append({
+                'id': blob.name.replace(prefix, '').replace('.json', ''),
+                'subject': subject or 'No Subject',
+                'from': email_data.get('from', 'Unknown'),
+                'to': email_data.get('to', ''),
+                'date': email_data.get('date', ''),
+                'type': doc_type,
+                'typeLabel': DOCUMENT_HIERARCHY.get(doc_type, {}).get('label', 'Email'),
+                'path': blob.name,
+                'hasAttachments': len(email_data.get('attachments', [])) > 0,
+                'body_preview': (body[:200] + '...') if len(body) > 200 else body
+            })
+        except Exception as e:
+            print(f"Error reading email {blob.name}: {e}")
+            continue
+    
+    # Sort by date descending
+    emails.sort(key=lambda x: x.get('date', ''), reverse=True)
+    
+    return emails
+
+
+def classify_email(email_path, project_name, doc_type=None):
+    """Move an email from unclassified to a project folder"""
+    bucket = storage_client.bucket(GCS_BUCKET)
+    
+    # Get the email blob
+    source_blob = bucket.blob(email_path)
+    if not source_blob.exists():
+        return {'error': f'Email not found: {email_path}'}
+    
+    try:
+        # Read the email data
+        content = source_blob.download_as_string()
+        email_data = json.loads(content)
+        
+        # Update the email data with classification
+        if doc_type:
+            email_data['classified_type'] = doc_type
+        email_data['classified_project'] = project_name
+        email_data['classified_at'] = datetime.now().isoformat()
+        
+        # Create destination path
+        # Format: ProjectName/09-Correspondence/YYYYMMDD_HHMM_Subject.json
+        filename = os.path.basename(email_path)
+        dest_folder = f"{project_name}/09-Correspondence"
+        dest_path = f"{dest_folder}/{filename}"
+        
+        # Copy to new location
+        dest_blob = bucket.blob(dest_path)
+        dest_blob.upload_from_string(json.dumps(email_data, ensure_ascii=False, indent=2))
+        
+        # Copy attachments if they exist
+        attachments_prefix = email_path.replace('.json', '_attachments/')
+        for att_blob in bucket.list_blobs(prefix=attachments_prefix):
+            att_filename = os.path.basename(att_blob.name)
+            att_dest_path = f"{dest_folder}/{filename.replace('.json', '_attachments')}/{att_filename}"
+            bucket.copy_blob(att_blob, bucket, att_dest_path)
+            att_blob.delete()
+        
+        # Delete original
+        source_blob.delete()
+        
+        return {
+            'success': True,
+            'moved_to': dest_path,
+            'project': project_name,
+            'type': doc_type or email_data.get('classified_type', 'correspondence')
+        }
+        
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def classify_multiple_emails(emails_to_classify):
+    """Classify multiple emails at once
+    emails_to_classify: list of {path, project, type}
+    """
+    results = []
+    for item in emails_to_classify:
+        result = classify_email(
+            item.get('path'),
+            item.get('project'),
+            item.get('type')
+        )
+        results.append({
+            'path': item.get('path'),
+            **result
+        })
+    
+    success_count = sum(1 for r in results if r.get('success'))
+    error_count = sum(1 for r in results if r.get('error'))
+    
+    return {
+        'results': results,
+        'success_count': success_count,
+        'error_count': error_count
+    }
+
+
 # =============================================================================
 # SEARCH
 # =============================================================================
@@ -633,7 +774,9 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.6', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v5.7 - Email Classification', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails', 'unclassified', 'classify'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+    
+    # === EMAIL ENDPOINTS ===
     
     if request.method == 'GET' and path == '/emails':
         try:
@@ -643,6 +786,31 @@ def sync_drive_folder(request):
             emails = get_project_emails(project, limit)
             return (jsonify({'emails': emails, 'count': len(emails), 'project': project}), 200, headers)
         except Exception as e: return (jsonify({'error': str(e)}), 500, headers)
+    
+    if request.method == 'GET' and path == '/unclassified':
+        try:
+            emails = get_unclassified_emails()
+            return (jsonify({'emails': emails, 'count': len(emails)}), 200, headers)
+        except Exception as e: return (jsonify({'error': str(e)}), 500, headers)
+    
+    if request.method == 'POST' and path == '/classify':
+        try:
+            data = request.get_json(silent=True) or {}
+            
+            # Single email classification
+            if 'path' in data and 'project' in data:
+                result = classify_email(data['path'], data['project'], data.get('type'))
+                return (jsonify(result), 200, headers)
+            
+            # Batch classification
+            if 'emails' in data:
+                result = classify_multiple_emails(data['emails'])
+                return (jsonify(result), 200, headers)
+            
+            return (jsonify({'error': 'Missing path/project or emails array'}), 400, headers)
+        except Exception as e: return (jsonify({'error': str(e)}), 500, headers)
+    
+    # === OTHER ENDPOINTS ===
     
     if request.method == 'GET' and path == '/view':
         try:
