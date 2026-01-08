@@ -208,8 +208,8 @@ export default function App() {
         onCloseSidebar={() => setIsSidebarOpen(false)}
       />
 
-      {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+      {/* Main content - prevent horizontal scroll */}
+      <main className="flex-1 flex flex-col min-w-0 h-screen overflow-x-hidden overflow-y-hidden">
         <Header
           view={view}
           selectedProject={selectedProject}
@@ -221,11 +221,12 @@ export default function App() {
           onOpenModal={() => setIsModalOpen(true)}
         />
 
-        <div className="flex-1 overflow-y-auto no-scrollbar p-6 lg:p-10">
+        {/* Scrollable content area - prevent horizontal scroll */}
+        <div className="flex-1 overflow-x-hidden overflow-y-auto no-scrollbar p-4 sm:p-6 lg:p-10">
           {view === 'overview' ? (
             <Overview projects={projects} onSelectProject={handleSelectProject} />
           ) : view === 'settings' ? (
-            <div className="bg-white rounded-xl border border-slate-200 min-h-[600px] overflow-hidden animate-in">
+            <div className="bg-white rounded-xl border border-slate-200 min-h-[600px] overflow-hidden animate-in pb-20">
               <ChannelSettings projects={projects} />
             </div>
           ) : (
@@ -234,30 +235,30 @@ export default function App() {
               {syncError && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
                   <Icon name="alert-circle" size={18} className="text-red-500" />
-                  <span className="text-sm text-red-700 flex-1">Sync failed: {syncError}</span>
+                  <span className="text-xs sm:text-sm text-red-700 flex-1">Sync failed: {syncError}</span>
                   <button onClick={() => setSyncError(null)} className="text-red-400 hover:text-red-600">
                     <Icon name="x" size={16} />
                   </button>
                 </div>
               )}
 
-              {/* Tabs */}
-              <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar pb-2">
+              {/* Tabs - scrollable on mobile */}
+              <div className="flex gap-2 mb-4 sm:mb-6 overflow-x-auto no-scrollbar pb-2 -mx-1 px-1">
                 {ALL_TABS.map(t => (
                   <button 
                     key={t.id} 
                     onClick={() => setActiveTab(t.id)} 
-                    className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                    className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-lg text-[10px] sm:text-xs font-medium transition-all whitespace-nowrap ${
                       activeTab === t.id ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'
                     }`}
                   >
-                    <Icon name={t.icon} size={14} /> {t.label}
+                    <Icon name={t.icon} size={12} className="sm:w-3.5 sm:h-3.5" /> {t.label}
                   </button>
                 ))}
               </div>
 
-              {/* Tab content */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 lg:p-8 flex-1 min-h-[400px] overflow-hidden">
+              {/* Tab content - scrollable, prevent horizontal overflow */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 lg:p-8 flex-1 overflow-x-hidden overflow-y-auto">
                 {activeTab === 'home' && (
                   <ProjectHome
                     project={selectedProject}
