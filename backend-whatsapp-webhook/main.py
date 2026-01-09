@@ -263,6 +263,19 @@ def save_message(message_data, classification):
         print(f"Error saving message: {e}")
         return False
 
+def save_debug_payload(payload, chat_id):
+    """Save raw payload to Firestore for debugging"""
+    try:
+        debug_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('webhook_debug')
+        debug_ref.add({
+            'chat_id': chat_id,
+            'payload': json.dumps(payload, default=str)[:10000],
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+        print(f"DEBUG: Saved payload for {chat_id}")
+    except Exception as e:
+        print(f"Error saving debug: {e}")
+
 def auto_add_group(group_name, group_id):
     """Auto-add new group to mappings"""
     try:
@@ -297,8 +310,8 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v2.1 - Fixed group name',
-            'features': ['group_mapping', 'command_group', 'enhanced_classification'],
+            'status': 'WhatsApp Webhook v2.2 - Debug logging',
+            'features': ['group_mapping', 'command_group', 'enhanced_classification', 'debug_logging'],
             'vertex_ai_enabled': VERTEX_AI_ENABLED,
             'firebase_project': FIREBASE_PROJECT
         }), 200, headers)
@@ -316,27 +329,45 @@ def whatsapp_webhook(request):
             chat_id = payload.get('chatId', '') or payload.get('from', '')
             is_group = '@g.us' in chat_id
             
-            # FIXED: Get group name correctly
-            # For groups: chat.name or chat.subject contains the actual group name
-            # notifyName is always the SENDER's display name, not the group name
+            # DEBUG: Save raw payload to see what Waha sends
+            save_debug_payload(payload, chat_id)
+            
+            # Extract group name - try ALL possible fields
             group_name = ''
             sender_name = ''
             _data = payload.get('_data', {})
             
+            # Log what we're seeing
+            print(f"DEBUG chat_id: {chat_id}")
+            print(f"DEBUG is_group: {is_group}")
+            print(f"DEBUG _data keys: {list(_data.keys()) if _data else 'None'}")
+            
             if is_group:
                 chat_info = _data.get('chat', {})
-                # Try multiple fields for group name
+                print(f"DEBUG chat_info keys: {list(chat_info.keys()) if chat_info else 'None'}")
+                print(f"DEBUG chat_info: {chat_info}")
+                
+                # Try ALL possible fields for group name
                 group_name = (
                     chat_info.get('name', '') or 
                     chat_info.get('subject', '') or 
                     chat_info.get('formattedTitle', '') or 
+                    _data.get('chat', {}).get('name', '') or
                     payload.get('chatName', '') or
-                    chat_id.replace('@g.us', '')
+                    payload.get('notifyName', '') or  # Sometimes Waha puts it here
+                    ''
                 )
-                # Sender name from notifyName (this is correct for sender)
+                
+                # If still empty, use chat_id
+                if not group_name:
+                    group_name = chat_id.replace('@g.us', '')
+                
+                # Sender name
                 sender_name = _data.get('notifyName', '') or payload.get('from', '').split('@')[0]
+                
+                print(f"DEBUG extracted group_name: {group_name}")
+                print(f"DEBUG extracted sender_name: {sender_name}")
             else:
-                # For 1:1 chats
                 sender_name = _data.get('notifyName', '') or payload.get('from', '').split('@')[0]
             
             sender = payload.get('from', '')
@@ -377,6 +408,7 @@ def whatsapp_webhook(request):
                 'status': 'processed',
                 'group_name': group_name,
                 'sender_name': sender_name,
+                'chat_id': chat_id,
                 'project': classification.get('project_name'),
                 'actionable': classification.get('is_actionable'),
                 'action_type': classification.get('action_type'),
