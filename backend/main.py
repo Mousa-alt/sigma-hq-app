@@ -210,13 +210,22 @@ def sync_project(drive_url, project_name):
     gcs_files = list_gcs_files(bucket, prefix)
     print(f"Found {len(gcs_files)} files in GCS")
     
-    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'skipped': 0, 'error': None}
+    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'skipped': 0, 'protected': 0, 'error': None}
 
     try:
         for path in list(gcs_files.keys()):
+            # Skip deletion for:
+            # - Files that exist in Drive (will be handled in sync)
+            # - Extracted zip contents (_extracted/)
+            # - Emails in 09-Correspondence/ (come from IMAP, not Drive)
+            # - Any .json files (likely emails or metadata)
             if path not in drive_files and '_extracted/' not in path:
-                bucket.blob(f"{prefix}{path}").delete()
-                stats['deleted'] += 1
+                if '09-Correspondence/' in path or path.endswith('.json'):
+                    stats['protected'] += 1
+                    print(f"PROTECTED (email): {path}")
+                else:
+                    bucket.blob(f"{prefix}{path}").delete()
+                    stats['deleted'] += 1
 
         for path, info in drive_files.items():
             ext = os.path.splitext(info['name'].lower())[1]
@@ -253,7 +262,7 @@ def sync_project(drive_url, project_name):
                 if is_update: stats['updated'] += 1
                 else: stats['added'] += 1
 
-        print(f"DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Skipped:{stats['skipped']}")
+        print(f"DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Protected:{stats['protected']} Skipped:{stats['skipped']}")
     except Exception as e:
         stats['error'] = str(e)
         print(f"Sync error: {e}")
@@ -774,7 +783,7 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.7 - Email Classification', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails', 'unclassified', 'classify'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v5.8 - Email Protection', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails', 'unclassified', 'classify'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
     
     # === EMAIL ENDPOINTS ===
     
