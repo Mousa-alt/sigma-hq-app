@@ -6,12 +6,14 @@ from datetime import datetime, timezone, timedelta
 import functions_framework
 from flask import jsonify
 from google.cloud import firestore
+from google.cloud import storage
 from google.cloud import discoveryengine_v1 as discoveryengine
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
 # Configuration
 GCP_PROJECT = os.environ.get('GCP_PROJECT', 'sigma-hq-technical-office')
+GCS_BUCKET = os.environ.get('GCS_BUCKET', 'sigma-docs-repository')
 GCP_LOCATION = os.environ.get('GCP_LOCATION', 'us-central1')
 FIREBASE_PROJECT = os.environ.get('FIREBASE_PROJECT', 'sigma-hq-38843')
 APP_ID = os.environ.get('APP_ID', 'sigma-hq-production')
@@ -25,6 +27,7 @@ ENGINE_ID = "sigma-search_1767650825639"
 
 # Initialize clients
 db = firestore.Client(project=FIREBASE_PROJECT)
+storage_client = storage.Client()
 
 # Initialize Vertex AI
 try:
@@ -89,6 +92,105 @@ def send_whatsapp_message(chat_id, message):
         print(f"Error sending message: {e}")
     
     return False
+
+
+def send_whatsapp_file(chat_id, gcs_path, filename):
+    """Send a file from GCS via WhatsApp using Waha API"""
+    headers = {
+        'X-Api-Key': WAHA_API_KEY,
+        'Content-Type': 'application/json'
+    }
+    
+    try:
+        # Generate signed URL (valid for 1 hour)
+        bucket = storage_client.bucket(GCS_BUCKET)
+        blob = bucket.blob(gcs_path)
+        
+        if not blob.exists():
+            print(f"File not found in GCS: {gcs_path}")
+            return False, "File not found"
+        
+        # Generate signed URL
+        signed_url = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(hours=1),
+            method="GET"
+        )
+        
+        # Determine media type
+        ext = os.path.splitext(filename.lower())[1]
+        media_types = {
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+        }
+        media_type = media_types.get(ext, 'application/octet-stream')
+        
+        # Send via Waha
+        url = f"{WAHA_API_URL}/api/sendFile"
+        payload = {
+            'chatId': chat_id,
+            'file': {
+                'url': signed_url,
+                'filename': filename,
+                'mimetype': media_type
+            },
+            'session': 'default',
+            'caption': f"\ud83d\udcc4 {filename}"
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        if response.status_code == 200:
+            print(f"File sent to {chat_id}: {filename}")
+            return True, "File sent"
+        else:
+            print(f"Failed to send file: {response.status_code} - {response.text}")
+            return False, f"Send failed: {response.status_code}"
+            
+    except Exception as e:
+        print(f"Error sending file: {e}")
+        return False, str(e)
+
+
+# =============================================================================
+# SEARCH RESULTS CACHE (for `get` command)
+# =============================================================================
+
+def save_search_results(chat_id, results):
+    """Save search results to Firestore for later retrieval"""
+    try:
+        cache_id = re.sub(r'[^a-zA-Z0-9]', '_', chat_id)[:50]
+        db.collection('artifacts').document(APP_ID).collection('public').document('data')\
+            .collection('search_cache').document(cache_id).set({
+            'chat_id': chat_id,
+            'results': results,
+            'created_at': datetime.now(timezone.utc).isoformat()
+        })
+        return True
+    except Exception as e:
+        print(f"Error saving search results: {e}")
+        return False
+
+
+def get_last_search_results(chat_id):
+    """Get last search results for a chat"""
+    try:
+        cache_id = re.sub(r'[^a-zA-Z0-9]', '_', chat_id)[:50]
+        doc = db.collection('artifacts').document(APP_ID).collection('public').document('data')\
+            .collection('search_cache').document(cache_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            return data.get('results', [])
+    except Exception as e:
+        print(f"Error getting search results: {e}")
+    return []
 
 
 # =============================================================================
@@ -413,6 +515,7 @@ def search_documents(query, project_name=None, limit=5):
             doc_data = {
                 'name': '',
                 'path': '',
+                'gcs_path': '',
                 'project': '',
                 'drive_id': '',
                 'drive_link': '',
@@ -428,7 +531,9 @@ def search_documents(query, project_name=None, limit=5):
                 if link:
                     doc_data['drive_link'] = link
                     # Extract path parts
-                    parts = link.replace('gs://sigma-docs-repository/', '').split('/')
+                    gcs_path = link.replace('gs://sigma-docs-repository/', '')
+                    doc_data['gcs_path'] = gcs_path
+                    parts = gcs_path.split('/')
                     if parts:
                         doc_data['name'] = parts[-1] if parts[-1] else title
                         doc_data['path'] = '/'.join(parts[:-1]) if len(parts) > 1 else ''
@@ -556,26 +661,26 @@ def generate_daily_digest():
     
     date_str = datetime.now(timezone.utc).strftime('%b %d')
     
-    digest = f"☀️ *Good Morning - {date_str}*\n"
+    digest = f"\u2600\ufe0f *Good Morning - {date_str}*\n"
     
     if overdue:
-        digest += f"\n🔴 *Overdue ({len(overdue)}):*\n"
+        digest += f"\n\ud83d\udd34 *Overdue ({len(overdue)}):*\n"
         for item in overdue[:5]:
-            digest += f"• {item['project']}: {item['summary'][:30]}\n"
+            digest += f"\u2022 {item['project']}: {item['summary'][:30]}\n"
     
     if urgent:
-        digest += f"\n⚠️ *Urgent ({len(urgent)}):*\n"
+        digest += f"\n\u26a0\ufe0f *Urgent ({len(urgent)}):*\n"
         for item in urgent[:5]:
-            digest += f"• {item['project']}: {item['summary'][:30]}\n"
+            digest += f"\u2022 {item['project']}: {item['summary'][:30]}\n"
     
     if today:
-        digest += f"\n📅 *New Today ({len(today)}):*\n"
+        digest += f"\n\ud83d\udcc5 *New Today ({len(today)}):*\n"
         for item in today[:5]:
-            digest += f"• {item['project']}: {item['summary'][:30]}\n"
+            digest += f"\u2022 {item['project']}: {item['summary'][:30]}\n"
     
-    digest += f"\n📊 *Summary:*\n"
-    digest += f"• Total Pending: {len(pending)}\n"
-    digest += f"• New Yesterday: {len(new_yesterday)}\n"
+    digest += f"\n\ud83d\udcca *Summary:*\n"
+    digest += f"\u2022 Total Pending: {len(pending)}\n"
+    digest += f"\u2022 New Yesterday: {len(new_yesterday)}\n"
     
     digest += "\n_Type `u` for urgent, `p` for pending_"
     
@@ -648,6 +753,48 @@ def handle_command(message_text, sender, projects, chat_id):
     if shortcut_find:
         lower_text = f"find {shortcut_find.group(1)}"
     
+    # g N = get file N from last search
+    shortcut_get = re.match(r'^g\s+(\d+)$', lower_text)
+    if shortcut_get:
+        lower_text = f"get {shortcut_get.group(1)}"
+    
+    # =========================================================================
+    # GET FILE - Download file from last search
+    # =========================================================================
+    get_match = re.match(r'^get\s+(\d+)$', lower_text)
+    if get_match:
+        file_num = int(get_match.group(1))
+        
+        # Get last search results for this chat
+        results = get_last_search_results(chat_id)
+        
+        if not results:
+            response_message = "\u274c No recent search results.\n\nUse `f keyword` to search first."
+        elif file_num < 1 or file_num > len(results):
+            response_message = f"\u274c Invalid number. Enter 1-{len(results)}"
+        else:
+            doc = results[file_num - 1]
+            gcs_path = doc.get('gcs_path', '')
+            filename = doc.get('name', 'document')
+            
+            if not gcs_path:
+                response_message = "\u274c File path not available."
+            else:
+                send_whatsapp_message(chat_id, f"\ud83d\udce4 Sending *{filename}*...")
+                success, msg = send_whatsapp_file(chat_id, gcs_path, filename)
+                
+                if success:
+                    response_message = None  # File already sent
+                else:
+                    response_message = f"\u274c Could not send file: {msg}"
+        
+        classification['command_type'] = 'get_file'
+        classification['summary'] = f"Get file #{file_num}"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
+    
     # =========================================================================
     # DOCUMENT SEARCH - find: query or find query (Using Vertex AI)
     # =========================================================================
@@ -666,34 +813,33 @@ def handle_command(message_text, sender, projects, chat_id):
         
         results = search_documents(search_query, project_name, limit=5)
         
+        # Save results for `get` command
         if results:
-            lines = [f"📄 *Found {len(results)} documents*\n"]
+            save_search_results(chat_id, results)
+        
+        if results:
+            lines = [f"\ud83d\udcc4 *Found {len(results)} documents*\n"]
             for i, doc in enumerate(results, 1):
                 name = doc['name'][:40] if doc['name'] else 'Unnamed'
                 folder = doc['path'] if doc['path'] else ''
                 
                 lines.append(f"{i}. *{name}*")
                 if folder:
-                    lines.append(f"   📁 {folder}")
-                if doc.get('drive_link'):
-                    # Convert gs:// to viewable link if needed
-                    link = doc['drive_link']
-                    if link.startswith('gs://'):
-                        # It's a GCS link, provide bucket path
-                        lines.append(f"   📂 {link.replace('gs://sigma-docs-repository/', '')}")
-                    else:
-                        lines.append(f"   🔗 {link}")
+                    lines.append(f"   \ud83d\udcc1 {folder}")
+                if doc.get('gcs_path'):
+                    lines.append(f"   \ud83d\udcc2 {doc['gcs_path']}")
             
+            lines.append(f"\n_Type `g 1` to download file #1_")
             response_message = "\n".join(lines)
         else:
-            response_message = f"""📄 *Search: {search_query}*
+            response_message = f"""\ud83d\udcc4 *Search: {search_query}*
 
-🔍 No documents found.
+\ud83d\udd0d No documents found.
 
 Try:
-• Different keywords
-• Check spelling
-• Broader search terms"""
+\u2022 Different keywords
+\u2022 Check spelling
+\u2022 Broader search terms"""
         
         classification['command_type'] = 'find'
         classification['summary'] = f"Search: {search_query}"
@@ -718,9 +864,9 @@ Try:
         success, msg = mark_item_done(project_name, item_num)
         
         if success:
-            response_message = f"✅ *Done!* Item #{item_num} marked complete"
+            response_message = f"\u2705 *Done!* Item #{item_num} marked complete"
         else:
-            response_message = f"❌ Error: {msg}"
+            response_message = f"\u274c Error: {msg}"
         
         classification['command_type'] = 'done'
         classification['summary'] = f"Marked item {item_num} done"
@@ -746,9 +892,9 @@ Try:
         success, msg = assign_item(project_name, item_num, assignee)
         
         if success:
-            response_message = f"👤 *Assigned!* Item #{item_num} → {assignee}"
+            response_message = f"\ud83d\udc64 *Assigned!* Item #{item_num} \u2192 {assignee}"
         else:
-            response_message = f"❌ Error: {msg}"
+            response_message = f"\u274c Error: {msg}"
         
         classification['command_type'] = 'assign'
         classification['summary'] = f"Assigned item {item_num} to {assignee}"
@@ -773,9 +919,9 @@ Try:
         success, msg = set_item_urgency(project_name, item_num, 'high')
         
         if success:
-            response_message = f"🔴 *Escalated!* Item #{item_num} is now HIGH priority"
+            response_message = f"\ud83d\udd34 *Escalated!* Item #{item_num} is now HIGH priority"
         else:
-            response_message = f"❌ Error: {msg}"
+            response_message = f"\u274c Error: {msg}"
         
         classification['command_type'] = 'escalate'
         classification['summary'] = f"Escalated item {item_num}"
@@ -800,9 +946,9 @@ Try:
         success, msg = set_item_urgency(project_name, item_num, 'low')
         
         if success:
-            response_message = f"⚪ *Deferred!* Item #{item_num} is now LOW priority"
+            response_message = f"\u26aa *Deferred!* Item #{item_num} is now LOW priority"
         else:
-            response_message = f"❌ Error: {msg}"
+            response_message = f"\u274c Error: {msg}"
         
         classification['command_type'] = 'defer'
         classification['summary'] = f"Deferred item {item_num}"
@@ -835,17 +981,17 @@ Try:
             items = get_project_pending_items(matched['name'], limit=15)
             
             if items:
-                lines = [f"📋 *{matched['name']}* - Pending ({len(items)})\n"]
+                lines = [f"\ud83d\udccb *{matched['name']}* - Pending ({len(items)})\n"]
                 for i, item in enumerate(items, 1):
-                    urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
-                    assigned = f" → {item['assigned_to']}" if item.get('assigned_to') else ""
+                    urgency_icon = "\ud83d\udd34" if item['urgency'] == 'high' else "\ud83d\udfe1" if item['urgency'] == 'medium' else "\u26aa"
+                    assigned = f" \u2192 {item['assigned_to']}" if item.get('assigned_to') else ""
                     lines.append(f"{i}. {urgency_icon} {item['summary'][:40]}{assigned}")
                 lines.append(f"\n_`done {matched['name'][:5]} 1` to complete_")
                 response_message = "\n".join(lines)
             else:
-                response_message = f"📋 *{matched['name']}*\n\n✨ No pending items!"
+                response_message = f"\ud83d\udccb *{matched['name']}*\n\n\u2728 No pending items!"
         else:
-            response_message = f"❓ Project '{project_hint}' not found."
+            response_message = f"\u2753 Project '{project_hint}' not found."
         
         classification['command_type'] = 'list_project'
         classification['project_name'] = matched['name'] if matched else None
@@ -867,15 +1013,15 @@ Try:
             items = get_project_recent_activity(matched['name'], limit=10)
             
             if items:
-                lines = [f"📊 *{matched['name']}* - Last 24h ({len(items)})\n"]
+                lines = [f"\ud83d\udcca *{matched['name']}* - Last 24h ({len(items)})\n"]
                 for item in items:
-                    action_icon = "⚡" if item['actionable'] else "💬"
+                    action_icon = "\u26a1" if item['actionable'] else "\ud83d\udcac"
                     lines.append(f"{action_icon} {item['sender'][:12]}: {item['summary'][:30]}")
                 response_message = "\n".join(lines)
             else:
-                response_message = f"📊 *{matched['name']}*\n\n🔇 No activity in 24h"
+                response_message = f"\ud83d\udcca *{matched['name']}*\n\n\ud83d\udd07 No activity in 24h"
         else:
-            response_message = f"❓ Project '{project_hint}' not found."
+            response_message = f"\u2753 Project '{project_hint}' not found."
         
         classification['command_type'] = 'activity'
         classification['project_name'] = matched['name'] if matched else None
@@ -893,14 +1039,14 @@ Try:
     if matched_project and len(lower_text.split()) <= 3:
         stats = get_project_stats(matched_project['name'])
         
-        status_emoji = "🟢" if stats['pending_tasks'] == 0 else "🟡" if stats['pending_tasks'] < 5 else "🔴"
+        status_emoji = "\ud83d\udfe2" if stats['pending_tasks'] == 0 else "\ud83d\udfe1" if stats['pending_tasks'] < 5 else "\ud83d\udd34"
         
-        response_message = f"""📊 *{matched_project['name']}* {status_emoji}
+        response_message = f"""\ud83d\udcca *{matched_project['name']}* {status_emoji}
 
-📍 {matched_project.get('location', 'N/A')} | 👤 {matched_project.get('client', 'N/A')}
+\ud83d\udccd {matched_project.get('location', 'N/A')} | \ud83d\udc64 {matched_project.get('client', 'N/A')}
 
-📋 Pending: {stats['pending_tasks']} | 🔴 Urgent: {stats['high_urgency']}
-💬 Messages (24h): {stats['recent_messages']}
+\ud83d\udccb Pending: {stats['pending_tasks']} | \ud83d\udd34 Urgent: {stats['high_urgency']}
+\ud83d\udcac Messages (24h): {stats['recent_messages']}
 
 _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} drawing` to search docs_"""
         
@@ -911,18 +1057,18 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
     # =========================================================================
     # TODAY
     # =========================================================================
-    elif lower_text in ['today', 'اليوم', "what's today", 'whats today']:
+    elif lower_text in ['today', '\u0627\u0644\u064a\u0648\u0645', "what's today", 'whats today']:
         items = get_today_items()
         
         if items:
-            lines = [f"📅 *Today* ({len(items)})\n"]
+            lines = [f"\ud83d\udcc5 *Today* ({len(items)})\n"]
             for i, item in enumerate(items[:10], 1):
-                urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
-                status_icon = "✅" if item['status'] == 'done' else "⏳"
+                urgency_icon = "\ud83d\udd34" if item['urgency'] == 'high' else "\ud83d\udfe1" if item['urgency'] == 'medium' else "\u26aa"
+                status_icon = "\u2705" if item['status'] == 'done' else "\u23f3"
                 lines.append(f"{i}. {urgency_icon}{status_icon} *{item['project']}*: {item['summary'][:35]}")
             response_message = "\n".join(lines)
         else:
-            response_message = "📅 *Today*\n\n✨ No actionable items today!"
+            response_message = "\ud83d\udcc5 *Today*\n\n\u2728 No actionable items today!"
         
         classification['command_type'] = 'today'
         classification['summary'] = "Today's items"
@@ -930,17 +1076,17 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
     # =========================================================================
     # URGENT
     # =========================================================================
-    elif lower_text in ['urgent', 'عاجل', 'high priority', 'critical']:
+    elif lower_text in ['urgent', '\u0639\u0627\u062c\u0644', 'high priority', 'critical']:
         items = get_urgent_items()
         
         if items:
-            lines = [f"🔴 *Urgent* ({len(items)})\n"]
+            lines = [f"\ud83d\udd34 *Urgent* ({len(items)})\n"]
             for i, item in enumerate(items[:10], 1):
                 lines.append(f"{i}. *{item['project']}*: {item['summary'][:35]}")
             lines.append(f"\n_`done 1` to complete_")
             response_message = "\n".join(lines)
         else:
-            response_message = "🔴 *Urgent*\n\n✨ No urgent items!"
+            response_message = "\ud83d\udd34 *Urgent*\n\n\u2728 No urgent items!"
         
         classification['command_type'] = 'urgent'
         classification['summary'] = "Urgent items"
@@ -948,7 +1094,7 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
     # =========================================================================
     # PENDING
     # =========================================================================
-    elif lower_text in ['pending', 'معلق', 'open', 'tasks', 'مهام']:
+    elif lower_text in ['pending', '\u0645\u0639\u0644\u0642', 'open', 'tasks', '\u0645\u0647\u0627\u0645']:
         items = get_all_pending_items()
         
         if items:
@@ -959,17 +1105,17 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
                     by_project[proj] = []
                 by_project[proj].append(item)
             
-            lines = [f"📋 *Pending* ({len(items)})\n"]
+            lines = [f"\ud83d\udccb *Pending* ({len(items)})\n"]
             for proj, proj_items in list(by_project.items())[:5]:
                 lines.append(f"\n*{proj}* ({len(proj_items)})")
                 for item in proj_items[:3]:
-                    urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
+                    urgency_icon = "\ud83d\udd34" if item['urgency'] == 'high' else "\ud83d\udfe1" if item['urgency'] == 'medium' else "\u26aa"
                     lines.append(f"  {urgency_icon} {item['summary'][:30]}")
             
             lines.append(f"\n_`l ProjectName` for full list_")
             response_message = "\n".join(lines)
         else:
-            response_message = "📋 *Pending*\n\n✨ All clear!"
+            response_message = "\ud83d\udccb *Pending*\n\n\u2728 All clear!"
         
         classification['command_type'] = 'pending'
         classification['summary'] = "Pending items"
@@ -977,24 +1123,24 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
     # =========================================================================
     # SUMMARY
     # =========================================================================
-    elif lower_text in ['summary', 'summarize', 'ملخص', 'report']:
+    elif lower_text in ['summary', 'summarize', '\u0645\u0644\u062e\u0635', 'report']:
         pending = get_all_pending_items()
         urgent = get_urgent_items()
         today = get_today_items()
         
-        response_message = f"""📊 *Summary*
+        response_message = f"""\ud83d\udcca *Summary*
         
-🔴 Urgent: {len(urgent)}
-📋 Pending: {len(pending)}
-📅 Today: {len(today)}
+\ud83d\udd34 Urgent: {len(urgent)}
+\ud83d\udccb Pending: {len(pending)}
+\ud83d\udcc5 Today: {len(today)}
 
 Top Items:"""
         
         for item in urgent[:3]:
-            response_message += f"\n• *{item['project']}*: {item['summary'][:25]}"
+            response_message += f"\n\u2022 *{item['project']}*: {item['summary'][:25]}"
         
         if not urgent:
-            response_message += "\n✨ No urgent items!"
+            response_message += "\n\u2728 No urgent items!"
         
         classification['command_type'] = 'summary'
         classification['summary'] = "Summary"
@@ -1002,8 +1148,8 @@ Top Items:"""
     # =========================================================================
     # HELP
     # =========================================================================
-    elif lower_text in ['help', 'مساعدة', 'commands', '?']:
-        response_message = """🤖 *Commands*
+    elif lower_text in ['help', '\u0645\u0633\u0627\u0639\u062f\u0629', 'commands', '?']:
+        response_message = """\ud83e\udd16 *Commands*
 
 *Quick:*
 `s` summary | `u` urgent | `p` pending
@@ -1017,6 +1163,7 @@ Top Items:"""
 *Documents:*
 `f agora floor drawing` - search
 `find: shop drawing` - search all
+`g 1` - download file #1
 
 *Actions:*
 `done 1` - complete #1
@@ -1051,7 +1198,7 @@ Top Items:"""
             classification['urgency'] = 'medium'
             classification['command_type'] = 'create_task'
             
-            response_message = f"✅ *Task Created*\n\n📁 {project_name or 'Unassigned'}\n📝 {task_desc}"
+            response_message = f"\u2705 *Task Created*\n\n\ud83d\udcc1 {project_name or 'Unassigned'}\n\ud83d\udcdd {task_desc}"
     
     # =========================================================================
     # NOTE
@@ -1071,7 +1218,7 @@ Top Items:"""
             classification['summary'] = note_text
             classification['command_type'] = 'create_note'
             
-            response_message = f"📝 *Note Logged*\n\n📁 {project_name or 'General'}\n💬 {note_text}"
+            response_message = f"\ud83d\udcdd *Note Logged*\n\n\ud83d\udcc1 {project_name or 'General'}\n\ud83d\udcac {note_text}"
     
     # =========================================================================
     # STATUS QUERY
@@ -1086,16 +1233,16 @@ Top Items:"""
                 items = get_project_pending_items(matched['name'], limit=10)
                 
                 if items:
-                    lines = [f"📋 *{matched['name']}* ({len(items)})\n"]
+                    lines = [f"\ud83d\udccb *{matched['name']}* ({len(items)})\n"]
                     for i, item in enumerate(items, 1):
-                        urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
+                        urgency_icon = "\ud83d\udd34" if item['urgency'] == 'high' else "\ud83d\udfe1" if item['urgency'] == 'medium' else "\u26aa"
                         lines.append(f"{i}. {urgency_icon} {item['summary'][:35]}")
                     lines.append(f"\n_`done {matched['name'][:5]} 1` to complete_")
                     response_message = "\n".join(lines)
                 else:
-                    response_message = f"📋 *{matched['name']}*\n\n✨ No pending items!"
+                    response_message = f"\ud83d\udccb *{matched['name']}*\n\n\u2728 No pending items!"
             else:
-                response_message = f"❓ '{project_hint}' not found."
+                response_message = f"\u2753 '{project_hint}' not found."
             
             classification['command_type'] = 'query_status'
             classification['project_name'] = matched['name'] if matched else None
@@ -1124,13 +1271,13 @@ def extract_deadline(text):
     lower = text.lower()
     today = datetime.now(timezone.utc)
     
-    if 'today' in lower or 'اليوم' in lower:
+    if 'today' in lower or '\u0627\u0644\u064a\u0648\u0645' in lower:
         return today.strftime('%Y-%m-%d')
-    if 'tomorrow' in lower or 'بكره' in lower or 'غدا' in lower:
+    if 'tomorrow' in lower or '\u0628\u0643\u0631\u0647' in lower or '\u063a\u062f\u0627' in lower:
         return (today + timedelta(days=1)).strftime('%Y-%m-%d')
     
     days = {'sunday': 6, 'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3, 'friday': 4, 'saturday': 5,
-            'الأحد': 6, 'الاثنين': 0, 'الثلاثاء': 1, 'الأربعاء': 2, 'الخميس': 3, 'الجمعة': 4, 'السبت': 5}
+            '\u0627\u0644\u0623\u062d\u062f': 6, '\u0627\u0644\u0627\u062b\u0646\u064a\u0646': 0, '\u0627\u0644\u062b\u0644\u0627\u062b\u0627\u0621': 1, '\u0627\u0644\u0623\u0631\u0628\u0639\u0627\u0621': 2, '\u0627\u0644\u062e\u0645\u064a\u0633': 3, '\u0627\u0644\u062c\u0645\u0639\u0629': 4, '\u0627\u0644\u0633\u0628\u062a': 5}
     for day, num in days.items():
         if day in lower:
             days_ahead = num - today.weekday()
@@ -1259,7 +1406,7 @@ def fallback_classify(message_text, group_name, projects, mapped_project=None, g
     is_actionable = any(kw in lower_text for kw in action_keywords)
     
     urgency = group_priority
-    if any(kw in lower_text for kw in ['urgent', 'asap', 'immediately', 'today', 'عاجل']):
+    if any(kw in lower_text for kw in ['urgent', 'asap', 'immediately', 'today', '\u0639\u0627\u062c\u0644']):
         urgency = 'high'
     
     action_type = 'info'
@@ -1366,8 +1513,8 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.2 - Vertex AI Search',
-            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search'],
+            'status': 'WhatsApp Webhook v4.3 - File Download',
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'file_download'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
             'search_engine': ENGINE_ID
