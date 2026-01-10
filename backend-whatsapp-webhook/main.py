@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import requests
 from datetime import datetime, timezone
 import functions_framework
 from flask import jsonify
@@ -13,6 +14,7 @@ GCP_PROJECT = os.environ.get('GCP_PROJECT', 'sigma-hq-technical-office')
 GCP_LOCATION = os.environ.get('GCP_LOCATION', 'us-central1')
 FIREBASE_PROJECT = os.environ.get('FIREBASE_PROJECT', 'sigma-hq-38843')
 APP_ID = os.environ.get('APP_ID', 'sigma-hq-production')
+WAHA_API_URL = os.environ.get('WAHA_API_URL', 'http://31.220.107.186:3002')
 
 # Initialize clients
 db = firestore.Client(project=FIREBASE_PROJECT)
@@ -24,6 +26,49 @@ try:
 except Exception as e:
     print(f"Vertex AI init error: {e}")
     VERTEX_AI_ENABLED = False
+
+def get_group_name_from_waha(group_id):
+    """Fetch group name from Waha API"""
+    try:
+        # Try to get group info from Waha
+        url = f"{WAHA_API_URL}/api/default/groups/{group_id}"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            group_name = data.get('subject') or data.get('name') or data.get('id', {}).get('user', '')
+            print(f"Waha API returned group name: {group_name}")
+            return group_name
+    except Exception as e:
+        print(f"Error fetching group from Waha: {e}")
+    
+    # Fallback: try chats endpoint
+    try:
+        url = f"{WAHA_API_URL}/api/default/chats/{group_id}"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            group_name = data.get('name') or data.get('subject') or ''
+            print(f"Waha chats API returned: {group_name}")
+            return group_name
+    except Exception as e:
+        print(f"Error fetching chat from Waha: {e}")
+    
+    return None
+
+def get_cached_group_name(group_id):
+    """Get cached group name from Firestore"""
+    try:
+        # Check if we have this group cached
+        docs = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_groups').where('group_id', '==', group_id).stream()
+        for doc in docs:
+            data = doc.to_dict()
+            name = data.get('name', '')
+            # Only return if it's a real name (not just the ID)
+            if name and not name.replace('@g.us', '').isdigit():
+                return name
+    except Exception as e:
+        print(f"Error getting cached group: {e}")
+    return None
 
 def get_registered_projects():
     """Get list of registered projects from Firestore"""
@@ -50,12 +95,22 @@ def get_group_mappings():
         for doc in docs:
             data = doc.to_dict()
             group_name = data.get('name', '')
+            group_id = data.get('group_id', '')
             if group_name:
                 mappings[group_name.lower()] = {
                     'project': data.get('project'),
                     'type': data.get('type', 'internal'),
                     'priority': data.get('priority', 'medium'),
                     'autoExtractTasks': data.get('autoExtractTasks', True)
+                }
+            # Also map by group_id
+            if group_id:
+                mappings[group_id.lower()] = {
+                    'project': data.get('project'),
+                    'type': data.get('type', 'internal'),
+                    'priority': data.get('priority', 'medium'),
+                    'autoExtractTasks': data.get('autoExtractTasks', True),
+                    'name': group_name
                 }
     except Exception as e:
         print(f"Error loading group mappings: {e}")
@@ -263,26 +318,15 @@ def save_message(message_data, classification):
         print(f"Error saving message: {e}")
         return False
 
-def save_debug_payload(payload, chat_id):
-    """Save raw payload to Firestore for debugging"""
-    try:
-        debug_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('webhook_debug')
-        debug_ref.add({
-            'chat_id': chat_id,
-            'payload': json.dumps(payload, default=str)[:10000],
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        })
-        print(f"DEBUG: Saved payload for {chat_id}")
-    except Exception as e:
-        print(f"Error saving debug: {e}")
-
 def auto_add_group(group_name, group_id):
     """Auto-add new group to mappings"""
     try:
-        group_doc_id = re.sub(r'[^a-zA-Z0-9]', '_', group_name)[:50]
+        # Use group_id as document ID to avoid duplicates
+        group_doc_id = re.sub(r'[^a-zA-Z0-9]', '_', group_id)[:50]
         group_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_groups').document(group_doc_id)
         
-        if not group_ref.get().exists:
+        existing = group_ref.get()
+        if not existing.exists:
             group_ref.set({
                 'name': group_name,
                 'group_id': group_id,
@@ -292,7 +336,14 @@ def auto_add_group(group_name, group_id):
                 'autoExtractTasks': True,
                 'createdAt': datetime.now(timezone.utc).isoformat()
             })
-            print(f"Auto-added group: {group_name}")
+            print(f"Auto-added group: {group_name} ({group_id})")
+        else:
+            # Update name if we got a better one (not just ID)
+            existing_data = existing.to_dict()
+            existing_name = existing_data.get('name', '')
+            if group_name and not group_name.replace('@g.us', '').isdigit() and existing_name.replace('@g.us', '').isdigit():
+                group_ref.update({'name': group_name})
+                print(f"Updated group name: {existing_name} -> {group_name}")
     except Exception as e:
         print(f"Error auto-adding group: {e}")
 
@@ -310,8 +361,8 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v2.2 - Debug logging',
-            'features': ['group_mapping', 'command_group', 'enhanced_classification', 'debug_logging'],
+            'status': 'WhatsApp Webhook v2.3 - Waha API group name',
+            'features': ['group_mapping', 'command_group', 'waha_api_lookup'],
             'vertex_ai_enabled': VERTEX_AI_ENABLED,
             'firebase_project': FIREBASE_PROJECT
         }), 200, headers)
@@ -329,50 +380,29 @@ def whatsapp_webhook(request):
             chat_id = payload.get('chatId', '') or payload.get('from', '')
             is_group = '@g.us' in chat_id
             
-            # DEBUG: Save raw payload to see what Waha sends
-            save_debug_payload(payload, chat_id)
-            
-            # Extract group name - try ALL possible fields
-            group_name = ''
-            sender_name = ''
+            # Extract sender name
             _data = payload.get('_data', {})
+            sender_name = _data.get('notifyName', '') or payload.get('from', '').split('@')[0]
+            sender = payload.get('from', '')
             
-            # Log what we're seeing
-            print(f"DEBUG chat_id: {chat_id}")
-            print(f"DEBUG is_group: {is_group}")
-            print(f"DEBUG _data keys: {list(_data.keys()) if _data else 'None'}")
-            
+            # Get group name - Waha webhook doesn't include it, so we need to fetch it
+            group_name = ''
             if is_group:
-                chat_info = _data.get('chat', {})
-                print(f"DEBUG chat_info keys: {list(chat_info.keys()) if chat_info else 'None'}")
-                print(f"DEBUG chat_info: {chat_info}")
+                # 1. Check cache first
+                group_name = get_cached_group_name(chat_id)
+                print(f"Cached group name for {chat_id}: {group_name}")
                 
-                # Try ALL possible fields for group name
-                group_name = (
-                    chat_info.get('name', '') or 
-                    chat_info.get('subject', '') or 
-                    chat_info.get('formattedTitle', '') or 
-                    _data.get('chat', {}).get('name', '') or
-                    payload.get('chatName', '') or
-                    payload.get('notifyName', '') or  # Sometimes Waha puts it here
-                    ''
-                )
+                # 2. If not cached or just ID, fetch from Waha API
+                if not group_name or group_name.replace('@g.us', '').isdigit():
+                    waha_name = get_group_name_from_waha(chat_id)
+                    if waha_name:
+                        group_name = waha_name
+                        print(f"Got group name from Waha: {group_name}")
                 
-                # If still empty, use chat_id
+                # 3. Fallback to group ID
                 if not group_name:
                     group_name = chat_id.replace('@g.us', '')
-                
-                # Sender name
-                sender_name = _data.get('notifyName', '') or payload.get('from', '').split('@')[0]
-                
-                print(f"DEBUG extracted group_name: {group_name}")
-                print(f"DEBUG extracted sender_name: {sender_name}")
-            else:
-                sender_name = _data.get('notifyName', '') or payload.get('from', '').split('@')[0]
-            
-            sender = payload.get('from', '')
-            if not sender_name:
-                sender_name = sender.split('@')[0]
+                    print(f"Using fallback group name: {group_name}")
             
             message_data = {
                 'id': payload.get('id', {}).get('id', '') if isinstance(payload.get('id'), dict) else payload.get('id', ''),
@@ -387,11 +417,21 @@ def whatsapp_webhook(request):
             if not message_data['text']:
                 return (jsonify({'status': 'skipped', 'reason': 'no text'}), 200, headers)
             
+            # Auto-add/update group
             if is_group and group_name:
                 auto_add_group(group_name, chat_id)
             
+            # Get mappings - now also checks by group_id
             group_mappings = get_group_mappings()
-            group_config = group_mappings.get(group_name.lower()) if group_name else None
+            group_config = group_mappings.get(group_name.lower()) or group_mappings.get(chat_id.lower())
+            
+            # If we have a stored name from mapping, use it
+            if group_config and group_config.get('name'):
+                stored_name = group_config.get('name')
+                if stored_name and not stored_name.replace('@g.us', '').isdigit():
+                    group_name = stored_name
+                    message_data['group_name'] = group_name
+            
             projects = get_registered_projects()
             
             classification = classify_message(
