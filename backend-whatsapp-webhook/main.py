@@ -3,6 +3,7 @@
 import os
 import json
 import re
+import base64
 import requests
 from datetime import datetime, timezone, timedelta
 import functions_framework
@@ -10,9 +11,6 @@ from flask import jsonify
 from google.cloud import firestore
 from google.cloud import storage
 from google.cloud import discoveryengine_v1 as discoveryengine
-from google import auth
-from google.auth.transport import requests as auth_requests
-from google.auth import compute_engine
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
@@ -99,74 +97,15 @@ def send_whatsapp_message(chat_id, message):
     return False
 
 
-def generate_signed_url_v4(bucket_name, blob_name, expiration_minutes=60):
-    """Generate a signed URL using IAM signing (works on Cloud Run)"""
-    try:
-        # Get credentials and service account email
-        credentials, project = auth.default()
-        
-        # If running on Cloud Run, we need to use IAM signBlob
-        if isinstance(credentials, compute_engine.Credentials):
-            # Get the service account email
-            auth_request = auth_requests.Request()
-            credentials.refresh(auth_request)
-            service_account_email = credentials.service_account_email
-            
-            # Create signing credentials
-            from google.auth import iam
-            from google.auth.transport import requests as google_auth_requests
-            
-            signer = iam.Signer(
-                google_auth_requests.Request(),
-                credentials,
-                service_account_email
-            )
-            
-            # Create new credentials with the signer
-            signing_credentials = compute_engine.IDTokenCredentials(
-                auth_request,
-                target_audience="",
-                service_account_email=service_account_email
-            )
-            
-            # Use the storage client with explicit signing
-            bucket = storage_client.bucket(bucket_name)
-            blob = bucket.blob(blob_name)
-            
-            # Generate signed URL with service account email
-            url = blob.generate_signed_url(
-                version="v4",
-                expiration=timedelta(minutes=expiration_minutes),
-                method="GET",
-                service_account_email=service_account_email,
-                access_token=credentials.token
-            )
-            return url
-        else:
-            # Local development with service account key
-            bucket = storage_client.bucket(bucket_name)
-            blob = bucket.blob(blob_name)
-            url = blob.generate_signed_url(
-                version="v4",
-                expiration=timedelta(minutes=expiration_minutes),
-                method="GET"
-            )
-            return url
-            
-    except Exception as e:
-        print(f"Error generating signed URL: {e}")
-        return None
-
-
 def send_whatsapp_file(chat_id, gcs_path, filename):
-    """Send a file from GCS via WhatsApp using Waha API"""
+    """Send a file from GCS via WhatsApp using Waha API with base64"""
     headers = {
         'X-Api-Key': WAHA_API_KEY,
         'Content-Type': 'application/json'
     }
     
     try:
-        # Check if file exists
+        # Download file from GCS
         bucket = storage_client.bucket(GCS_BUCKET)
         blob = bucket.blob(gcs_path)
         
@@ -174,11 +113,17 @@ def send_whatsapp_file(chat_id, gcs_path, filename):
             print(f"File not found in GCS: {gcs_path}")
             return False, "File not found"
         
-        # Generate signed URL using IAM signing
-        signed_url = generate_signed_url_v4(GCS_BUCKET, gcs_path, expiration_minutes=60)
+        # Check file size (limit to 16MB for WhatsApp)
+        blob.reload()
+        file_size = blob.size
+        if file_size > 16 * 1024 * 1024:
+            return False, f"File too large ({file_size // (1024*1024)}MB). Max 16MB."
         
-        if not signed_url:
-            return False, "Could not generate download URL"
+        # Download to memory
+        file_content = blob.download_as_bytes()
+        
+        # Encode as base64
+        file_base64 = base64.b64encode(file_content).decode('utf-8')
         
         # Determine media type
         ext = os.path.splitext(filename.lower())[1]
@@ -199,20 +144,20 @@ def send_whatsapp_file(chat_id, gcs_path, filename):
         }
         media_type = media_types.get(ext, 'application/octet-stream')
         
-        # Send via Waha
+        # Send via Waha using base64 data
         url = f"{WAHA_API_URL}/api/sendFile"
         payload = {
             'chatId': chat_id,
             'file': {
-                'url': signed_url,
+                'mimetype': media_type,
                 'filename': filename,
-                'mimetype': media_type
+                'data': file_base64
             },
             'session': 'default',
             'caption': f"📄 {filename}"
         }
         
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
         if response.status_code == 200:
             print(f"File sent to {chat_id}: {filename}")
             return True, "File sent"
@@ -625,7 +570,6 @@ def search_documents(query, project_name=None, limit=5):
         
     except Exception as e:
         print(f"Vertex AI Search error: {e}")
-        # Don't fall back to Firestore - just return empty
     
     return results
 
@@ -892,8 +836,6 @@ def handle_command(message_text, sender, projects, chat_id):
                 lines.append(f"{i}. *{name}*")
                 if folder:
                     lines.append(f"   📁 {folder}")
-                if doc.get('gcs_path'):
-                    lines.append(f"   📂 {doc['gcs_path']}")
             
             lines.append(f"\n_Type `g 1` to download file #1_")
             response_message = "\n".join(lines)
@@ -1579,7 +1521,7 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.4 - File Download Fixed',
+            'status': 'WhatsApp Webhook v4.5 - Base64 File Download',
             'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'file_download'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
