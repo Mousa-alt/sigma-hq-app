@@ -25,6 +25,9 @@ WAHA_API_URL = os.environ.get('WAHA_API_URL', 'http://34.78.137.109:3000')
 WAHA_API_KEY = os.environ.get('WAHA_API_KEY', 'sigma2026')
 COMMAND_GROUP_ID = os.environ.get('COMMAND_GROUP_ID', '')
 
+# Waha Plus License - Set to True when you buy premium
+WAHA_PLUS_ENABLED = os.environ.get('WAHA_PLUS_ENABLED', 'false').lower() == 'true'
+
 # Vertex AI Search Config
 VERTEX_LOCATION = "global"
 ENGINE_ID = "sigma-search_1767650825639"
@@ -40,39 +43,6 @@ try:
 except Exception as e:
     print(f"Vertex AI init error: {e}")
     VERTEX_AI_ENABLED = False
-
-# MIME type fallbacks for construction documents
-MIME_FALLBACKS = {
-    '.pdf': 'application/pdf',
-    '.doc': 'application/msword',
-    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    '.xls': 'application/vnd.ms-excel',
-    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    '.ppt': 'application/vnd.ms-powerpoint',
-    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.dwg': 'application/acad',
-    '.dxf': 'application/dxf',
-    '.zip': 'application/zip',
-    '.rar': 'application/x-rar-compressed',
-    '.7z': 'application/x-7z-compressed',
-    '.txt': 'text/plain',
-    '.csv': 'text/csv',
-    '.xml': 'application/xml',
-    '.json': 'application/json',
-}
-
-
-def get_mime_type(filename):
-    """Get MIME type with robust fallback"""
-    mime_type, _ = mimetypes.guess_type(filename)
-    if not mime_type:
-        ext = os.path.splitext(filename.lower())[1]
-        mime_type = MIME_FALLBACKS.get(ext, 'application/octet-stream')
-    return mime_type
 
 
 # =============================================================================
@@ -134,7 +104,7 @@ def send_whatsapp_message(chat_id, message):
             'text': message
         }
         response = requests.post(url, headers=headers, json=payload, timeout=10)
-        if response.status_code == 200:
+        if response.status_code in [200, 201]:
             print(f"Message sent to {chat_id}")
             return True
         else:
@@ -145,7 +115,7 @@ def send_whatsapp_message(chat_id, message):
     return False
 
 
-def generate_signed_url(gcs_path, expiration_minutes=10):
+def generate_signed_url(gcs_path, expiration_minutes=30):
     """Generate a signed URL for GCS file"""
     try:
         bucket = storage_client.bucket(GCS_BUCKET)
@@ -165,134 +135,168 @@ def generate_signed_url(gcs_path, expiration_minutes=10):
         return None, str(e)
 
 
+def get_file_size_mb(gcs_path):
+    """Get file size in MB"""
+    try:
+        bucket = storage_client.bucket(GCS_BUCKET)
+        blob = bucket.blob(gcs_path)
+        if blob.exists():
+            blob.reload()
+            return blob.size / (1024 * 1024)
+    except:
+        pass
+    return 0
+
+
 def send_whatsapp_file(chat_id, gcs_path, filename):
-    """Send a file from GCS via WhatsApp using Waha API
+    """Send a file from GCS via WhatsApp
     
-    v4.8 Strategy:
-    - Files <= 15MB: Use base64 (reliable for small files)
-    - Files 15-64MB: Use Signed GCS URL (Waha downloads directly)
-    - Files > 64MB: Send download link only
-    - All payloads include mimetype (required by Waha)
-    - Fallback: Send signed URL as text link if file send fails
+    v4.9 Strategy:
+    - Free Waha: Always send signed download link (sendFile not available)
+    - Waha Plus: Use sendFile API with base64/URL (when WAHA_PLUS_ENABLED=true)
+    
+    To enable Waha Plus file sending, set environment variable:
+    WAHA_PLUS_ENABLED=true
     """
-    headers = {
-        'X-Api-Key': WAHA_API_KEY,
-        'Content-Type': 'application/json'
-    }
     
     # Check session first
     if not check_waha_session():
         print("Waha session not connected")
         return False, "Technical Office is offline. Try again in 5 minutes."
     
-    try:
-        bucket = storage_client.bucket(GCS_BUCKET)
-        blob = bucket.blob(gcs_path)
+    # Check if file exists
+    bucket = storage_client.bucket(GCS_BUCKET)
+    blob = bucket.blob(gcs_path)
+    
+    if not blob.exists():
+        print(f"File not found in GCS: {gcs_path}")
+        return False, "File not found"
+    
+    # Get file size for display
+    blob.reload()
+    file_size_mb = blob.size / (1024 * 1024)
+    
+    # ==========================================================================
+    # FREE WAHA: Send download link
+    # ==========================================================================
+    if not WAHA_PLUS_ENABLED:
+        print(f"Free Waha mode: Sending download link for {filename}")
         
-        if not blob.exists():
-            print(f"File not found in GCS: {gcs_path}")
-            return False, "File not found"
+        # Generate signed URL (valid for 60 minutes)
+        signed_url, err = generate_signed_url(gcs_path, expiration_minutes=60)
         
-        blob.reload()
-        file_size = blob.size
-        file_size_mb = file_size / (1024 * 1024)
+        if not signed_url:
+            return False, f"Could not generate download link: {err}"
         
-        # Get MIME type with fallback
-        mime_type = get_mime_type(filename)
+        # Format nice message with file info
+        size_str = f"{file_size_mb:.1f}MB" if file_size_mb >= 1 else f"{int(file_size_mb * 1024)}KB"
         
-        print(f"File: {filename}, Size: {file_size_mb:.1f}MB, MIME: {mime_type}")
+        download_msg = f"""📁 *{filename}*
+📊 Size: {size_str}
+
+🔗 *Download Link* (valid 1 hour):
+{signed_url}
+
+_Tap link to download directly_"""
         
-        # Files > 64MB: Send download link only (WhatsApp limit)
-        if file_size > 64 * 1024 * 1024:
-            signed_url, err = generate_signed_url(gcs_path, expiration_minutes=60)
-            if signed_url:
-                link_msg = f"📁 *{filename}*\n\n⚠️ File too large ({file_size_mb:.1f}MB) for WhatsApp.\n\n🔗 Download link (1 hour):\n{signed_url}"
-                send_whatsapp_message(chat_id, link_msg)
-                return True, "Sent as download link"
-            return False, f"File too large ({file_size_mb:.1f}MB)"
-        
-        url = f"{WAHA_API_URL}/api/sendFile"
-        
-        # Strategy based on file size
-        if file_size <= 15 * 1024 * 1024:
-            # Small files: Use base64
-            print(f"Using base64 for {filename} ({file_size_mb:.1f}MB)")
-            
-            file_content = blob.download_as_bytes()
-            file_base64 = base64.b64encode(file_content).decode('utf-8')
-            
-            # Payload structure per Waha docs (session first)
-            payload = {
-                'session': 'default',
-                'chatId': chat_id,
-                'file': {
-                    'mimetype': mime_type,
-                    'filename': filename,
-                    'data': file_base64  # Raw base64, no data: prefix
-                }
-            }
+        if send_whatsapp_message(chat_id, download_msg):
+            return True, "Download link sent"
         else:
-            # Large files (15-64MB): Use Signed URL
-            print(f"Using signed URL for {filename} ({file_size_mb:.1f}MB)")
-            
-            signed_url, err = generate_signed_url(gcs_path, expiration_minutes=10)
-            if not signed_url:
-                return False, f"Could not generate URL: {err}"
-            
-            # CRITICAL: Include mimetype even for URL-based sends
-            payload = {
-                'session': 'default',
-                'chatId': chat_id,
-                'file': {
-                    'url': signed_url,
-                    'filename': filename,
-                    'mimetype': mime_type  # Required by Waha
-                }
+            return False, "Failed to send message"
+    
+    # ==========================================================================
+    # WAHA PLUS: Use sendFile API (when you upgrade)
+    # ==========================================================================
+    else:
+        print(f"Waha Plus mode: Sending file {filename}")
+        
+        headers = {
+            'X-Api-Key': WAHA_API_KEY,
+            'Content-Type': 'application/json'
+        }
+        
+        # Get MIME type
+        mime_type, _ = mimetypes.guess_type(filename)
+        if not mime_type:
+            ext = os.path.splitext(filename.lower())[1]
+            mime_fallbacks = {
+                '.pdf': 'application/pdf',
+                '.doc': 'application/msword',
+                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                '.xls': 'application/vnd.ms-excel',
+                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '.png': 'image/png',
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.dwg': 'application/acad',
+                '.zip': 'application/zip',
             }
+            mime_type = mime_fallbacks.get(ext, 'application/octet-stream')
         
-        # Send file
-        response = requests.post(url, headers=headers, json=payload, timeout=180)
-        
-        if response.status_code == 200:
-            print(f"File sent to {chat_id}: {filename}")
-            return True, "File sent"
-        else:
-            # Debug: Log the actual validation error
-            error_detail = ""
-            try:
-                error_json = response.json()
-                error_detail = str(error_json)
-                print(f"VALIDATION ERROR: {error_json}")
-            except:
-                error_detail = response.text
-                print(f"Error response: {response.text}")
-            
-            print(f"Failed to send file: {response.status_code} - {error_detail}")
-            
-            # Fallback: Send signed URL as text
-            print("Attempting fallback: sending download link")
-            signed_url, err = generate_signed_url(gcs_path, expiration_minutes=30)
-            if signed_url:
-                fallback_msg = f"📁 *{filename}*\n\n🔗 Download link (30 min):\n{signed_url}"
-                if send_whatsapp_message(chat_id, fallback_msg):
-                    return True, "Sent as download link"
-            
-            return False, f"Send failed: {response.status_code}"
-            
-    except Exception as e:
-        print(f"Error sending file: {e}")
-        
-        # Last resort fallback
         try:
-            signed_url, _ = generate_signed_url(gcs_path, expiration_minutes=30)
+            # Files > 64MB: Send link only (WhatsApp limit)
+            if blob.size > 64 * 1024 * 1024:
+                signed_url, _ = generate_signed_url(gcs_path, 60)
+                if signed_url:
+                    msg = f"📁 *{filename}*\n\n⚠️ File too large ({file_size_mb:.1f}MB)\n\n🔗 Download:\n{signed_url}"
+                    send_whatsapp_message(chat_id, msg)
+                    return True, "Sent as link (file too large)"
+                return False, "File too large"
+            
+            # Files <= 15MB: Use base64
+            if blob.size <= 15 * 1024 * 1024:
+                file_content = blob.download_as_bytes()
+                file_base64 = base64.b64encode(file_content).decode('utf-8')
+                
+                payload = {
+                    'session': 'default',
+                    'chatId': chat_id,
+                    'file': {
+                        'mimetype': mime_type,
+                        'filename': filename,
+                        'data': file_base64
+                    }
+                }
+            else:
+                # Files 15-64MB: Use signed URL
+                signed_url, err = generate_signed_url(gcs_path, 10)
+                if not signed_url:
+                    return False, f"URL error: {err}"
+                
+                payload = {
+                    'session': 'default',
+                    'chatId': chat_id,
+                    'file': {
+                        'url': signed_url,
+                        'filename': filename,
+                        'mimetype': mime_type
+                    }
+                }
+            
+            url = f"{WAHA_API_URL}/api/sendFile"
+            response = requests.post(url, headers=headers, json=payload, timeout=180)
+            
+            if response.status_code == 200:
+                return True, "File sent"
+            else:
+                print(f"sendFile failed: {response.status_code} - {response.text}")
+                # Fallback to download link
+                signed_url, _ = generate_signed_url(gcs_path, 30)
+                if signed_url:
+                    msg = f"📁 *{filename}*\n\n🔗 Download:\n{signed_url}"
+                    send_whatsapp_message(chat_id, msg)
+                    return True, "Sent as download link"
+                return False, f"Send failed: {response.status_code}"
+                
+        except Exception as e:
+            print(f"Error: {e}")
+            # Fallback
+            signed_url, _ = generate_signed_url(gcs_path, 30)
             if signed_url:
-                fallback_msg = f"📁 *{filename}*\n\n🔗 Download link:\n{signed_url}"
-                send_whatsapp_message(chat_id, fallback_msg)
-                return True, "Sent as download link (after error)"
-        except:
-            pass
-        
-        return False, str(e)
+                msg = f"📁 *{filename}*\n\n🔗 Download:\n{signed_url}"
+                send_whatsapp_message(chat_id, msg)
+                return True, "Sent as download link"
+            return False, str(e)
 
 
 # =============================================================================
@@ -915,13 +919,13 @@ def handle_command(message_text, sender, projects, chat_id):
             if not gcs_path:
                 response_message = "❌ File path not available."
             else:
-                send_whatsapp_message(chat_id, f"📤 Sending *{filename}*...")
+                # Send file (will send download link in free mode)
                 success, msg = send_whatsapp_file(chat_id, gcs_path, filename)
                 
                 if success:
-                    response_message = None  # File already sent
+                    response_message = None  # Message already sent
                 else:
-                    response_message = f"❌ Could not send file: {msg}"
+                    response_message = f"❌ Could not get file: {msg}"
         
         classification['command_type'] = 'get_file'
         classification['summary'] = f"Get file #{file_num}"
@@ -962,7 +966,7 @@ def handle_command(message_text, sender, projects, chat_id):
                 if folder:
                     lines.append(f"   📁 {folder}")
             
-            lines.append(f"\n_Type `g 1` to download file #1_")
+            lines.append(f"\n_Type `g 1` to get download link_")
             response_message = "\n".join(lines)
         else:
             response_message = f"""📄 *Search: {search_query}*
@@ -1296,7 +1300,7 @@ Top Items:"""
 *Documents:*
 `f agora floor drawing` - search
 `find: shop drawing` - search all
-`g 1` - download file #1
+`g 1` - get download link #1
 
 *Actions:*
 `done 1` - complete #1
@@ -1646,8 +1650,9 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.8 - Robust MIME + Signed URLs',
-            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'file_download', 'signed_urls', 'session_check', 'mime_detection'],
+            'status': 'WhatsApp Webhook v4.9 - Download Links Mode',
+            'waha_plus': WAHA_PLUS_ENABLED,
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'download_links'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
             'search_engine': ENGINE_ID
