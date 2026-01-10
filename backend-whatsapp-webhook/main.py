@@ -117,6 +117,7 @@ def get_registered_projects():
                 'client': data.get('client', ''),
                 'location': data.get('location', ''),
                 'status': data.get('status', 'active'),
+                'drive_folder_id': data.get('drive_folder_id', ''),
                 'keywords': data.get('keywords', [])
             })
     except Exception as e:
@@ -374,6 +375,90 @@ def get_overdue_items():
 
 
 # =============================================================================
+# DOCUMENT SEARCH
+# =============================================================================
+
+def search_documents(query, project_name=None, limit=10):
+    """Search for documents in synced files"""
+    results = []
+    keywords = query.lower().split()
+    
+    try:
+        # Try multiple collection names where files might be stored
+        collections_to_try = [
+            ('synced_files', None),
+            ('files', None),
+            ('documents', None),
+        ]
+        
+        for coll_name, parent in collections_to_try:
+            try:
+                if parent:
+                    coll_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection(parent).document('files').collection(coll_name)
+                else:
+                    coll_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection(coll_name)
+                
+                # Get all files and filter by keywords
+                docs = coll_ref.limit(500).stream()
+                
+                for doc in docs:
+                    data = doc.to_dict()
+                    file_name = data.get('name', '') or data.get('file_name', '') or data.get('title', '')
+                    file_path = data.get('path', '') or data.get('folder_path', '')
+                    file_project = data.get('project', '') or data.get('project_name', '')
+                    
+                    # Filter by project if specified
+                    if project_name and file_project and project_name.lower() not in file_project.lower():
+                        continue
+                    
+                    # Check if keywords match
+                    searchable = f"{file_name} {file_path} {file_project}".lower()
+                    if all(kw in searchable for kw in keywords):
+                        results.append({
+                            'name': file_name,
+                            'path': file_path,
+                            'project': file_project,
+                            'drive_id': data.get('drive_id', '') or data.get('id', ''),
+                            'drive_link': data.get('drive_link', '') or data.get('webViewLink', ''),
+                            'mime_type': data.get('mime_type', '') or data.get('mimeType', ''),
+                            'modified': data.get('modified_time', '') or data.get('modifiedTime', '')
+                        })
+                        
+                        if len(results) >= limit:
+                            break
+                
+                if results:
+                    break
+                    
+            except Exception as e:
+                print(f"Error searching {coll_name}: {e}")
+                continue
+        
+    except Exception as e:
+        print(f"Error in document search: {e}")
+    
+    return results
+
+
+def get_folder_structure(project_name):
+    """Get folder structure for a project"""
+    folders = [
+        "00-Project_Info",
+        "01-Contract_Documents", 
+        "02-Design_Drawings",
+        "03-Specifications",
+        "04-Quantity_Surveying",
+        "05-Correspondence",
+        "06-Site_Reports",
+        "07-Quality_Control",
+        "08-Health_Safety",
+        "09-Shop_Drawings",
+        "10-Handover"
+    ]
+    return folders
+
+
+# =============================================================================
 # ACTION FUNCTIONS
 # =============================================================================
 
@@ -383,13 +468,11 @@ def mark_item_done(project_name, item_index, items_cache=None):
         if items_cache and item_index <= len(items_cache):
             doc_id = items_cache[item_index - 1]['doc_id']
         else:
-            # Fetch items for project
             items = get_project_pending_items(project_name, limit=20) if project_name else get_all_pending_items(limit=20)
             if item_index > len(items):
                 return False, "Item number not found"
             doc_id = items[item_index - 1]['doc_id']
         
-        # Update status
         doc_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages').document(doc_id)
         doc_ref.update({
             'status': 'done',
@@ -447,7 +530,6 @@ def generate_daily_digest():
     today = get_today_items()
     pending = get_all_pending_items(limit=50)
     
-    # Get yesterday's new items
     yesterday_start = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     yesterday_end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     
@@ -457,25 +539,21 @@ def generate_daily_digest():
     
     digest = f"☀️ *Good Morning - {date_str}*\n"
     
-    # Overdue
     if overdue:
         digest += f"\n🔴 *Overdue ({len(overdue)}):*\n"
         for item in overdue[:5]:
             digest += f"• {item['project']}: {item['summary'][:30]}\n"
     
-    # Urgent
     if urgent:
         digest += f"\n⚠️ *Urgent ({len(urgent)}):*\n"
         for item in urgent[:5]:
             digest += f"• {item['project']}: {item['summary'][:30]}\n"
     
-    # Today
     if today:
         digest += f"\n📅 *New Today ({len(today)}):*\n"
         for item in today[:5]:
             digest += f"• {item['project']}: {item['summary'][:30]}\n"
     
-    # Summary
     digest += f"\n📊 *Summary:*\n"
     digest += f"• Total Pending: {len(pending)}\n"
     digest += f"• New Yesterday: {len(new_yesterday)}\n"
@@ -497,7 +575,6 @@ def match_project(hint, projects):
             return p
         if hint_lower in p['name'].lower():
             return p
-        # Check keywords
         for kw in p.get('keywords', []):
             if hint_lower in kw.lower():
                 return p
@@ -524,23 +601,16 @@ def handle_command(message_text, sender, projects, chat_id):
     # =========================================================================
     # SHORTCUTS - Single letter commands
     # =========================================================================
-    
-    # s = summary
     if lower_text == 's':
         lower_text = 'summary'
-    # u = urgent
     elif lower_text == 'u':
         lower_text = 'urgent'
-    # p = pending
     elif lower_text == 'p':
         lower_text = 'pending'
-    # t = today
     elif lower_text == 't':
         lower_text = 'today'
-    # h = help
     elif lower_text == 'h':
         lower_text = 'help'
-    # d = digest
     elif lower_text == 'd':
         lower_text = 'digest'
     
@@ -553,6 +623,62 @@ def handle_command(message_text, sender, projects, chat_id):
     shortcut_activity = re.match(r'^a\s+(.+)$', lower_text)
     if shortcut_activity:
         lower_text = f"activity {shortcut_activity.group(1)}"
+    
+    # f query = find query
+    shortcut_find = re.match(r'^f\s+(.+)$', lower_text)
+    if shortcut_find:
+        lower_text = f"find {shortcut_find.group(1)}"
+    
+    # =========================================================================
+    # DOCUMENT SEARCH - find: query or find query
+    # =========================================================================
+    find_match = re.match(r'^(?:find|search|doc|docs)[:\s]+(.+)$', lower_text, re.IGNORECASE)
+    if find_match:
+        search_query = find_match.group(1).strip()
+        
+        # Check if project is specified
+        project_name = None
+        for p in projects:
+            if p['name'].lower() in search_query.lower():
+                project_name = p['name']
+                # Remove project name from search
+                search_query = re.sub(re.escape(p['name']), '', search_query, flags=re.IGNORECASE).strip()
+                break
+        
+        results = search_documents(search_query, project_name, limit=5)
+        
+        if results:
+            lines = [f"📄 *Found {len(results)} documents*\n"]
+            for i, doc in enumerate(results, 1):
+                name = doc['name'][:35] if doc['name'] else 'Unnamed'
+                folder = doc['path'].split('/')[-1] if doc['path'] else ''
+                
+                lines.append(f"{i}. *{name}*")
+                if folder:
+                    lines.append(f"   📁 {folder}")
+                if doc.get('drive_link'):
+                    lines.append(f"   🔗 {doc['drive_link']}")
+                elif doc.get('drive_id'):
+                    lines.append(f"   🔗 https://drive.google.com/file/d/{doc['drive_id']}")
+            
+            response_message = "\n".join(lines)
+        else:
+            # If no results in Firestore, suggest checking Drive directly
+            response_message = f"""📄 *Search: {search_query}*
+
+🔍 No documents found in index.
+
+Try:
+• Check Google Drive directly
+• Use different keywords
+• Make sure the file has been synced"""
+        
+        classification['command_type'] = 'find'
+        classification['summary'] = f"Search: {search_query}"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
     
     # =========================================================================
     # DONE - Mark item as complete
@@ -612,7 +738,7 @@ def handle_command(message_text, sender, projects, chat_id):
     # =========================================================================
     # ESCALATE - Set to high urgency
     # =========================================================================
-    escalate_match = re.match(r'^(escalate|urgent|high)\s+(?:(\S+)\s+)?(\d+)$', lower_text)
+    escalate_match = re.match(r'^(escalate|high)\s+(?:(\S+)\s+)?(\d+)$', lower_text)
     if escalate_match:
         project_hint = escalate_match.group(2)
         item_num = int(escalate_match.group(3))
@@ -676,7 +802,7 @@ def handle_command(message_text, sender, projects, chat_id):
         return classification
     
     # =========================================================================
-    # LIST PROJECT ITEMS - list Agora-gem
+    # LIST PROJECT ITEMS
     # =========================================================================
     list_match = re.match(r'^list\s+(.+)$', lower_text, re.IGNORECASE)
     if list_match:
@@ -708,7 +834,7 @@ def handle_command(message_text, sender, projects, chat_id):
         return classification
     
     # =========================================================================
-    # ACTIVITY - recent activity for project
+    # ACTIVITY
     # =========================================================================
     activity_match = re.match(r'^activity\s+(.+)$', lower_text, re.IGNORECASE)
     if activity_match:
@@ -754,7 +880,7 @@ def handle_command(message_text, sender, projects, chat_id):
 📋 Pending: {stats['pending_tasks']} | 🔴 Urgent: {stats['high_urgency']}
 💬 Messages (24h): {stats['recent_messages']}
 
-_`l {matched_project['name'][:6]}` for items_"""
+_`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} drawing` to search docs_"""
         
         classification['command_type'] = 'project_status'
         classification['project_name'] = matched_project['name']
@@ -857,29 +983,29 @@ Top Items:"""
     elif lower_text in ['help', 'مساعدة', 'commands', '?']:
         response_message = """🤖 *Commands*
 
-*Quick (shortcuts):*
-• `s` - Summary
-• `u` - Urgent items
-• `p` - Pending items
-• `t` - Today
-• `d` - Daily digest
-• `l agora` - List Agora items
-• `a agora` - Agora activity
+*Quick:*
+`s` summary | `u` urgent | `p` pending
+`t` today | `d` digest | `h` help
+
+*Projects:*
+`Agora` - status
+`l agora` - list items
+`a agora` - activity
+
+*Documents:*
+`f agora floor drawing` - search
+`find: shop drawing` - search all
 
 *Actions:*
-• `done 1` - Complete item #1
-• `done agora 1` - Complete Agora #1
-• `assign 1 to Ahmed` - Assign item
-• `escalate 1` - Make urgent
-• `defer 1` - Make low priority
+`done 1` - complete #1
+`done agora 1` - complete Agora #1
+`assign 1 to Ahmed` - assign
+`escalate 1` - make urgent
+`defer 1` - make low priority
 
 *Create:*
-• `task: Agora - Description`
-• `note: Agora - Info to log`
-
-*Query:*
-• `Agora` - Project status
-• `what's pending on Agora?`"""
+`task: Agora - Description`
+`note: Agora - Info`"""
         
         classification['command_type'] = 'help'
         classification['summary'] = "Help"
@@ -976,13 +1102,11 @@ def extract_deadline(text):
     lower = text.lower()
     today = datetime.now(timezone.utc)
     
-    # Today/tomorrow
     if 'today' in lower or 'اليوم' in lower:
         return today.strftime('%Y-%m-%d')
     if 'tomorrow' in lower or 'بكره' in lower or 'غدا' in lower:
         return (today + timedelta(days=1)).strftime('%Y-%m-%d')
     
-    # Day names
     days = {'sunday': 6, 'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3, 'friday': 4, 'saturday': 5,
             'الأحد': 6, 'الاثنين': 0, 'الثلاثاء': 1, 'الأربعاء': 2, 'الخميس': 3, 'الجمعة': 4, 'السبت': 5}
     for day, num in days.items():
@@ -992,7 +1116,6 @@ def extract_deadline(text):
                 days_ahead += 7
             return (today + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
     
-    # Date patterns
     date_match = re.search(r'(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?', text)
     if date_match:
         day = int(date_match.group(1))
@@ -1010,12 +1133,10 @@ def extract_deadline(text):
 
 def extract_assignee(text):
     """Extract assigned person from message"""
-    # @mentions
     mention = re.search(r'@(\w+)', text)
     if mention:
         return mention.group(1)
     
-    # "to Ahmed", "for Mohamed"
     assign_match = re.search(r'(?:to|for|assign(?:ed)?(?:\s+to)?)\s+([A-Z][a-z]+)', text)
     if assign_match:
         return assign_match.group(1)
@@ -1032,7 +1153,6 @@ def classify_message(message_text, sender, group_name, projects, group_config, c
     if group_type == 'command':
         return handle_command(message_text, sender, projects, chat_id)
     
-    # Extract deadline and assignee
     deadline = extract_deadline(message_text)
     assignee = extract_assignee(message_text)
     
@@ -1084,7 +1204,6 @@ RESPOND JSON ONLY:
             if not result.get('project_name') and mapped_project and mapped_project != '__general__':
                 result['project_name'] = mapped_project
             result['channel_type'] = group_type
-            # Override with extracted values if AI missed them
             if deadline and not result.get('deadline'):
                 result['deadline'] = deadline
             if assignee and not result.get('assigned_to'):
@@ -1225,8 +1344,8 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.0 - Actions & Shortcuts',
-            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'deadline_extract', 'assignee_extract'],
+            'status': 'WhatsApp Webhook v4.1 - Document Search',
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'find_docs'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED
         }), 200, headers)
