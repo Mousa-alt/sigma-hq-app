@@ -44,7 +44,6 @@ def get_group_name_from_waha(group_id):
         if response.status_code == 200:
             data = response.json()
             group_name = data.get('subject') or data.get('name') or data.get('id', {}).get('user', '')
-            print(f"Waha API returned group name: {group_name}")
             return group_name
     except Exception as e:
         print(f"Error fetching group from Waha: {e}")
@@ -54,9 +53,7 @@ def get_group_name_from_waha(group_id):
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            group_name = data.get('name') or data.get('subject') or ''
-            print(f"Waha chats API returned: {group_name}")
-            return group_name
+            return data.get('name') or data.get('subject') or ''
     except Exception as e:
         print(f"Error fetching chat from Waha: {e}")
     
@@ -206,7 +203,7 @@ def get_project_stats(project_name):
 
 
 def get_project_pending_items(project_name, limit=15):
-    """Get actual pending items for a specific project"""
+    """Get actual pending items for a specific project with doc IDs"""
     items = []
     try:
         messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
@@ -220,12 +217,15 @@ def get_project_pending_items(project_name, limit=15):
         for msg in messages:
             data = msg.to_dict()
             items.append({
+                'doc_id': msg.id,
                 'summary': data.get('summary', data.get('text', '')[:50]),
                 'urgency': data.get('urgency', 'medium'),
                 'type': data.get('action_type', 'task'),
                 'sender': data.get('sender_name', 'Unknown'),
                 'created': data.get('created_at', ''),
-                'group': data.get('group_name', '')
+                'group': data.get('group_name', ''),
+                'assigned_to': data.get('assigned_to'),
+                'deadline': data.get('deadline')
             })
     except Exception as e:
         print(f"Error getting project pending items: {e}")
@@ -234,7 +234,7 @@ def get_project_pending_items(project_name, limit=15):
 
 
 def get_project_recent_activity(project_name, limit=10):
-    """Get recent activity (all messages) for a project"""
+    """Get recent activity for a project"""
     items = []
     try:
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
@@ -261,25 +261,28 @@ def get_project_recent_activity(project_name, limit=10):
     return items
 
 
-def get_all_pending_items():
-    """Get all pending actionable items across all projects"""
+def get_all_pending_items(limit=20):
+    """Get all pending actionable items across all projects with doc IDs"""
     items = []
     try:
         messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
             .where('is_actionable', '==', True)\
             .where('status', '==', 'pending')\
             .order_by('created_at', direction=firestore.Query.DESCENDING)\
-            .limit(20)\
+            .limit(limit)\
             .stream()
         
         for msg in messages:
             data = msg.to_dict()
             items.append({
+                'doc_id': msg.id,
                 'project': data.get('project_name', 'Unknown'),
                 'summary': data.get('summary', data.get('text', '')[:50]),
                 'urgency': data.get('urgency', 'medium'),
                 'type': data.get('action_type', 'task'),
-                'created': data.get('created_at', '')
+                'created': data.get('created_at', ''),
+                'assigned_to': data.get('assigned_to'),
+                'deadline': data.get('deadline')
             })
     except Exception as e:
         print(f"Error getting pending items: {e}")
@@ -301,6 +304,7 @@ def get_urgent_items():
         for msg in messages:
             data = msg.to_dict()
             items.append({
+                'doc_id': msg.id,
                 'project': data.get('project_name', 'Unknown'),
                 'summary': data.get('summary', data.get('text', '')[:50]),
                 'type': data.get('action_type', 'task'),
@@ -313,7 +317,7 @@ def get_urgent_items():
 
 
 def get_today_items():
-    """Get items created today or due today"""
+    """Get items created today"""
     items = []
     try:
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -328,6 +332,7 @@ def get_today_items():
         for msg in messages:
             data = msg.to_dict()
             items.append({
+                'doc_id': msg.id,
                 'project': data.get('project_name', 'Unknown'),
                 'summary': data.get('summary', data.get('text', '')[:50]),
                 'urgency': data.get('urgency', 'medium'),
@@ -340,9 +345,164 @@ def get_today_items():
     return items
 
 
+def get_overdue_items():
+    """Get items past their deadline"""
+    items = []
+    try:
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        
+        messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
+            .where('is_actionable', '==', True)\
+            .where('status', '==', 'pending')\
+            .stream()
+        
+        for msg in messages:
+            data = msg.to_dict()
+            deadline = data.get('deadline')
+            if deadline and deadline < today:
+                items.append({
+                    'doc_id': msg.id,
+                    'project': data.get('project_name', 'Unknown'),
+                    'summary': data.get('summary', data.get('text', '')[:50]),
+                    'deadline': deadline,
+                    'days_overdue': (datetime.now(timezone.utc) - datetime.fromisoformat(deadline.replace('Z', '+00:00'))).days if 'T' in deadline else 0
+                })
+    except Exception as e:
+        print(f"Error getting overdue items: {e}")
+    
+    return items
+
+
+# =============================================================================
+# ACTION FUNCTIONS
+# =============================================================================
+
+def mark_item_done(project_name, item_index, items_cache=None):
+    """Mark an item as done by index"""
+    try:
+        if items_cache and item_index <= len(items_cache):
+            doc_id = items_cache[item_index - 1]['doc_id']
+        else:
+            # Fetch items for project
+            items = get_project_pending_items(project_name, limit=20) if project_name else get_all_pending_items(limit=20)
+            if item_index > len(items):
+                return False, "Item number not found"
+            doc_id = items[item_index - 1]['doc_id']
+        
+        # Update status
+        doc_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages').document(doc_id)
+        doc_ref.update({
+            'status': 'done',
+            'completed_at': datetime.now(timezone.utc).isoformat()
+        })
+        return True, "Item marked as done"
+    except Exception as e:
+        print(f"Error marking item done: {e}")
+        return False, str(e)
+
+
+def assign_item(project_name, item_index, assignee):
+    """Assign an item to someone"""
+    try:
+        items = get_project_pending_items(project_name, limit=20) if project_name else get_all_pending_items(limit=20)
+        if item_index > len(items):
+            return False, "Item number not found"
+        
+        doc_id = items[item_index - 1]['doc_id']
+        doc_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages').document(doc_id)
+        doc_ref.update({
+            'assigned_to': assignee,
+            'assigned_at': datetime.now(timezone.utc).isoformat()
+        })
+        return True, f"Assigned to {assignee}"
+    except Exception as e:
+        print(f"Error assigning item: {e}")
+        return False, str(e)
+
+
+def set_item_urgency(project_name, item_index, urgency):
+    """Set urgency level for an item"""
+    try:
+        items = get_project_pending_items(project_name, limit=20) if project_name else get_all_pending_items(limit=20)
+        if item_index > len(items):
+            return False, "Item number not found"
+        
+        doc_id = items[item_index - 1]['doc_id']
+        doc_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages').document(doc_id)
+        doc_ref.update({'urgency': urgency})
+        return True, f"Set to {urgency} priority"
+    except Exception as e:
+        print(f"Error setting urgency: {e}")
+        return False, str(e)
+
+
+# =============================================================================
+# DAILY DIGEST
+# =============================================================================
+
+def generate_daily_digest():
+    """Generate daily digest message"""
+    overdue = get_overdue_items()
+    urgent = get_urgent_items()
+    today = get_today_items()
+    pending = get_all_pending_items(limit=50)
+    
+    # Get yesterday's new items
+    yesterday_start = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    yesterday_end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    
+    new_yesterday = [p for p in pending if yesterday_start <= p.get('created', '') < yesterday_end]
+    
+    date_str = datetime.now(timezone.utc).strftime('%b %d')
+    
+    digest = f"☀️ *Good Morning - {date_str}*\n"
+    
+    # Overdue
+    if overdue:
+        digest += f"\n🔴 *Overdue ({len(overdue)}):*\n"
+        for item in overdue[:5]:
+            digest += f"• {item['project']}: {item['summary'][:30]}\n"
+    
+    # Urgent
+    if urgent:
+        digest += f"\n⚠️ *Urgent ({len(urgent)}):*\n"
+        for item in urgent[:5]:
+            digest += f"• {item['project']}: {item['summary'][:30]}\n"
+    
+    # Today
+    if today:
+        digest += f"\n📅 *New Today ({len(today)}):*\n"
+        for item in today[:5]:
+            digest += f"• {item['project']}: {item['summary'][:30]}\n"
+    
+    # Summary
+    digest += f"\n📊 *Summary:*\n"
+    digest += f"• Total Pending: {len(pending)}\n"
+    digest += f"• New Yesterday: {len(new_yesterday)}\n"
+    
+    digest += "\n_Type `u` for urgent, `p` for pending_"
+    
+    return digest
+
+
 # =============================================================================
 # SMART COMMAND HANDLER
 # =============================================================================
+
+def match_project(hint, projects):
+    """Fuzzy match project name"""
+    hint_lower = hint.lower().strip()
+    for p in projects:
+        if hint_lower == p['name'].lower():
+            return p
+        if hint_lower in p['name'].lower():
+            return p
+        # Check keywords
+        for kw in p.get('keywords', []):
+            if hint_lower in kw.lower():
+                return p
+    return None
+
 
 def handle_command(message_text, sender, projects, chat_id):
     """Handle Command Group messages with smart responses"""
@@ -362,28 +522,177 @@ def handle_command(message_text, sender, projects, chat_id):
     }
     
     # =========================================================================
+    # SHORTCUTS - Single letter commands
+    # =========================================================================
+    
+    # s = summary
+    if lower_text == 's':
+        lower_text = 'summary'
+    # u = urgent
+    elif lower_text == 'u':
+        lower_text = 'urgent'
+    # p = pending
+    elif lower_text == 'p':
+        lower_text = 'pending'
+    # t = today
+    elif lower_text == 't':
+        lower_text = 'today'
+    # h = help
+    elif lower_text == 'h':
+        lower_text = 'help'
+    # d = digest
+    elif lower_text == 'd':
+        lower_text = 'digest'
+    
+    # l project = list project
+    shortcut_list = re.match(r'^l\s+(.+)$', lower_text)
+    if shortcut_list:
+        lower_text = f"list {shortcut_list.group(1)}"
+    
+    # a project = activity project
+    shortcut_activity = re.match(r'^a\s+(.+)$', lower_text)
+    if shortcut_activity:
+        lower_text = f"activity {shortcut_activity.group(1)}"
+    
+    # =========================================================================
+    # DONE - Mark item as complete
+    # =========================================================================
+    done_match = re.match(r'^done\s+(?:(\S+)\s+)?(\d+)$', lower_text)
+    if done_match:
+        project_hint = done_match.group(1)
+        item_num = int(done_match.group(2))
+        
+        project_name = None
+        if project_hint:
+            matched = match_project(project_hint, projects)
+            project_name = matched['name'] if matched else None
+        
+        success, msg = mark_item_done(project_name, item_num)
+        
+        if success:
+            response_message = f"✅ *Done!* Item #{item_num} marked complete"
+        else:
+            response_message = f"❌ Error: {msg}"
+        
+        classification['command_type'] = 'done'
+        classification['summary'] = f"Marked item {item_num} done"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
+    
+    # =========================================================================
+    # ASSIGN - Assign item to someone
+    # =========================================================================
+    assign_match = re.match(r'^assign\s+(?:(\S+)\s+)?(\d+)\s+(?:to\s+)?(.+)$', lower_text)
+    if assign_match:
+        project_hint = assign_match.group(1)
+        item_num = int(assign_match.group(2))
+        assignee = assign_match.group(3).strip()
+        
+        project_name = None
+        if project_hint:
+            matched = match_project(project_hint, projects)
+            project_name = matched['name'] if matched else None
+        
+        success, msg = assign_item(project_name, item_num, assignee)
+        
+        if success:
+            response_message = f"👤 *Assigned!* Item #{item_num} → {assignee}"
+        else:
+            response_message = f"❌ Error: {msg}"
+        
+        classification['command_type'] = 'assign'
+        classification['summary'] = f"Assigned item {item_num} to {assignee}"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
+    
+    # =========================================================================
+    # ESCALATE - Set to high urgency
+    # =========================================================================
+    escalate_match = re.match(r'^(escalate|urgent|high)\s+(?:(\S+)\s+)?(\d+)$', lower_text)
+    if escalate_match:
+        project_hint = escalate_match.group(2)
+        item_num = int(escalate_match.group(3))
+        
+        project_name = None
+        if project_hint:
+            matched = match_project(project_hint, projects)
+            project_name = matched['name'] if matched else None
+        
+        success, msg = set_item_urgency(project_name, item_num, 'high')
+        
+        if success:
+            response_message = f"🔴 *Escalated!* Item #{item_num} is now HIGH priority"
+        else:
+            response_message = f"❌ Error: {msg}"
+        
+        classification['command_type'] = 'escalate'
+        classification['summary'] = f"Escalated item {item_num}"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
+    
+    # =========================================================================
+    # DEFER - Set to low urgency
+    # =========================================================================
+    defer_match = re.match(r'^(defer|low)\s+(?:(\S+)\s+)?(\d+)$', lower_text)
+    if defer_match:
+        project_hint = defer_match.group(2)
+        item_num = int(defer_match.group(3))
+        
+        project_name = None
+        if project_hint:
+            matched = match_project(project_hint, projects)
+            project_name = matched['name'] if matched else None
+        
+        success, msg = set_item_urgency(project_name, item_num, 'low')
+        
+        if success:
+            response_message = f"⚪ *Deferred!* Item #{item_num} is now LOW priority"
+        else:
+            response_message = f"❌ Error: {msg}"
+        
+        classification['command_type'] = 'defer'
+        classification['summary'] = f"Deferred item {item_num}"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
+    
+    # =========================================================================
+    # DIGEST - Daily digest
+    # =========================================================================
+    if lower_text in ['digest', 'morning', 'daily']:
+        response_message = generate_daily_digest()
+        classification['command_type'] = 'digest'
+        classification['summary'] = "Daily digest requested"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
+    
+    # =========================================================================
     # LIST PROJECT ITEMS - list Agora-gem
     # =========================================================================
     list_match = re.match(r'^list\s+(.+)$', lower_text, re.IGNORECASE)
     if list_match:
         project_hint = list_match.group(1).strip()
-        
-        matched = None
-        for p in projects:
-            if project_hint.lower() in p['name'].lower():
-                matched = p
-                break
+        matched = match_project(project_hint, projects)
         
         if matched:
             items = get_project_pending_items(matched['name'], limit=15)
             
             if items:
-                lines = [f"📋 *{matched['name']}* - Pending Items ({len(items)})\n"]
+                lines = [f"📋 *{matched['name']}* - Pending ({len(items)})\n"]
                 for i, item in enumerate(items, 1):
                     urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
-                    lines.append(f"{i}. {urgency_icon} {item['summary'][:45]}")
-                    if item.get('sender'):
-                        lines.append(f"    └ From: {item['sender'][:20]}")
+                    assigned = f" → {item['assigned_to']}" if item.get('assigned_to') else ""
+                    lines.append(f"{i}. {urgency_icon} {item['summary'][:40]}{assigned}")
+                lines.append(f"\n_`done {matched['name'][:5]} 1` to complete_")
                 response_message = "\n".join(lines)
             else:
                 response_message = f"📋 *{matched['name']}*\n\n✨ No pending items!"
@@ -404,24 +713,19 @@ def handle_command(message_text, sender, projects, chat_id):
     activity_match = re.match(r'^activity\s+(.+)$', lower_text, re.IGNORECASE)
     if activity_match:
         project_hint = activity_match.group(1).strip()
-        
-        matched = None
-        for p in projects:
-            if project_hint.lower() in p['name'].lower():
-                matched = p
-                break
+        matched = match_project(project_hint, projects)
         
         if matched:
             items = get_project_recent_activity(matched['name'], limit=10)
             
             if items:
-                lines = [f"📊 *{matched['name']}* - Last 24h ({len(items)} messages)\n"]
+                lines = [f"📊 *{matched['name']}* - Last 24h ({len(items)})\n"]
                 for item in items:
                     action_icon = "⚡" if item['actionable'] else "💬"
-                    lines.append(f"{action_icon} {item['sender'][:15]}: {item['summary'][:35]}")
+                    lines.append(f"{action_icon} {item['sender'][:12]}: {item['summary'][:30]}")
                 response_message = "\n".join(lines)
             else:
-                response_message = f"📊 *{matched['name']}*\n\n🔇 No activity in the last 24h"
+                response_message = f"📊 *{matched['name']}*\n\n🔇 No activity in 24h"
         else:
             response_message = f"❓ Project '{project_hint}' not found."
         
@@ -436,11 +740,7 @@ def handle_command(message_text, sender, projects, chat_id):
     # =========================================================================
     # QUICK STATUS - Just project name
     # =========================================================================
-    matched_project = None
-    for p in projects:
-        if p['name'].lower() == lower_text or p['name'].lower() in lower_text:
-            matched_project = p
-            break
+    matched_project = match_project(lower_text, projects)
     
     if matched_project and len(lower_text.split()) <= 3:
         stats = get_project_stats(matched_project['name'])
@@ -451,57 +751,54 @@ def handle_command(message_text, sender, projects, chat_id):
 
 📍 {matched_project.get('location', 'N/A')} | 👤 {matched_project.get('client', 'N/A')}
 
-📋 *Pending Tasks:* {stats['pending_tasks']}
-🔴 *High Urgency:* {stats['high_urgency']}
-💬 *Messages (24h):* {stats['recent_messages']}
-📧 *Emails (24h):* {stats['recent_emails']}
+📋 Pending: {stats['pending_tasks']} | 🔴 Urgent: {stats['high_urgency']}
+💬 Messages (24h): {stats['recent_messages']}
 
-🕐 Last Activity: {stats['last_activity'][:10] if stats['last_activity'] else 'N/A'}
-
-_Type `list {matched_project['name']}` to see all items_"""
+_`l {matched_project['name'][:6]}` for items_"""
         
         classification['command_type'] = 'project_status'
         classification['project_name'] = matched_project['name']
-        classification['summary'] = f"Status query for {matched_project['name']}"
+        classification['summary'] = f"Status for {matched_project['name']}"
     
     # =========================================================================
-    # TODAY - What's happening today
+    # TODAY
     # =========================================================================
     elif lower_text in ['today', 'اليوم', "what's today", 'whats today']:
         items = get_today_items()
         
         if items:
-            lines = [f"📅 *Today's Items* ({len(items)})\n"]
-            for item in items[:10]:
+            lines = [f"📅 *Today* ({len(items)})\n"]
+            for i, item in enumerate(items[:10], 1):
                 urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
                 status_icon = "✅" if item['status'] == 'done' else "⏳"
-                lines.append(f"{urgency_icon} {status_icon} *{item['project']}*: {item['summary'][:40]}")
+                lines.append(f"{i}. {urgency_icon}{status_icon} *{item['project']}*: {item['summary'][:35]}")
             response_message = "\n".join(lines)
         else:
-            response_message = "📅 *Today*\n\n✨ No new actionable items today!"
+            response_message = "📅 *Today*\n\n✨ No actionable items today!"
         
         classification['command_type'] = 'today'
-        classification['summary'] = "Today's items query"
+        classification['summary'] = "Today's items"
     
     # =========================================================================
-    # URGENT - High priority items
+    # URGENT
     # =========================================================================
     elif lower_text in ['urgent', 'عاجل', 'high priority', 'critical']:
         items = get_urgent_items()
         
         if items:
-            lines = [f"🔴 *Urgent Items* ({len(items)})\n"]
-            for item in items[:10]:
-                lines.append(f"• *{item['project']}*: {item['summary'][:40]}")
+            lines = [f"🔴 *Urgent* ({len(items)})\n"]
+            for i, item in enumerate(items[:10], 1):
+                lines.append(f"{i}. *{item['project']}*: {item['summary'][:35]}")
+            lines.append(f"\n_`done 1` to complete_")
             response_message = "\n".join(lines)
         else:
-            response_message = "🔴 *Urgent Items*\n\n✨ No high-urgency items!"
+            response_message = "🔴 *Urgent*\n\n✨ No urgent items!"
         
         classification['command_type'] = 'urgent'
-        classification['summary'] = "Urgent items query"
+        classification['summary'] = "Urgent items"
     
     # =========================================================================
-    # PENDING - All pending tasks
+    # PENDING
     # =========================================================================
     elif lower_text in ['pending', 'معلق', 'open', 'tasks', 'مهام']:
         items = get_all_pending_items()
@@ -514,80 +811,81 @@ _Type `list {matched_project['name']}` to see all items_"""
                     by_project[proj] = []
                 by_project[proj].append(item)
             
-            lines = [f"📋 *Pending Items* ({len(items)})\n"]
+            lines = [f"📋 *Pending* ({len(items)})\n"]
             for proj, proj_items in list(by_project.items())[:5]:
                 lines.append(f"\n*{proj}* ({len(proj_items)})")
                 for item in proj_items[:3]:
                     urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
-                    lines.append(f"  {urgency_icon} {item['summary'][:35]}")
+                    lines.append(f"  {urgency_icon} {item['summary'][:30]}")
             
-            lines.append(f"\n_Type `list ProjectName` for full list_")
+            lines.append(f"\n_`l ProjectName` for full list_")
             response_message = "\n".join(lines)
         else:
-            response_message = "📋 *Pending Items*\n\n✨ All clear! No pending tasks."
+            response_message = "📋 *Pending*\n\n✨ All clear!"
         
         classification['command_type'] = 'pending'
-        classification['summary'] = "Pending items query"
+        classification['summary'] = "Pending items"
     
     # =========================================================================
-    # SUMMARY - Weekly/Daily summary
+    # SUMMARY
     # =========================================================================
-    elif any(kw in lower_text for kw in ['summary', 'summarize', 'ملخص', 'report']):
+    elif lower_text in ['summary', 'summarize', 'ملخص', 'report']:
         pending = get_all_pending_items()
         urgent = get_urgent_items()
         today = get_today_items()
         
-        response_message = f"""📊 *Command Center Summary*
+        response_message = f"""📊 *Summary*
         
 🔴 Urgent: {len(urgent)}
 📋 Pending: {len(pending)}
 📅 Today: {len(today)}
 
-Top Priorities:"""
+Top Items:"""
         
         for item in urgent[:3]:
-            response_message += f"\n• *{item['project']}*: {item['summary'][:30]}"
+            response_message += f"\n• *{item['project']}*: {item['summary'][:25]}"
         
         if not urgent:
             response_message += "\n✨ No urgent items!"
         
         classification['command_type'] = 'summary'
-        classification['summary'] = "Summary requested"
+        classification['summary'] = "Summary"
     
     # =========================================================================
-    # HELP - Show available commands
+    # HELP
     # =========================================================================
     elif lower_text in ['help', 'مساعدة', 'commands', '?']:
-        response_message = """🤖 *Command Center Help*
+        response_message = """🤖 *Commands*
 
-*Quick Status:*
-• `ProjectName` - Get project snapshot
-• `today` - Today's items
-• `urgent` - High priority items
-• `pending` - All pending tasks
-• `summary` - Overview report
+*Quick (shortcuts):*
+• `s` - Summary
+• `u` - Urgent items
+• `p` - Pending items
+• `t` - Today
+• `d` - Daily digest
+• `l agora` - List Agora items
+• `a agora` - Agora activity
 
-*Detailed Lists:*
-• `list ProjectName` - All pending items
-• `activity ProjectName` - Last 24h activity
+*Actions:*
+• `done 1` - Complete item #1
+• `done agora 1` - Complete Agora #1
+• `assign 1 to Ahmed` - Assign item
+• `escalate 1` - Make urgent
+• `defer 1` - Make low priority
 
-*Create Tasks:*
-• `task: ProjectName - Description`
-• `note: ProjectName - Info to log`
+*Create:*
+• `task: Agora - Description`
+• `note: Agora - Info to log`
 
-*Queries:*
-• `what's pending on ProjectName?`
-
-*Examples:*
-• `Agora-gem`
-• `list Agora-gem`
-• `task: Agora-gem - Submit shop drawings`"""
+*Query:*
+• `Agora` - Project status
+• `what's pending on Agora?`"""
         
         classification['command_type'] = 'help'
-        classification['summary'] = "Help requested"
+        classification['summary'] = "Help"
     
     # =========================================================================
-    # TASK CREATION - task: Project - Description
+    # TASK CREATION
     # =========================================================================
     elif lower_text.startswith('task:'):
         task_match = re.match(r'task:\s*(.+?)\s*-\s*(.+)', text, re.IGNORECASE)
@@ -595,23 +893,20 @@ Top Priorities:"""
             project_hint = task_match.group(1).strip()
             task_desc = task_match.group(2).strip()
             
-            matched = None
-            for p in projects:
-                if project_hint.lower() in p['name'].lower():
-                    matched = p['name']
-                    break
+            matched = match_project(project_hint, projects)
+            project_name = matched['name'] if matched else None
             
-            classification['project_name'] = matched
+            classification['project_name'] = project_name
             classification['is_actionable'] = True
             classification['action_type'] = 'task'
             classification['summary'] = task_desc
             classification['urgency'] = 'medium'
             classification['command_type'] = 'create_task'
             
-            response_message = f"✅ *Task Created*\n\n📁 Project: {matched or 'Unassigned'}\n📝 {task_desc}"
+            response_message = f"✅ *Task Created*\n\n📁 {project_name or 'Unassigned'}\n📝 {task_desc}"
     
     # =========================================================================
-    # NOTE - Log information
+    # NOTE
     # =========================================================================
     elif lower_text.startswith('note:'):
         note_match = re.match(r'note:\s*(.+?)\s*-\s*(.+)', text, re.IGNORECASE)
@@ -619,61 +914,53 @@ Top Priorities:"""
             project_hint = note_match.group(1).strip()
             note_text = note_match.group(2).strip()
             
-            matched = None
-            for p in projects:
-                if project_hint.lower() in p['name'].lower():
-                    matched = p['name']
-                    break
+            matched = match_project(project_hint, projects)
+            project_name = matched['name'] if matched else None
             
-            classification['project_name'] = matched
+            classification['project_name'] = project_name
             classification['is_actionable'] = False
             classification['action_type'] = 'note'
             classification['summary'] = note_text
             classification['command_type'] = 'create_note'
             
-            response_message = f"📝 *Note Logged*\n\n📁 Project: {matched or 'General'}\n💬 {note_text}"
+            response_message = f"📝 *Note Logged*\n\n📁 {project_name or 'General'}\n💬 {note_text}"
     
     # =========================================================================
-    # STATUS QUERY - what's pending on X (now with items!)
+    # STATUS QUERY
     # =========================================================================
     elif re.search(r"(what'?s?|show|get)\s+(pending|status|open|items)\s+(on|for|in)\s+(.+)", lower_text):
         query_match = re.search(r"(what'?s?|show|get)\s+(pending|status|open|items)\s+(on|for|in)\s+(.+)", lower_text)
         if query_match:
             project_hint = query_match.group(4).strip().rstrip('?')
-            
-            matched = None
-            for p in projects:
-                if project_hint.lower() in p['name'].lower():
-                    matched = p
-                    break
+            matched = match_project(project_hint, projects)
             
             if matched:
                 items = get_project_pending_items(matched['name'], limit=10)
                 
                 if items:
-                    lines = [f"📋 *{matched['name']}* - Pending ({len(items)})\n"]
+                    lines = [f"📋 *{matched['name']}* ({len(items)})\n"]
                     for i, item in enumerate(items, 1):
                         urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
-                        lines.append(f"{i}. {urgency_icon} {item['summary'][:40]}")
+                        lines.append(f"{i}. {urgency_icon} {item['summary'][:35]}")
+                    lines.append(f"\n_`done {matched['name'][:5]} 1` to complete_")
                     response_message = "\n".join(lines)
                 else:
                     response_message = f"📋 *{matched['name']}*\n\n✨ No pending items!"
             else:
-                response_message = f"❓ Project '{project_hint}' not found. Try exact name."
+                response_message = f"❓ '{project_hint}' not found."
             
             classification['command_type'] = 'query_status'
             classification['project_name'] = matched['name'] if matched else None
-            classification['summary'] = f"Status query for {project_hint}"
+            classification['summary'] = f"Query for {project_hint}"
     
     # =========================================================================
-    # FALLBACK - Unrecognized command
+    # FALLBACK
     # =========================================================================
     else:
         classification['is_command'] = False
         classification['action_type'] = 'info'
         classification['summary'] = text[:100]
     
-    # Send response if we have one
     if response_message and chat_id:
         send_whatsapp_message(chat_id, response_message)
     
@@ -684,32 +971,91 @@ Top Priorities:"""
 # MESSAGE CLASSIFICATION
 # =============================================================================
 
+def extract_deadline(text):
+    """Extract deadline from message text"""
+    lower = text.lower()
+    today = datetime.now(timezone.utc)
+    
+    # Today/tomorrow
+    if 'today' in lower or 'اليوم' in lower:
+        return today.strftime('%Y-%m-%d')
+    if 'tomorrow' in lower or 'بكره' in lower or 'غدا' in lower:
+        return (today + timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # Day names
+    days = {'sunday': 6, 'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3, 'friday': 4, 'saturday': 5,
+            'الأحد': 6, 'الاثنين': 0, 'الثلاثاء': 1, 'الأربعاء': 2, 'الخميس': 3, 'الجمعة': 4, 'السبت': 5}
+    for day, num in days.items():
+        if day in lower:
+            days_ahead = num - today.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            return (today + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
+    
+    # Date patterns
+    date_match = re.search(r'(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?', text)
+    if date_match:
+        day = int(date_match.group(1))
+        month = int(date_match.group(2))
+        year = int(date_match.group(3)) if date_match.group(3) else today.year
+        if year < 100:
+            year += 2000
+        try:
+            return f"{year}-{month:02d}-{day:02d}"
+        except:
+            pass
+    
+    return None
+
+
+def extract_assignee(text):
+    """Extract assigned person from message"""
+    # @mentions
+    mention = re.search(r'@(\w+)', text)
+    if mention:
+        return mention.group(1)
+    
+    # "to Ahmed", "for Mohamed"
+    assign_match = re.search(r'(?:to|for|assign(?:ed)?(?:\s+to)?)\s+([A-Z][a-z]+)', text)
+    if assign_match:
+        return assign_match.group(1)
+    
+    return None
+
+
 def classify_message(message_text, sender, group_name, projects, group_config, chat_id=None):
     """Use Vertex AI to classify WhatsApp message"""
     mapped_project = group_config.get('project') if group_config else None
     group_type = group_config.get('type', 'internal') if group_config else 'internal'
     group_priority = group_config.get('priority', 'medium') if group_config else 'medium'
     
-    # Handle Command Group
     if group_type == 'command':
         return handle_command(message_text, sender, projects, chat_id)
     
+    # Extract deadline and assignee
+    deadline = extract_deadline(message_text)
+    assignee = extract_assignee(message_text)
+    
     if not VERTEX_AI_ENABLED:
-        return fallback_classify(message_text, group_name, projects, mapped_project, group_type, group_priority)
+        result = fallback_classify(message_text, group_name, projects, mapped_project, group_type, group_priority)
+        if deadline:
+            result['deadline'] = deadline
+        if assignee:
+            result['assigned_to'] = assignee
+        return result
     
     try:
         model = GenerativeModel('gemini-1.5-flash-001')
         
         project_list = "\n".join([f"- {p['name']} (Client: {p.get('client', 'N/A')})" for p in projects])
-        project_hint = f"\nNOTE: This group is mapped to project '{mapped_project}'. Use this unless message clearly refers to a different project." if mapped_project else ""
+        project_hint = f"\nNOTE: This group is mapped to project '{mapped_project}'." if mapped_project else ""
         
         prompt = f"""Classify this WhatsApp message for a construction company.
 
-REGISTERED PROJECTS:
+PROJECTS:
 {project_list}
 
 GROUP TYPE: {group_type}
-GROUP PRIORITY: {group_priority}
 {project_hint}
 
 MESSAGE:
@@ -717,24 +1063,16 @@ Group: {group_name}
 From: {sender}
 Text: {message_text[:1500]}
 
-RESPOND IN JSON ONLY:
+RESPOND JSON ONLY:
 {{
-  "project_name": "exact project name from list, or null",
+  "project_name": "exact project name or null",
   "is_actionable": true/false,
   "action_type": "decision_needed|approval_request|task|info|question|deadline|delivery|invoice|none",
-  "summary": "one line summary in English",
+  "summary": "one line English summary",
   "urgency": "high|medium|low",
-  "assigned_to": "person name if @mentioned or clearly assigned, else null",
-  "deadline": "extracted deadline if mentioned, else null",
-  "channel_type": "{group_type}"
+  "assigned_to": "person name or null",
+  "deadline": "YYYY-MM-DD or null"
 }}
-
-RULES:
-- Match project by group name, client name, or message content
-- is_actionable = true if someone needs to do something
-- action_type: decision_needed for choices, approval_request for sign-offs, task for assignments
-- Urgency: high if urgent/ASAP/deadline soon, medium for normal requests, low for FYI
-- Summarize in English even if message is Arabic
 """
         
         response = model.generate_content(prompt)
@@ -746,11 +1084,21 @@ RULES:
             if not result.get('project_name') and mapped_project and mapped_project != '__general__':
                 result['project_name'] = mapped_project
             result['channel_type'] = group_type
+            # Override with extracted values if AI missed them
+            if deadline and not result.get('deadline'):
+                result['deadline'] = deadline
+            if assignee and not result.get('assigned_to'):
+                result['assigned_to'] = assignee
             return result
     except Exception as e:
         print(f"AI classification error: {e}")
     
-    return fallback_classify(message_text, group_name, projects, mapped_project, group_type, group_priority)
+    result = fallback_classify(message_text, group_name, projects, mapped_project, group_type, group_priority)
+    if deadline:
+        result['deadline'] = deadline
+    if assignee:
+        result['assigned_to'] = assignee
+    return result
 
 
 def fallback_classify(message_text, group_name, projects, mapped_project=None, group_type='internal', group_priority='medium'):
@@ -770,7 +1118,7 @@ def fallback_classify(message_text, group_name, projects, mapped_project=None, g
     is_actionable = any(kw in lower_text for kw in action_keywords)
     
     urgency = group_priority
-    if any(kw in lower_text for kw in ['urgent', 'asap', 'immediately', 'today']):
+    if any(kw in lower_text for kw in ['urgent', 'asap', 'immediately', 'today', 'عاجل']):
         urgency = 'high'
     
     action_type = 'info'
@@ -794,7 +1142,7 @@ def fallback_classify(message_text, group_name, projects, mapped_project=None, g
 
 
 # =============================================================================
-# SAVE & AUTO-ADD FUNCTIONS
+# SAVE & AUTO-ADD
 # =============================================================================
 
 def save_message(message_data, classification):
@@ -825,10 +1173,10 @@ def save_message(message_data, classification):
         }
         
         collection_path.add(doc_data)
-        print(f"Saved message: {doc_data['summary'][:50]}")
+        print(f"Saved: {doc_data['summary'][:50]}")
         return True
     except Exception as e:
-        print(f"Error saving message: {e}")
+        print(f"Error saving: {e}")
         return False
 
 
@@ -849,13 +1197,12 @@ def auto_add_group(group_name, group_id):
                 'autoExtractTasks': True,
                 'createdAt': datetime.now(timezone.utc).isoformat()
             })
-            print(f"Auto-added group: {group_name} ({group_id})")
+            print(f"Auto-added group: {group_name}")
         else:
             existing_data = existing.to_dict()
             existing_name = existing_data.get('name', '')
             if group_name and not group_name.replace('@g.us', '').isdigit() and existing_name.replace('@g.us', '').isdigit():
                 group_ref.update({'name': group_name})
-                print(f"Updated group name: {existing_name} -> {group_name}")
     except Exception as e:
         print(f"Error auto-adding group: {e}")
 
@@ -866,7 +1213,7 @@ def auto_add_group(group_name, group_id):
 
 @functions_framework.http
 def whatsapp_webhook(request):
-    """Handle incoming WhatsApp webhooks from Waha"""
+    """Handle incoming WhatsApp webhooks"""
     if request.method == 'OPTIONS':
         return ('', 204, {
             'Access-Control-Allow-Origin': '*',
@@ -878,11 +1225,10 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v3.1 - List & Activity Commands',
-            'features': ['group_mapping', 'command_group', 'waha_api_lookup', 'auto_reply', 'quick_status', 'list_items', 'activity', 'today', 'urgent', 'pending'],
+            'status': 'WhatsApp Webhook v4.0 - Actions & Shortcuts',
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'deadline_extract', 'assignee_extract'],
             'waha_url': WAHA_API_URL,
-            'vertex_ai_enabled': VERTEX_AI_ENABLED,
-            'firebase_project': FIREBASE_PROJECT
+            'vertex_ai': VERTEX_AI_ENABLED
         }), 200, headers)
     
     if request.method == 'POST':
@@ -902,24 +1248,18 @@ def whatsapp_webhook(request):
             sender_name = _data.get('notifyName', '') or payload.get('from', '').split('@')[0]
             sender = payload.get('from', '')
             
-            # Skip messages from self (the bot)
             if payload.get('fromMe', False):
                 return (jsonify({'status': 'skipped', 'reason': 'own message'}), 200, headers)
             
             group_name = ''
             if is_group:
                 group_name = get_cached_group_name(chat_id)
-                print(f"Cached group name for {chat_id}: {group_name}")
-                
                 if not group_name or group_name.replace('@g.us', '').isdigit():
                     waha_name = get_group_name_from_waha(chat_id)
                     if waha_name:
                         group_name = waha_name
-                        print(f"Got group name from Waha: {group_name}")
-                
                 if not group_name:
                     group_name = chat_id.replace('@g.us', '')
-                    print(f"Using fallback group name: {group_name}")
             
             message_data = {
                 'id': payload.get('id', {}).get('id', '') if isinstance(payload.get('id'), dict) else payload.get('id', ''),
@@ -961,14 +1301,10 @@ def whatsapp_webhook(request):
             
             return (jsonify({
                 'status': 'processed',
-                'group_name': group_name,
-                'sender_name': sender_name,
-                'chat_id': chat_id,
+                'group': group_name,
                 'project': classification.get('project_name'),
                 'actionable': classification.get('is_actionable'),
-                'action_type': classification.get('action_type'),
-                'channel_type': classification.get('channel_type'),
-                'command_type': classification.get('command_type'),
+                'command': classification.get('command_type'),
                 'summary': classification.get('summary', '')[:50]
             }), 200, headers)
             
