@@ -117,11 +117,16 @@ def send_whatsapp_message(chat_id, message):
     return False
 
 
-def generate_signed_url(gcs_path, expiration_minutes=60):
+def generate_signed_url(gcs_path, expiration_minutes=60, inline=True):
     """Generate a signed URL using IAM signBlob API (no private key needed)
     
     This works in Cloud Run without a service account key file by using
     the IAM Credentials API to sign the URL server-side.
+    
+    Args:
+        gcs_path: Path to file in GCS bucket
+        expiration_minutes: URL validity period
+        inline: If True, file opens in browser; if False, forces download
     
     Requires: roles/iam.serviceAccountTokenCreator on the service account
     """
@@ -136,6 +141,14 @@ def generate_signed_url(gcs_path, expiration_minutes=60):
         credentials, project = google.auth.default()
         credentials.refresh(google_requests.Request())
         
+        # Determine content disposition based on inline flag
+        # inline = opens in browser, attachment = forces download
+        filename = gcs_path.split('/')[-1]
+        if inline:
+            content_disposition = f'inline; filename="{filename}"'
+        else:
+            content_disposition = f'attachment; filename="{filename}"'
+        
         # Generate signed URL using IAM signBlob API
         # Passing service_account_email and access_token triggers the
         # IAM Credentials API instead of local signing
@@ -144,7 +157,8 @@ def generate_signed_url(gcs_path, expiration_minutes=60):
             expiration=timedelta(minutes=expiration_minutes),
             method="GET",
             service_account_email=credentials.service_account_email,
-            access_token=credentials.token
+            access_token=credentials.token,
+            response_disposition=content_disposition
         )
         return url, None
     except Exception as e:
@@ -168,8 +182,8 @@ def get_file_size_mb(gcs_path):
 def send_whatsapp_file(chat_id, gcs_path, filename):
     """Send a file from GCS via WhatsApp
     
-    v4.10 Strategy:
-    - Free Waha: Always send signed download link (sendFile not available)
+    v4.11 Strategy:
+    - Free Waha: Send signed link that opens INLINE in browser (view first, then download)
     - Waha Plus: Use sendFile API with base64/URL (when WAHA_PLUS_ENABLED=true)
     
     To enable Waha Plus file sending, set environment variable:
@@ -194,30 +208,30 @@ def send_whatsapp_file(chat_id, gcs_path, filename):
     file_size_mb = blob.size / (1024 * 1024)
     
     # ==========================================================================
-    # FREE WAHA: Send download link
+    # FREE WAHA: Send view link (opens inline in browser)
     # ==========================================================================
     if not WAHA_PLUS_ENABLED:
-        print(f"Free Waha mode: Sending download link for {filename}")
+        print(f"Free Waha mode: Sending view link for {filename}")
         
-        # Generate signed URL (valid for 60 minutes)
-        signed_url, err = generate_signed_url(gcs_path, expiration_minutes=60)
+        # Generate signed URL with inline disposition (opens in browser)
+        signed_url, err = generate_signed_url(gcs_path, expiration_minutes=60, inline=True)
         
         if not signed_url:
-            return False, f"Could not generate download link: {err}"
+            return False, f"Could not generate link: {err}"
         
         # Format nice message with file info
         size_str = f"{file_size_mb:.1f}MB" if file_size_mb >= 1 else f"{int(file_size_mb * 1024)}KB"
         
-        download_msg = f"""📁 *{filename}*
+        view_msg = f"""📁 *{filename}*
 📊 Size: {size_str}
 
-🔗 *Download Link* (valid 1 hour):
+👁️ *View Link* (valid 1 hour):
 {signed_url}
 
-_Tap link to download directly_"""
+_Tap to view in browser - download from there_"""
         
-        if send_whatsapp_message(chat_id, download_msg):
-            return True, "Download link sent"
+        if send_whatsapp_message(chat_id, view_msg):
+            return True, "View link sent"
         else:
             return False, "Failed to send message"
     
@@ -253,9 +267,9 @@ _Tap link to download directly_"""
         try:
             # Files > 64MB: Send link only (WhatsApp limit)
             if blob.size > 64 * 1024 * 1024:
-                signed_url, _ = generate_signed_url(gcs_path, 60)
+                signed_url, _ = generate_signed_url(gcs_path, 60, inline=True)
                 if signed_url:
-                    msg = f"📁 *{filename}*\n\n⚠️ File too large ({file_size_mb:.1f}MB)\n\n🔗 Download:\n{signed_url}"
+                    msg = f"📁 *{filename}*\n\n⚠️ File too large ({file_size_mb:.1f}MB)\n\n👁️ View:\n{signed_url}"
                     send_whatsapp_message(chat_id, msg)
                     return True, "Sent as link (file too large)"
                 return False, "File too large"
@@ -276,7 +290,7 @@ _Tap link to download directly_"""
                 }
             else:
                 # Files 15-64MB: Use signed URL
-                signed_url, err = generate_signed_url(gcs_path, 10)
+                signed_url, err = generate_signed_url(gcs_path, 10, inline=False)
                 if not signed_url:
                     return False, f"URL error: {err}"
                 
@@ -297,22 +311,22 @@ _Tap link to download directly_"""
                 return True, "File sent"
             else:
                 print(f"sendFile failed: {response.status_code} - {response.text}")
-                # Fallback to download link
-                signed_url, _ = generate_signed_url(gcs_path, 30)
+                # Fallback to view link
+                signed_url, _ = generate_signed_url(gcs_path, 30, inline=True)
                 if signed_url:
-                    msg = f"📁 *{filename}*\n\n🔗 Download:\n{signed_url}"
+                    msg = f"📁 *{filename}*\n\n👁️ View:\n{signed_url}"
                     send_whatsapp_message(chat_id, msg)
-                    return True, "Sent as download link"
+                    return True, "Sent as view link"
                 return False, f"Send failed: {response.status_code}"
                 
         except Exception as e:
             print(f"Error: {e}")
             # Fallback
-            signed_url, _ = generate_signed_url(gcs_path, 30)
+            signed_url, _ = generate_signed_url(gcs_path, 30, inline=True)
             if signed_url:
-                msg = f"📁 *{filename}*\n\n🔗 Download:\n{signed_url}"
+                msg = f"📁 *{filename}*\n\n👁️ View:\n{signed_url}"
                 send_whatsapp_message(chat_id, msg)
-                return True, "Sent as download link"
+                return True, "Sent as view link"
             return False, str(e)
 
 
@@ -936,7 +950,7 @@ def handle_command(message_text, sender, projects, chat_id):
             if not gcs_path:
                 response_message = "❌ File path not available."
             else:
-                # Send file (will send download link in free mode)
+                # Send file (will send view link in free mode)
                 success, msg = send_whatsapp_file(chat_id, gcs_path, filename)
                 
                 if success:
@@ -983,7 +997,7 @@ def handle_command(message_text, sender, projects, chat_id):
                 if folder:
                     lines.append(f"   📁 {folder}")
             
-            lines.append(f"\n_Type `g 1` to get download link_")
+            lines.append(f"\n_Type `g 1` to view file_")
             response_message = "\n".join(lines)
         else:
             response_message = f"""📄 *Search: {search_query}*
@@ -1317,7 +1331,7 @@ Top Items:"""
 *Documents:*
 `f agora floor drawing` - search
 `find: shop drawing` - search all
-`g 1` - get download link #1
+`g 1` - view file #1
 
 *Actions:*
 `done 1` - complete #1
@@ -1667,9 +1681,9 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.10 - IAM SignBlob Fix',
+            'status': 'WhatsApp Webhook v4.11 - Inline View',
             'waha_plus': WAHA_PLUS_ENABLED,
-            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'download_links', 'iam_signblob'],
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'inline_view', 'iam_signblob'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
             'search_engine': ENGINE_ID
