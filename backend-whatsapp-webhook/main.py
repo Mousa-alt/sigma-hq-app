@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 import functions_framework
 from flask import jsonify
 from google.cloud import firestore
+from google.cloud import discoveryengine_v1 as discoveryengine
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
@@ -17,6 +18,10 @@ APP_ID = os.environ.get('APP_ID', 'sigma-hq-production')
 WAHA_API_URL = os.environ.get('WAHA_API_URL', 'http://34.78.137.109:3000')
 WAHA_API_KEY = os.environ.get('WAHA_API_KEY', 'sigma2026')
 COMMAND_GROUP_ID = os.environ.get('COMMAND_GROUP_ID', '')
+
+# Vertex AI Search Config
+VERTEX_LOCATION = "global"
+ENGINE_ID = "sigma-search_1767650825639"
 
 # Initialize clients
 db = firestore.Client(project=FIREBASE_PROJECT)
@@ -375,67 +380,81 @@ def get_overdue_items():
 
 
 # =============================================================================
-# DOCUMENT SEARCH
+# DOCUMENT SEARCH - Using Vertex AI Search
 # =============================================================================
 
-def search_documents(query, project_name=None, limit=10):
-    """Search for documents in synced files"""
+def search_documents(query, project_name=None, limit=5):
+    """Search for documents using Vertex AI Search (Discovery Engine)"""
     results = []
-    keywords = query.lower().split()
     
     try:
-        # Try multiple collection names where files might be stored
-        collections_to_try = [
-            ('synced_files', None),
-            ('files', None),
-            ('documents', None),
-        ]
+        client = discoveryengine.SearchServiceClient()
+        serving_config = f"projects/{GCP_PROJECT}/locations/{VERTEX_LOCATION}/collections/default_collection/engines/{ENGINE_ID}/servingConfigs/default_search"
         
-        for coll_name, parent in collections_to_try:
-            try:
-                if parent:
-                    coll_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection(parent).document('files').collection(coll_name)
+        # Add project name to query if specified
+        search_query = f"{query} {project_name}" if project_name else query
+        
+        request = discoveryengine.SearchRequest(
+            serving_config=serving_config,
+            query=search_query,
+            page_size=limit,
+            content_search_spec=discoveryengine.SearchRequest.ContentSearchSpec(
+                snippet_spec=discoveryengine.SearchRequest.ContentSearchSpec.SnippetSpec(
+                    return_snippet=True,
+                    max_snippet_count=1
+                ),
+            ),
+        )
+        
+        response = client.search(request)
+        
+        for result in response.results:
+            doc = result.document
+            doc_data = {
+                'name': '',
+                'path': '',
+                'project': '',
+                'drive_id': '',
+                'drive_link': '',
+                'snippets': []
+            }
+            
+            if doc.derived_struct_data:
+                struct = dict(doc.derived_struct_data)
+                link = struct.get('link', '')
+                title = struct.get('title', '')
+                
+                # Extract filename from link or title
+                if link:
+                    doc_data['drive_link'] = link
+                    # Extract path parts
+                    parts = link.replace('gs://sigma-docs-repository/', '').split('/')
+                    if parts:
+                        doc_data['name'] = parts[-1] if parts[-1] else title
+                        doc_data['path'] = '/'.join(parts[:-1]) if len(parts) > 1 else ''
+                        doc_data['project'] = parts[0] if parts else ''
                 else:
-                    coll_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection(coll_name)
+                    doc_data['name'] = title
                 
-                # Get all files and filter by keywords
-                docs = coll_ref.limit(500).stream()
+                # Get snippets
+                for snippet in struct.get('snippets', []):
+                    if isinstance(snippet, dict) and snippet.get('snippet'):
+                        doc_data['snippets'].append(snippet.get('snippet'))
                 
-                for doc in docs:
-                    data = doc.to_dict()
-                    file_name = data.get('name', '') or data.get('file_name', '') or data.get('title', '')
-                    file_path = data.get('path', '') or data.get('folder_path', '')
-                    file_project = data.get('project', '') or data.get('project_name', '')
-                    
-                    # Filter by project if specified
-                    if project_name and file_project and project_name.lower() not in file_project.lower():
+                # Filter by project if specified
+                if project_name:
+                    project_lower = project_name.lower().replace(' ', '_').replace('-', '_')
+                    link_lower = link.lower().replace('-', '_')
+                    if project_lower not in link_lower:
                         continue
-                    
-                    # Check if keywords match
-                    searchable = f"{file_name} {file_path} {file_project}".lower()
-                    if all(kw in searchable for kw in keywords):
-                        results.append({
-                            'name': file_name,
-                            'path': file_path,
-                            'project': file_project,
-                            'drive_id': data.get('drive_id', '') or data.get('id', ''),
-                            'drive_link': data.get('drive_link', '') or data.get('webViewLink', ''),
-                            'mime_type': data.get('mime_type', '') or data.get('mimeType', ''),
-                            'modified': data.get('modified_time', '') or data.get('modifiedTime', '')
-                        })
-                        
-                        if len(results) >= limit:
-                            break
                 
-                if results:
-                    break
-                    
-            except Exception as e:
-                print(f"Error searching {coll_name}: {e}")
-                continue
+                results.append(doc_data)
+        
+        print(f"Vertex AI Search returned {len(results)} results for: {search_query}")
         
     except Exception as e:
-        print(f"Error in document search: {e}")
+        print(f"Vertex AI Search error: {e}")
+        # Don't fall back to Firestore - just return empty
     
     return results
 
@@ -630,7 +649,7 @@ def handle_command(message_text, sender, projects, chat_id):
         lower_text = f"find {shortcut_find.group(1)}"
     
     # =========================================================================
-    # DOCUMENT SEARCH - find: query or find query
+    # DOCUMENT SEARCH - find: query or find query (Using Vertex AI)
     # =========================================================================
     find_match = re.match(r'^(?:find|search|doc|docs)[:\s]+(.+)$', lower_text, re.IGNORECASE)
     if find_match:
@@ -650,28 +669,31 @@ def handle_command(message_text, sender, projects, chat_id):
         if results:
             lines = [f"📄 *Found {len(results)} documents*\n"]
             for i, doc in enumerate(results, 1):
-                name = doc['name'][:35] if doc['name'] else 'Unnamed'
-                folder = doc['path'].split('/')[-1] if doc['path'] else ''
+                name = doc['name'][:40] if doc['name'] else 'Unnamed'
+                folder = doc['path'] if doc['path'] else ''
                 
                 lines.append(f"{i}. *{name}*")
                 if folder:
                     lines.append(f"   📁 {folder}")
                 if doc.get('drive_link'):
-                    lines.append(f"   🔗 {doc['drive_link']}")
-                elif doc.get('drive_id'):
-                    lines.append(f"   🔗 https://drive.google.com/file/d/{doc['drive_id']}")
+                    # Convert gs:// to viewable link if needed
+                    link = doc['drive_link']
+                    if link.startswith('gs://'):
+                        # It's a GCS link, provide bucket path
+                        lines.append(f"   📂 {link.replace('gs://sigma-docs-repository/', '')}")
+                    else:
+                        lines.append(f"   🔗 {link}")
             
             response_message = "\n".join(lines)
         else:
-            # If no results in Firestore, suggest checking Drive directly
             response_message = f"""📄 *Search: {search_query}*
 
-🔍 No documents found in index.
+🔍 No documents found.
 
 Try:
-• Check Google Drive directly
-• Use different keywords
-• Make sure the file has been synced"""
+• Different keywords
+• Check spelling
+• Broader search terms"""
         
         classification['command_type'] = 'find'
         classification['summary'] = f"Search: {search_query}"
@@ -1344,10 +1366,11 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.1 - Document Search',
-            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'find_docs'],
+            'status': 'WhatsApp Webhook v4.2 - Vertex AI Search',
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search'],
             'waha_url': WAHA_API_URL,
-            'vertex_ai': VERTEX_AI_ENABLED
+            'vertex_ai': VERTEX_AI_ENABLED,
+            'search_engine': ENGINE_ID
         }), 200, headers)
     
     if request.method == 'POST':
