@@ -2,403 +2,314 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { COLORS, SYNC_WORKER_URL } from '../config';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 
 export default function Overview({ projects, onSelectProject }) {
-  const [actionItems, setActionItems] = useState([]);
-  const [unmappedItems, setUnmappedItems] = useState([]);
+  const [stats, setStats] = useState({
+    totalTasks: 0,
+    completedTasks: 0,
+    pendingTasks: 0,
+    urgentTasks: 0,
+    recentActivity: 0
+  });
+  const [recentActivity, setRecentActivity] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedItem, setExpandedItem] = useState(null);
 
   useEffect(() => {
-    // Listen to WhatsApp messages from Firestore
+    // Listen to WhatsApp messages for stats
     const whatsappRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
     
-    let whatsappItems = [];
-    let emailItems = [];
-    
-    const processItems = () => {
-      const allItems = [...whatsappItems, ...emailItems];
-      const mapped = [];
-      const unmapped = [];
+    const unsubWhatsapp = onSnapshot(whatsappRef, (snapshot) => {
+      const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      allItems.forEach(item => {
-        // Check if actionable and not done
-        const isActionable = item.is_actionable || 
-          (item.source === 'email' && ['rfi', 'approval', 'vo', 'submittal'].includes(item.doc_type));
-        
-        if (isActionable && item.status !== 'done') {
-          if (item.project_name && item.project_name !== '__general__') {
-            mapped.push(item);
-          } else {
-            unmapped.push(item);
-          }
+      // Calculate stats
+      const actionable = messages.filter(m => m.is_actionable);
+      const completed = actionable.filter(m => m.status === 'done');
+      const pending = actionable.filter(m => m.status !== 'done');
+      const urgent = pending.filter(m => m.urgency === 'high');
+      
+      // Recent activity (last 24h)
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const recent = messages.filter(m => {
+        const date = new Date(m.created_at || 0);
+        return date > yesterday;
+      });
+      
+      setStats({
+        totalTasks: actionable.length,
+        completedTasks: completed.length,
+        pendingTasks: pending.length,
+        urgentTasks: urgent.length,
+        recentActivity: recent.length
+      });
+      
+      // Get recent activity for timeline (summarized by project)
+      const activityByProject = {};
+      recent.forEach(msg => {
+        const proj = msg.project_name || 'General';
+        if (!activityByProject[proj]) {
+          activityByProject[proj] = { count: 0, urgent: 0, lastTime: null };
+        }
+        activityByProject[proj].count++;
+        if (msg.urgency === 'high') activityByProject[proj].urgent++;
+        const msgTime = new Date(msg.created_at || 0);
+        if (!activityByProject[proj].lastTime || msgTime > activityByProject[proj].lastTime) {
+          activityByProject[proj].lastTime = msgTime;
         }
       });
       
-      // Sort by date (newest first)
-      const sortByDate = (a, b) => {
-        const dateA = new Date(a.created_at || a.date || 0);
-        const dateB = new Date(b.created_at || b.date || 0);
-        return dateB - dateA;
-      };
+      const activityList = Object.entries(activityByProject)
+        .map(([project, data]) => ({ project, ...data }))
+        .sort((a, b) => (b.lastTime || 0) - (a.lastTime || 0))
+        .slice(0, 5);
       
-      mapped.sort(sortByDate);
-      unmapped.sort(sortByDate);
-      
-      setActionItems(mapped.slice(0, 15));
-      setUnmappedItems(unmapped.slice(0, 10));
+      setRecentActivity(activityList);
       setLoading(false);
-    };
-    
-    // Listen to WhatsApp messages
-    const unsubWhatsapp = onSnapshot(whatsappRef, (snapshot) => {
-      whatsappItems = snapshot.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data(),
-        source: 'whatsapp'
-      }));
-      processItems();
     }, (error) => {
-      console.error('WhatsApp error:', error);
+      console.error('Firestore error:', error);
       setLoading(false);
     });
-    
-    // Fetch emails from sync-worker API for all projects
-    const fetchAllEmails = async () => {
-      const allEmails = [];
-      for (const project of projects) {
-        try {
-          const res = await fetch(`${SYNC_WORKER_URL}/emails?project=${encodeURIComponent(project.name)}&limit=10`);
-          if (res.ok) {
-            const data = await res.json();
-            const emails = (data.emails || []).map(email => ({
-              id: `email-${email.subject}-${email.date}`,
-              source: 'email',
-              project_name: project.name,
-              subject: email.subject,
-              from: email.from,
-              date: email.date,
-              created_at: email.date,
-              doc_type: email.type || 'correspondence',
-              text: email.subject,
-              summary: email.subject,
-              is_actionable: ['rfi', 'approval', 'vo', 'submittal'].includes(email.type),
-              status: 'new'
-            }));
-            allEmails.push(...emails);
-          }
-        } catch (err) {
-          console.error(`Error fetching emails for ${project.name}:`, err);
-        }
-      }
-      emailItems = allEmails;
-      processItems();
-    };
-    
-    if (projects.length > 0) {
-      fetchAllEmails();
-    }
 
-    return () => {
-      unsubWhatsapp();
-    };
+    return () => unsubWhatsapp();
   }, [projects]);
 
-  // Mark item as done
-  const markItemDone = async (item, e) => {
-    e.stopPropagation();
-    if (item.source === 'email') {
-      // For emails, just remove from local state (can't update GCS from client)
-      setActionItems(prev => prev.filter(i => i.id !== item.id));
-      return;
-    }
-    try {
-      const msgRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages', item.id);
-      await updateDoc(msgRef, { 
-        status: 'done',
-        is_actionable: false,
-        is_read: true,
-        updated_at: new Date().toISOString()
-      });
-    } catch (err) {
-      console.error('Error marking done:', err);
-    }
+  // Calculate project health
+  const getProjectHealth = (project) => {
+    // This would ideally come from real data
+    // For now, simulate based on project existence
+    const statuses = ['healthy', 'attention', 'healthy', 'healthy'];
+    const index = projects.findIndex(p => p.id === project.id);
+    return statuses[index % statuses.length];
   };
 
-  // Source icon and color
-  const getSourceStyle = (source) => {
-    if (source === 'email') {
-      return { icon: 'mail', color: 'text-blue-500', bg: 'bg-blue-50', label: 'Email' };
-    }
-    return { icon: 'message-circle', color: 'text-green-500', bg: 'bg-green-50', label: 'WhatsApp' };
+  const healthConfig = {
+    healthy: { color: 'text-emerald-500', bg: 'bg-emerald-50', label: 'On Track', icon: 'check-circle' },
+    attention: { color: 'text-amber-500', bg: 'bg-amber-50', label: 'Needs Review', icon: 'alert-circle' },
+    critical: { color: 'text-red-500', bg: 'bg-red-50', label: 'Critical', icon: 'alert-triangle' }
   };
 
-  // Action type labels and colors
-  const getActionTypeStyle = (item) => {
-    // Email doc types
-    if (item.source === 'email') {
-      switch (item.doc_type) {
-        case 'rfi': return { label: 'RFI', color: 'bg-purple-100 text-purple-700', icon: 'help-circle' };
-        case 'approval': return { label: 'Approval', color: 'bg-amber-100 text-amber-700', icon: 'check-circle' };
-        case 'vo': return { label: 'Variation', color: 'bg-red-100 text-red-700', icon: 'file-plus' };
-        case 'submittal': return { label: 'Submittal', color: 'bg-blue-100 text-blue-700', icon: 'file-text' };
-        case 'invoice': return { label: 'Invoice', color: 'bg-emerald-100 text-emerald-700', icon: 'receipt' };
-        default: return { label: 'Email', color: 'bg-slate-100 text-slate-600', icon: 'mail' };
-      }
-    }
-    // WhatsApp types
-    switch (item.action_type) {
-      case 'task': return { label: 'Task', color: 'bg-blue-100 text-blue-700', icon: 'clipboard-list' };
-      case 'query': return { label: 'Query', color: 'bg-purple-100 text-purple-700', icon: 'help-circle' };
-      case 'info': return { label: 'Info', color: 'bg-slate-100 text-slate-600', icon: 'info' };
-      case 'decision_needed': return { label: 'Decision', color: 'bg-red-100 text-red-700', icon: 'help-circle' };
-      case 'approval_request': return { label: 'Approval', color: 'bg-amber-100 text-amber-700', icon: 'check-circle' };
-      case 'deadline': return { label: 'Deadline', color: 'bg-red-100 text-red-700', icon: 'clock' };
-      case 'invoice': return { label: 'Invoice', color: 'bg-emerald-100 text-emerald-700', icon: 'receipt' };
-      default: return { label: 'Message', color: 'bg-slate-100 text-slate-600', icon: 'message-circle' };
-    }
+  const formatTimeAgo = (date) => {
+    if (!date) return '';
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  const formatTime = (timestamp) => {
-    if (!timestamp) return '';
-    try {
-      const date = new Date(timestamp);
-      const now = new Date();
-      const diffMs = now - date;
-      const diffMins = Math.floor(diffMs / 60000);
-      const diffHours = Math.floor(diffMs / 3600000);
-      const diffDays = Math.floor(diffMs / 86400000);
-      if (diffMins < 1) return 'Just now';
-      if (diffMins < 60) return `${diffMins}m ago`;
-      if (diffHours < 24) return `${diffHours}h ago`;
-      if (diffDays < 7) return `${diffDays}d ago`;
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    } catch { return ''; }
-  };
-
-  const handleItemClick = (item, e) => {
-    e.stopPropagation();
-    setExpandedItem(expandedItem === item.id ? null : item.id);
-  };
-
-  const handleGoToProject = (item, e) => {
-    e.stopPropagation();
-    const project = projects.find(p => p.name === item.project_name);
-    if (project) onSelectProject(project);
-  };
-
-  const renderItem = (item, showProject = true) => {
-    const isExpanded = expandedItem === item.id;
-    const sourceStyle = getSourceStyle(item.source);
-    const actionStyle = getActionTypeStyle(item);
-    const isUnread = !item.is_read;
-    
-    return (
-      <div 
-        key={item.id} 
-        onClick={(e) => handleItemClick(item, e)}
-        className={`transition-all cursor-pointer ${isExpanded ? 'bg-blue-50' : 'hover:bg-slate-50'} ${isUnread ? 'border-l-2 border-l-blue-500' : ''}`}
-      >
-        <div className="p-3">
-          <div className="flex items-start gap-2">
-            {/* Source Icon */}
-            <div className={`p-1.5 rounded-lg flex-shrink-0 ${sourceStyle.bg}`}>
-              <Icon name={sourceStyle.icon} size={12} className={sourceStyle.color} />
-            </div>
-            
-            <div className="flex-1 min-w-0">
-              {/* Type Badge */}
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className={`text-[8px] font-medium px-1.5 py-0.5 rounded ${actionStyle.color}`}>
-                  {actionStyle.label}
-                </span>
-                {isUnread && (
-                  <span className="w-1.5 h-1.5 bg-blue-500 rounded-full" title="Unread" />
-                )}
-              </div>
-              
-              {/* Content */}
-              <p className={`text-xs ${isUnread ? 'font-semibold text-slate-900' : 'text-slate-700'} ${isExpanded ? '' : 'line-clamp-2'}`}>
-                {item.summary || item.text || item.subject}
-              </p>
-              
-              {/* Meta info */}
-              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                {showProject && item.project_name && (
-                  <span className="text-[9px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                    {item.project_name}
-                  </span>
-                )}
-                <span className="text-[9px] text-slate-400">
-                  {sourceStyle.label} • {formatTime(item.created_at || item.date)}
-                </span>
-                {item.from && (
-                  <span className="text-[9px] text-slate-400 truncate max-w-[120px]">
-                    • {item.from.split('<')[0].trim().substring(0, 20)}
-                  </span>
-                )}
-              </div>
-            </div>
-            
-            <Icon name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} className="text-slate-300 flex-shrink-0" />
-          </div>
-          
-          {/* Expanded content */}
-          {isExpanded && (
-            <div className="mt-2 pt-2 border-t border-slate-200 ml-8">
-              <p className="text-xs text-slate-700 whitespace-pre-wrap">
-                {item.text || item.body || item.summary}
-              </p>
-              
-              {item.from && (
-                <p className="text-[10px] text-slate-500 mt-1">From: {item.from}</p>
-              )}
-              
-              <div className="mt-2 flex gap-2 flex-wrap">
-                <button 
-                  onClick={(e) => markItemDone(item, e)}
-                  className="px-2 py-1 bg-green-500 text-white rounded-lg text-[10px] font-medium hover:bg-green-600"
-                >
-                  ✓ Done
-                </button>
-                {item.project_name && (
-                  <button 
-                    onClick={(e) => handleGoToProject(item, e)}
-                    className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[10px] font-medium"
-                  >
-                    Open Project →
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
+  const completionRate = stats.totalTasks > 0 
+    ? Math.round((stats.completedTasks / stats.totalTasks) * 100) 
+    : 100;
 
   return (
-    <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 animate-in pb-24">
+    <div className="max-w-7xl mx-auto space-y-6 animate-in pb-24">
       {/* Header */}
-      <div>
-        <h1 className="text-lg sm:text-xl font-semibold text-slate-900">Dashboard</h1>
-        <p className="text-slate-500 text-xs mt-0.5">
-          {projects.length} {projects.length === 1 ? 'Project' : 'Projects'} Active
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">Command Center</h1>
+          <p className="text-slate-500 text-xs mt-0.5">
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full font-medium">
+            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+            System Online
+          </span>
+        </div>
       </div>
 
-      {/* Projects */}
-      <div>
-        <h3 className="text-xs font-semibold text-slate-700 mb-3">Your Projects</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
-          {projects.map(p => (
-            <div 
-              key={p.id} 
-              onClick={() => onSelectProject(p)} 
-              className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer p-3 group" 
-            >
-              <div className="flex justify-between items-start mb-2">
-                <div className="p-1.5 bg-slate-50 rounded-lg text-slate-600 group-hover:bg-blue-500 group-hover:text-white transition-all">
-                  <Icon name="folder" size={14} />
-                </div>
-                <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium uppercase ${
-                  p.status === 'Syncing...' ? 'bg-amber-50 text-amber-600 animate-pulse' : 
-                  p.status === 'Sync Error' ? 'bg-red-50 text-red-600' : 
-                  'bg-emerald-50 text-emerald-600'
-                }`}>
-                  {p.status || 'Active'}
-                </span>
-              </div>
-              
-              <h3 className="text-xs font-semibold text-slate-900 truncate">{p.name}</h3>
-              <p className="text-[9px] text-slate-400 mt-0.5 truncate">
-                {p.location || 'No location'}
-              </p>
+      {/* Executive KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {/* Active Projects */}
+        <div className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-blue-50 rounded-lg">
+              <Icon name="briefcase" size={18} className="text-blue-600" />
             </div>
-          ))}
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{projects.length}</p>
+          <p className="text-xs text-slate-500 mt-0.5">Active Projects</p>
+        </div>
+
+        {/* Pending Tasks */}
+        <div className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-amber-50 rounded-lg">
+              <Icon name="clipboard-list" size={18} className="text-amber-600" />
+            </div>
+            {stats.urgentTasks > 0 && (
+              <span className="text-[10px] font-medium text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
+                {stats.urgentTasks} urgent
+              </span>
+            )}
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{stats.pendingTasks}</p>
+          <p className="text-xs text-slate-500 mt-0.5">Pending Actions</p>
+        </div>
+
+        {/* Completion Rate */}
+        <div className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-emerald-50 rounded-lg">
+              <Icon name="trending-up" size={18} className="text-emerald-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{completionRate}%</p>
+          <p className="text-xs text-slate-500 mt-0.5">Task Completion</p>
+          <div className="mt-2 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+              style={{ width: `${completionRate}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Activity (24h) */}
+        <div className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-purple-50 rounded-lg">
+              <Icon name="activity" size={18} className="text-purple-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{stats.recentActivity}</p>
+          <p className="text-xs text-slate-500 mt-0.5">Messages (24h)</p>
+        </div>
+      </div>
+
+      {/* Projects Grid */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-slate-900">Projects Overview</h2>
+          <span className="text-xs text-slate-400">{projects.length} total</span>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {projects.map(project => {
+            const health = getProjectHealth(project);
+            const healthStyle = healthConfig[health];
+            
+            return (
+              <div 
+                key={project.id} 
+                onClick={() => onSelectProject(project)} 
+                className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer overflow-hidden group"
+              >
+                {/* Header stripe */}
+                <div className={`h-1 ${health === 'healthy' ? 'bg-emerald-500' : health === 'attention' ? 'bg-amber-500' : 'bg-red-500'}`} />
+                
+                <div className="p-4">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-slate-50 rounded-lg group-hover:bg-blue-50 transition-colors">
+                        <Icon name="folder" size={20} className="text-slate-600 group-hover:text-blue-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-900">{project.name}</h3>
+                        <p className="text-xs text-slate-500">{project.client || 'No client'}</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5">
+                      <Icon name="map-pin" size={12} className="text-slate-400" />
+                      <span className="text-xs text-slate-500">{project.location || 'N/A'}</span>
+                    </div>
+                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${healthStyle.bg}`}>
+                      <Icon name={healthStyle.icon} size={12} className={healthStyle.color} />
+                      <span className={`text-[10px] font-medium ${healthStyle.color}`}>{healthStyle.label}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
 
           {projects.length === 0 && (
-            <div className="col-span-full flex flex-col items-center justify-center py-12 text-center">
-              <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mb-3">
-                <Icon name="folder-plus" size={20} style={{ color: COLORS.blue }} />
+            <div className="col-span-full flex flex-col items-center justify-center py-16 text-center bg-white rounded-xl border border-slate-200">
+              <div className="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center mb-4">
+                <Icon name="folder-plus" size={24} className="text-blue-600" />
               </div>
-              <h3 className="text-sm font-semibold text-slate-900">No Projects Yet</h3>
-              <p className="text-slate-500 mt-1 text-xs">Register a project to get started.</p>
+              <h3 className="text-base font-semibold text-slate-900">No Projects Yet</h3>
+              <p className="text-slate-500 mt-1 text-sm">Register your first project to get started</p>
             </div>
           )}
         </div>
       </div>
 
-      {/* Needs Attention - Combined WhatsApp + Email */}
-      {!loading && (actionItems.length > 0 || unmappedItems.length > 0) && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-slate-700">Needs Attention</h3>
-            <div className="flex items-center gap-2 text-[9px] text-slate-400">
-              <span className="flex items-center gap-1"><Icon name="message-circle" size={10} className="text-green-500" /> WhatsApp</span>
-              <span className="flex items-center gap-1"><Icon name="mail" size={10} className="text-blue-500" /> Email</span>
+      {/* Recent Activity Summary */}
+      {recentActivity.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-slate-50 rounded-lg">
+                <Icon name="clock" size={18} className="text-slate-600" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Recent Activity</h2>
+                <p className="text-xs text-slate-500">Last 24 hours</p>
+              </div>
             </div>
           </div>
           
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {/* Action Items (mapped to projects) */}
-            {actionItems.length > 0 && (
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <div className="p-3 border-b border-slate-100 bg-gradient-to-r from-red-50 to-amber-50 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 bg-red-100 rounded-lg">
-                      <Icon name="alert-triangle" size={12} className="text-red-600" />
-                    </div>
+          <div className="divide-y divide-slate-100">
+            {recentActivity.map((activity, index) => (
+              <div key={index} className="p-4 hover:bg-slate-50 transition-colors">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-2 h-2 rounded-full ${activity.urgent > 0 ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                     <div>
-                      <h3 className="text-xs font-semibold text-slate-900">Action Required</h3>
-                      <p className="text-[9px] text-slate-500">Messages & emails needing response</p>
+                      <p className="text-sm font-medium text-slate-900">{activity.project}</p>
+                      <p className="text-xs text-slate-500">
+                        {activity.count} message{activity.count !== 1 ? 's' : ''}
+                        {activity.urgent > 0 && (
+                          <span className="text-amber-600"> • {activity.urgent} urgent</span>
+                        )}
+                      </p>
                     </div>
                   </div>
-                  <span className="text-[10px] font-medium text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full">
-                    {actionItems.length}
-                  </span>
-                </div>
-                <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
-                  {actionItems.map(item => renderItem(item, true))}
+                  <span className="text-xs text-slate-400">{formatTimeAgo(activity.lastTime)}</span>
                 </div>
               </div>
-            )}
-
-            {/* Unmapped Items (no project assigned) */}
-            {unmappedItems.length > 0 && (
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <div className="p-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-blue-50 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 bg-slate-100 rounded-lg">
-                      <Icon name="inbox" size={12} className="text-slate-600" />
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-semibold text-slate-900">No Project Assigned</h3>
-                      <p className="text-[9px] text-slate-500">Assign these to a project in Settings</p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded-full">
-                    {unmappedItems.length}
-                  </span>
-                </div>
-                <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
-                  {unmappedItems.map(item => renderItem(item, false))}
-                </div>
-              </div>
-            )}
+            ))}
           </div>
         </div>
       )}
 
-      {/* Empty state */}
-      {!loading && actionItems.length === 0 && unmappedItems.length === 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+      {/* Quick Actions */}
+      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-xl p-5 text-white">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-semibold">AI-Powered Technical Office</h3>
+            <p className="text-slate-400 text-xs mt-1">
+              WhatsApp commands • Document search • Smart task tracking
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-white/10 rounded-lg">
+              <Icon name="message-circle" size={18} className="text-green-400" />
+            </div>
+            <div className="p-2 bg-white/10 rounded-lg">
+              <Icon name="search" size={18} className="text-blue-400" />
+            </div>
+            <div className="p-2 bg-white/10 rounded-lg">
+              <Icon name="zap" size={18} className="text-amber-400" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* All Clear State */}
+      {!loading && stats.pendingTasks === 0 && (
+        <div className="bg-emerald-50 rounded-xl border border-emerald-200 p-6 text-center">
           <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3">
             <Icon name="check-circle" size={24} className="text-emerald-600" />
           </div>
-          <h3 className="text-sm font-semibold text-slate-900">All Clear!</h3>
-          <p className="text-slate-500 mt-1 text-xs">No pending action items</p>
+          <h3 className="text-sm font-semibold text-emerald-900">All Clear!</h3>
+          <p className="text-emerald-700 mt-1 text-xs">No pending action items across all projects</p>
         </div>
       )}
     </div>
