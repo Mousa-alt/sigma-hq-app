@@ -6,9 +6,10 @@ import re
 import base64
 import requests
 import mimetypes
+import hashlib
 from datetime import datetime, timezone, timedelta
 import functions_framework
-from flask import jsonify
+from flask import jsonify, redirect
 from google.cloud import firestore
 from google.cloud import storage
 from google.cloud import discoveryengine_v1 as discoveryengine
@@ -34,6 +35,9 @@ WAHA_PLUS_ENABLED = os.environ.get('WAHA_PLUS_ENABLED', 'false').lower() == 'tru
 VERTEX_LOCATION = "global"
 ENGINE_ID = "sigma-search_1767650825639"
 
+# Short URL base (will be set dynamically)
+SHORT_URL_BASE = os.environ.get('SHORT_URL_BASE', '')
+
 # Initialize clients
 db = firestore.Client(project=FIREBASE_PROJECT)
 storage_client = storage.Client()
@@ -45,6 +49,207 @@ try:
 except Exception as e:
     print(f"Vertex AI init error: {e}")
     VERTEX_AI_ENABLED = False
+
+
+# =============================================================================
+# REVISION/DATE EXTRACTION FOR SORTING
+# =============================================================================
+
+def extract_revision_score(filename):
+    """Extract revision number from filename and return a sortable score.
+    Higher score = newer revision.
+    
+    Patterns supported:
+    - Rev 01, Rev 1, Rev A, Rev B, REV01, R01, R1
+    - V1, V01, Version 1
+    - _01, _02 at end of filename
+    - Date patterns: 2024-01-15, 15-01-2024, 20240115
+    """
+    if not filename:
+        return 0
+    
+    name_upper = filename.upper()
+    score = 0
+    
+    # Pattern 1: Rev XX or REV XX or R XX (numeric)
+    rev_num = re.search(r'REV[_\s\-\.]*(\d+)', name_upper)
+    if rev_num:
+        score = int(rev_num.group(1)) * 100
+        return score
+    
+    # Pattern 2: R01, R1 (standalone revision)
+    r_num = re.search(r'[_\-\s]R(\d+)[_\-\s\.]', name_upper)
+    if r_num:
+        score = int(r_num.group(1)) * 100
+        return score
+    
+    # Pattern 3: Rev A, Rev B (letter revisions)
+    rev_letter = re.search(r'REV[_\s\-\.]*([A-Z])', name_upper)
+    if rev_letter:
+        # A=1, B=2, etc.
+        score = (ord(rev_letter.group(1)) - ord('A') + 1) * 10
+        return score
+    
+    # Pattern 4: V1, V01, Version 1
+    version = re.search(r'V(?:ERSION)?[_\s\-\.]*(\d+)', name_upper)
+    if version:
+        score = int(version.group(1)) * 100
+        return score
+    
+    # Pattern 5: _01, _02 suffix before extension
+    suffix_num = re.search(r'[_\-](\d{2,3})(?:\.[a-zA-Z]+)?$', filename)
+    if suffix_num:
+        score = int(suffix_num.group(1))
+        return score
+    
+    return score
+
+
+def extract_date_score(filename):
+    """Extract date from filename and return timestamp score.
+    Higher score = more recent date.
+    
+    Patterns:
+    - 2024-01-15, 2024_01_15
+    - 15-01-2024, 15_01_2024
+    - 20240115
+    """
+    if not filename:
+        return 0
+    
+    # Pattern 1: YYYY-MM-DD or YYYY_MM_DD
+    match = re.search(r'(20\d{2})[_\-](\d{2})[_\-](\d{2})', filename)
+    if match:
+        try:
+            dt = datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            return int(dt.timestamp())
+        except:
+            pass
+    
+    # Pattern 2: DD-MM-YYYY or DD_MM_YYYY
+    match = re.search(r'(\d{2})[_\-](\d{2})[_\-](20\d{2})', filename)
+    if match:
+        try:
+            dt = datetime(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+            return int(dt.timestamp())
+        except:
+            pass
+    
+    # Pattern 3: YYYYMMDD
+    match = re.search(r'(20\d{2})(\d{2})(\d{2})', filename)
+    if match:
+        try:
+            dt = datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            return int(dt.timestamp())
+        except:
+            pass
+    
+    return 0
+
+
+def get_file_modified_time(gcs_path):
+    """Get file modification time from GCS metadata"""
+    try:
+        bucket = storage_client.bucket(GCS_BUCKET)
+        blob = bucket.blob(gcs_path)
+        if blob.exists():
+            blob.reload()
+            if blob.updated:
+                return int(blob.updated.timestamp())
+    except Exception as e:
+        print(f"Error getting file time: {e}")
+    return 0
+
+
+def sort_results_by_revision(results):
+    """Sort search results by revision (latest first).
+    
+    Priority:
+    1. Revision number (Rev 05 > Rev 01)
+    2. Date in filename (2024-12-01 > 2024-01-01)
+    3. File modification time
+    """
+    def get_sort_key(doc):
+        filename = doc.get('name', '')
+        gcs_path = doc.get('gcs_path', '')
+        
+        # Get scores (higher = newer)
+        rev_score = extract_revision_score(filename)
+        date_score = extract_date_score(filename)
+        
+        # Only fetch GCS time if no other indicators
+        if rev_score == 0 and date_score == 0 and gcs_path:
+            mod_time = get_file_modified_time(gcs_path)
+        else:
+            mod_time = 0
+        
+        # Combine scores: revision is most important, then date, then mod time
+        # Multiply to ensure proper ordering
+        return (rev_score * 1000000000) + (date_score) + (mod_time // 1000)
+    
+    # Sort descending (highest score = latest revision first)
+    return sorted(results, key=get_sort_key, reverse=True)
+
+
+# =============================================================================
+# SHORT URL FUNCTIONS
+# =============================================================================
+
+def generate_short_code(gcs_path):
+    """Generate a short 6-character code for a file"""
+    # Use hash of path + timestamp for uniqueness
+    data = f"{gcs_path}:{datetime.now().timestamp()}"
+    hash_obj = hashlib.md5(data.encode())
+    return hash_obj.hexdigest()[:6].upper()
+
+
+def create_short_url(gcs_path, expiration_minutes=60):
+    """Create a short URL that redirects to the signed URL"""
+    try:
+        short_code = generate_short_code(gcs_path)
+        
+        # Generate the actual signed URL
+        signed_url, err = generate_signed_url(gcs_path, expiration_minutes, inline=True)
+        if not signed_url:
+            return None, err
+        
+        # Store in Firestore
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=expiration_minutes)
+        
+        db.collection('artifacts').document(APP_ID).collection('public').document('data')\
+            .collection('short_urls').document(short_code).set({
+            'gcs_path': gcs_path,
+            'signed_url': signed_url,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'expires_at': expires_at.isoformat()
+        })
+        
+        return short_code, None
+    except Exception as e:
+        print(f"Short URL error: {e}")
+        return None, str(e)
+
+
+def get_short_url_redirect(short_code):
+    """Get the signed URL for a short code"""
+    try:
+        doc = db.collection('artifacts').document(APP_ID).collection('public').document('data')\
+            .collection('short_urls').document(short_code.upper()).get()
+        
+        if doc.exists:
+            data = doc.to_dict()
+            expires_at = data.get('expires_at', '')
+            
+            # Check if expired
+            if expires_at:
+                exp_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                if datetime.now(timezone.utc) > exp_dt:
+                    return None, "Link expired"
+            
+            return data.get('signed_url'), None
+        return None, "Link not found"
+    except Exception as e:
+        return None, str(e)
 
 
 # =============================================================================
@@ -179,15 +384,13 @@ def get_file_size_mb(gcs_path):
     return 0
 
 
-def send_whatsapp_file(chat_id, gcs_path, filename):
+def send_whatsapp_file(chat_id, gcs_path, filename, use_short_url=True):
     """Send a file from GCS via WhatsApp
     
-    v4.11 Strategy:
-    - Free Waha: Send signed link that opens INLINE in browser (view first, then download)
-    - Waha Plus: Use sendFile API with base64/URL (when WAHA_PLUS_ENABLED=true)
-    
-    To enable Waha Plus file sending, set environment variable:
-    WAHA_PLUS_ENABLED=true
+    v4.12 Features:
+    - Short URLs for cleaner messages
+    - Inline view (opens in browser)
+    - Results sorted by revision (latest first)
     """
     
     # Check session first
@@ -208,19 +411,33 @@ def send_whatsapp_file(chat_id, gcs_path, filename):
     file_size_mb = blob.size / (1024 * 1024)
     
     # ==========================================================================
-    # FREE WAHA: Send view link (opens inline in browser)
+    # FREE WAHA: Send view link (with short URL option)
     # ==========================================================================
     if not WAHA_PLUS_ENABLED:
         print(f"Free Waha mode: Sending view link for {filename}")
         
-        # Generate signed URL with inline disposition (opens in browser)
+        # Format file size
+        size_str = f"{file_size_mb:.1f}MB" if file_size_mb >= 1 else f"{int(file_size_mb * 1024)}KB"
+        
+        # Try short URL first if enabled
+        if use_short_url and SHORT_URL_BASE:
+            short_code, err = create_short_url(gcs_path, expiration_minutes=60)
+            if short_code:
+                short_url = f"{SHORT_URL_BASE}/v/{short_code}"
+                view_msg = f"""📁 *{filename}*
+📊 Size: {size_str}
+
+👁️ {short_url}
+
+_Valid 1 hour_"""
+                if send_whatsapp_message(chat_id, view_msg):
+                    return True, "Short link sent"
+        
+        # Fallback to full signed URL
         signed_url, err = generate_signed_url(gcs_path, expiration_minutes=60, inline=True)
         
         if not signed_url:
             return False, f"Could not generate link: {err}"
-        
-        # Format nice message with file info
-        size_str = f"{file_size_mb:.1f}MB" if file_size_mb >= 1 else f"{int(file_size_mb * 1024)}KB"
         
         view_msg = f"""📁 *{filename}*
 📊 Size: {size_str}
@@ -228,7 +445,7 @@ def send_whatsapp_file(chat_id, gcs_path, filename):
 👁️ *View Link* (valid 1 hour):
 {signed_url}
 
-_Tap to view in browser - download from there_"""
+_Tap to view in browser_"""
         
         if send_whatsapp_message(chat_id, view_msg):
             return True, "View link sent"
@@ -656,8 +873,11 @@ def get_overdue_items():
 # DOCUMENT SEARCH - Using Vertex AI Search
 # =============================================================================
 
-def search_documents(query, project_name=None, limit=5):
-    """Search for documents using Vertex AI Search (Discovery Engine)"""
+def search_documents(query, project_name=None, limit=10):
+    """Search for documents using Vertex AI Search (Discovery Engine)
+    
+    Results are sorted by revision/date (latest first)
+    """
     results = []
     
     try:
@@ -667,10 +887,11 @@ def search_documents(query, project_name=None, limit=5):
         # Add project name to query if specified
         search_query = f"{query} {project_name}" if project_name else query
         
+        # Fetch more results than needed for post-filtering and sorting
         request = discoveryengine.SearchRequest(
             serving_config=serving_config,
             query=search_query,
-            page_size=limit,
+            page_size=limit * 2,  # Get extra for filtering
             content_search_spec=discoveryengine.SearchRequest.ContentSearchSpec(
                 snippet_spec=discoveryengine.SearchRequest.ContentSearchSpec.SnippetSpec(
                     return_snippet=True,
@@ -726,7 +947,13 @@ def search_documents(query, project_name=None, limit=5):
                 
                 results.append(doc_data)
         
-        print(f"Vertex AI Search returned {len(results)} results for: {search_query}")
+        # Sort by revision/date (latest first)
+        results = sort_results_by_revision(results)
+        
+        # Limit to requested count
+        results = results[:limit]
+        
+        print(f"Vertex AI Search returned {len(results)} results (sorted by revision) for: {search_query}")
         
     except Exception as e:
         print(f"Vertex AI Search error: {e}")
@@ -988,12 +1215,20 @@ def handle_command(message_text, sender, projects, chat_id):
             save_search_results(chat_id, results)
         
         if results:
-            lines = [f"📄 *Found {len(results)} documents*\n"]
+            lines = [f"📄 *Found {len(results)} documents* _(latest first)_\n"]
             for i, doc in enumerate(results, 1):
                 name = doc['name'][:40] if doc['name'] else 'Unnamed'
                 folder = doc['path'] if doc['path'] else ''
                 
-                lines.append(f"{i}. *{name}*")
+                # Show revision indicator if detected
+                rev_score = extract_revision_score(doc['name'])
+                rev_indicator = ""
+                if rev_score > 0:
+                    rev_match = re.search(r'(REV[_\s\-\.]*\d+|REV[_\s\-\.]*[A-Z]|V\d+|R\d+)', doc['name'].upper())
+                    if rev_match:
+                        rev_indicator = f" 🔄{rev_match.group(1)}"
+                
+                lines.append(f"{i}. *{name}*{rev_indicator}")
                 if folder:
                     lines.append(f"   📁 {folder}")
             
@@ -1679,11 +1914,23 @@ def whatsapp_webhook(request):
     
     headers = {'Access-Control-Allow-Origin': '*'}
     
+    # ==========================================================================
+    # SHORT URL REDIRECT: /v/{code}
+    # ==========================================================================
+    path = request.path
+    if path.startswith('/v/'):
+        short_code = path[3:].upper()
+        signed_url, err = get_short_url_redirect(short_code)
+        if signed_url:
+            return redirect(signed_url, code=302)
+        else:
+            return (jsonify({'error': err or 'Link not found'}), 404, headers)
+    
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.11 - Inline View',
+            'status': 'WhatsApp Webhook v4.12 - Revision Sort + Short URLs',
             'waha_plus': WAHA_PLUS_ENABLED,
-            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'inline_view', 'iam_signblob'],
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'inline_view', 'revision_sort', 'short_urls'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
             'search_engine': ENGINE_ID
