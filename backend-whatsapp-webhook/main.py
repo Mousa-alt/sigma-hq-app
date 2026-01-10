@@ -14,6 +14,8 @@ from google.cloud import storage
 from google.cloud import discoveryengine_v1 as discoveryengine
 import vertexai
 from vertexai.generative_models import GenerativeModel
+import google.auth
+from google.auth.transport import requests as google_requests
 
 # Configuration
 GCP_PROJECT = os.environ.get('GCP_PROJECT', 'sigma-hq-technical-office')
@@ -115,8 +117,14 @@ def send_whatsapp_message(chat_id, message):
     return False
 
 
-def generate_signed_url(gcs_path, expiration_minutes=30):
-    """Generate a signed URL for GCS file"""
+def generate_signed_url(gcs_path, expiration_minutes=60):
+    """Generate a signed URL using IAM signBlob API (no private key needed)
+    
+    This works in Cloud Run without a service account key file by using
+    the IAM Credentials API to sign the URL server-side.
+    
+    Requires: roles/iam.serviceAccountTokenCreator on the service account
+    """
     try:
         bucket = storage_client.bucket(GCS_BUCKET)
         blob = bucket.blob(gcs_path)
@@ -124,10 +132,19 @@ def generate_signed_url(gcs_path, expiration_minutes=30):
         if not blob.exists():
             return None, "File not found in GCS"
         
+        # Get default credentials and refresh to obtain access token
+        credentials, project = google.auth.default()
+        credentials.refresh(google_requests.Request())
+        
+        # Generate signed URL using IAM signBlob API
+        # Passing service_account_email and access_token triggers the
+        # IAM Credentials API instead of local signing
         url = blob.generate_signed_url(
             version="v4",
             expiration=timedelta(minutes=expiration_minutes),
-            method="GET"
+            method="GET",
+            service_account_email=credentials.service_account_email,
+            access_token=credentials.token
         )
         return url, None
     except Exception as e:
@@ -151,7 +168,7 @@ def get_file_size_mb(gcs_path):
 def send_whatsapp_file(chat_id, gcs_path, filename):
     """Send a file from GCS via WhatsApp
     
-    v4.9 Strategy:
+    v4.10 Strategy:
     - Free Waha: Always send signed download link (sendFile not available)
     - Waha Plus: Use sendFile API with base64/URL (when WAHA_PLUS_ENABLED=true)
     
@@ -1650,9 +1667,9 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.9 - Download Links Mode',
+            'status': 'WhatsApp Webhook v4.10 - IAM SignBlob Fix',
             'waha_plus': WAHA_PLUS_ENABLED,
-            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'download_links'],
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'download_links', 'iam_signblob'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
             'search_engine': ENGINE_ID
