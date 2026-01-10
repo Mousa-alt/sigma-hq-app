@@ -12,6 +12,7 @@ from google.auth import default
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.cloud import storage
+from google.cloud import firestore
 from google.cloud import discoveryengine_v1 as discoveryengine
 import google.generativeai as genai
 
@@ -28,6 +29,10 @@ ENGINE_ID = "sigma-search_1767650825639"
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
+# Firestore config for WhatsApp search integration
+FIREBASE_PROJECT = os.environ.get('FIREBASE_PROJECT', 'sigma-hq-38843')
+APP_ID = os.environ.get('APP_ID', 'sigma-hq-production')
+
 # Initialize clients
 credentials, _ = default(scopes=[
     'https://www.googleapis.com/auth/drive.readonly', 
@@ -35,6 +40,15 @@ credentials, _ = default(scopes=[
 ])
 drive_service = build('drive', 'v3', credentials=credentials)
 storage_client = storage.Client(credentials=credentials)
+
+# Initialize Firestore for file indexing
+try:
+    firestore_client = firestore.Client(project=FIREBASE_PROJECT)
+    FIRESTORE_ENABLED = True
+except Exception as e:
+    print(f"Firestore init error: {e}")
+    firestore_client = None
+    FIRESTORE_ENABLED = False
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -159,6 +173,129 @@ def get_document_priority(filename, path):
         base_priority += 15
     return base_priority, doc_type
 
+
+# =============================================================================
+# FIRESTORE FILE INDEXING (for WhatsApp search)
+# =============================================================================
+
+def index_file_to_firestore(project_name, file_path, file_info, drive_id=None):
+    """Index a single file to Firestore for WhatsApp search"""
+    if not FIRESTORE_ENABLED or not firestore_client:
+        return False
+    
+    try:
+        # Create a unique doc ID from path
+        doc_id = re.sub(r'[^a-zA-Z0-9]', '_', file_path)[:100]
+        
+        filename = os.path.basename(file_path)
+        doc_type = detect_document_type(filename, file_path)
+        
+        # Get folder path
+        folder_path = os.path.dirname(file_path)
+        
+        doc_data = {
+            'name': filename,
+            'path': file_path,
+            'folder_path': folder_path,
+            'project': project_name,
+            'project_name': project_name,
+            'drive_id': drive_id or file_info.get('id', ''),
+            'drive_link': f"https://drive.google.com/file/d/{drive_id or file_info.get('id', '')}" if (drive_id or file_info.get('id')) else '',
+            'doc_type': doc_type,
+            'doc_type_label': DOCUMENT_HIERARCHY.get(doc_type, {}).get('label', 'Document'),
+            'size': file_info.get('size', 0),
+            'modified_time': file_info.get('modifiedTime', ''),
+            'indexed_at': datetime.now().isoformat(),
+            'source': 'drive_sync'
+        }
+        
+        # Save to Firestore
+        firestore_client.collection('artifacts').document(APP_ID)\
+            .collection('public').document('data')\
+            .collection('synced_files').document(doc_id).set(doc_data, merge=True)
+        
+        return True
+    except Exception as e:
+        print(f"Error indexing file to Firestore: {e}")
+        return False
+
+
+def remove_file_from_firestore(project_name, file_path):
+    """Remove a file from Firestore index"""
+    if not FIRESTORE_ENABLED or not firestore_client:
+        return False
+    
+    try:
+        doc_id = re.sub(r'[^a-zA-Z0-9]', '_', file_path)[:100]
+        firestore_client.collection('artifacts').document(APP_ID)\
+            .collection('public').document('data')\
+            .collection('synced_files').document(doc_id).delete()
+        return True
+    except Exception as e:
+        print(f"Error removing file from Firestore: {e}")
+        return False
+
+
+def bulk_index_to_firestore(project_name, files_dict):
+    """Bulk index files to Firestore after sync"""
+    if not FIRESTORE_ENABLED or not firestore_client:
+        print("Firestore not enabled, skipping indexing")
+        return 0
+    
+    indexed = 0
+    batch = firestore_client.batch()
+    batch_count = 0
+    
+    for file_path, file_info in files_dict.items():
+        try:
+            doc_id = re.sub(r'[^a-zA-Z0-9]', '_', f"{project_name}/{file_path}")[:100]
+            filename = os.path.basename(file_path)
+            doc_type = detect_document_type(filename, file_path)
+            folder_path = os.path.dirname(file_path)
+            
+            doc_ref = firestore_client.collection('artifacts').document(APP_ID)\
+                .collection('public').document('data')\
+                .collection('synced_files').document(doc_id)
+            
+            doc_data = {
+                'name': filename,
+                'path': file_path,
+                'full_path': f"{project_name}/{file_path}",
+                'folder_path': folder_path,
+                'project': project_name,
+                'project_name': project_name,
+                'drive_id': file_info.get('id', ''),
+                'drive_link': f"https://drive.google.com/file/d/{file_info.get('id', '')}" if file_info.get('id') else '',
+                'doc_type': doc_type,
+                'doc_type_label': DOCUMENT_HIERARCHY.get(doc_type, {}).get('label', 'Document'),
+                'size': file_info.get('size', 0),
+                'modified_time': file_info.get('modifiedTime', ''),
+                'indexed_at': datetime.now().isoformat(),
+                'source': 'drive_sync'
+            }
+            
+            batch.set(doc_ref, doc_data, merge=True)
+            batch_count += 1
+            indexed += 1
+            
+            # Commit every 400 docs (Firestore limit is 500)
+            if batch_count >= 400:
+                batch.commit()
+                batch = firestore_client.batch()
+                batch_count = 0
+                
+        except Exception as e:
+            print(f"Error indexing {file_path}: {e}")
+            continue
+    
+    # Commit remaining
+    if batch_count > 0:
+        batch.commit()
+    
+    print(f"Indexed {indexed} files to Firestore")
+    return indexed
+
+
 # =============================================================================
 # SYNC FUNCTIONS
 # =============================================================================
@@ -210,7 +347,7 @@ def sync_project(drive_url, project_name):
     gcs_files = list_gcs_files(bucket, prefix)
     print(f"Found {len(gcs_files)} files in GCS")
     
-    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'skipped': 0, 'protected': 0, 'error': None}
+    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'skipped': 0, 'protected': 0, 'indexed': 0, 'error': None}
 
     try:
         for path in list(gcs_files.keys()):
@@ -225,6 +362,8 @@ def sync_project(drive_url, project_name):
                     print(f"PROTECTED (email): {path}")
                 else:
                     bucket.blob(f"{prefix}{path}").delete()
+                    # Also remove from Firestore index
+                    remove_file_from_firestore(project_name, path)
                     stats['deleted'] += 1
 
         for path, info in drive_files.items():
@@ -262,7 +401,10 @@ def sync_project(drive_url, project_name):
                 if is_update: stats['updated'] += 1
                 else: stats['added'] += 1
 
-        print(f"DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Protected:{stats['protected']} Skipped:{stats['skipped']}")
+        # Index all synced files to Firestore for WhatsApp search
+        stats['indexed'] = bulk_index_to_firestore(project_name, drive_files)
+
+        print(f"DONE! Added:{stats['added']} Updated:{stats['updated']} Deleted:{stats['deleted']} Protected:{stats['protected']} Skipped:{stats['skipped']} Indexed:{stats['indexed']}")
     except Exception as e:
         stats['error'] = str(e)
         print(f"Sync error: {e}")
@@ -281,6 +423,19 @@ def delete_project_files(project_name):
     for blob in blobs:
         blob.delete()
         deleted_count += 1
+    
+    # Also clean up Firestore index
+    if FIRESTORE_ENABLED and firestore_client:
+        try:
+            docs = firestore_client.collection('artifacts').document(APP_ID)\
+                .collection('public').document('data')\
+                .collection('synced_files')\
+                .where('project', '==', project_name).stream()
+            for doc in docs:
+                doc.reference.delete()
+        except Exception as e:
+            print(f"Error cleaning Firestore index: {e}")
+    
     return {'deleted': deleted_count, 'project': project_name}
 
 # =============================================================================
@@ -783,7 +938,7 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.8 - Email Protection', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails', 'unclassified', 'classify'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v5.9 - Firestore Indexing', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails', 'unclassified', 'classify', 'firestore_index'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled', 'firestore': 'enabled' if FIRESTORE_ENABLED else 'disabled'}), 200, headers)
     
     # === EMAIL ENDPOINTS ===
     
