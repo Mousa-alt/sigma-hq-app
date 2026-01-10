@@ -10,7 +10,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 import functions_framework
 from flask import jsonify, redirect
-from google.cloud import firestore
+import google.cloud.firestore as firestore
 from google.cloud import storage
 from google.cloud import discoveryengine_v1 as discoveryengine
 import vertexai
