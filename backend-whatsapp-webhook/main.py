@@ -167,7 +167,6 @@ def get_project_stats(project_name):
     }
     
     try:
-        # Count pending actionable messages
         messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
             .where('project_name', '==', project_name)\
             .where('is_actionable', '==', True)\
@@ -185,7 +184,6 @@ def get_project_stats(project_name):
                 if not stats['last_activity'] or created > stats['last_activity']:
                     stats['last_activity'] = created
         
-        # Count recent messages (last 24h)
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         recent = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
             .where('project_name', '==', project_name)\
@@ -194,7 +192,6 @@ def get_project_stats(project_name):
         
         stats['recent_messages'] = sum(1 for _ in recent)
         
-        # Count recent emails
         emails = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('emails')\
             .where('project_name', '==', project_name)\
             .where('created_at', '>=', yesterday)\
@@ -206,6 +203,62 @@ def get_project_stats(project_name):
         print(f"Error getting project stats: {e}")
     
     return stats
+
+
+def get_project_pending_items(project_name, limit=15):
+    """Get actual pending items for a specific project"""
+    items = []
+    try:
+        messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
+            .where('project_name', '==', project_name)\
+            .where('is_actionable', '==', True)\
+            .where('status', '==', 'pending')\
+            .order_by('created_at', direction=firestore.Query.DESCENDING)\
+            .limit(limit)\
+            .stream()
+        
+        for msg in messages:
+            data = msg.to_dict()
+            items.append({
+                'summary': data.get('summary', data.get('text', '')[:50]),
+                'urgency': data.get('urgency', 'medium'),
+                'type': data.get('action_type', 'task'),
+                'sender': data.get('sender_name', 'Unknown'),
+                'created': data.get('created_at', ''),
+                'group': data.get('group_name', '')
+            })
+    except Exception as e:
+        print(f"Error getting project pending items: {e}")
+    
+    return items
+
+
+def get_project_recent_activity(project_name, limit=10):
+    """Get recent activity (all messages) for a project"""
+    items = []
+    try:
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        
+        messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
+            .where('project_name', '==', project_name)\
+            .where('created_at', '>=', yesterday)\
+            .order_by('created_at', direction=firestore.Query.DESCENDING)\
+            .limit(limit)\
+            .stream()
+        
+        for msg in messages:
+            data = msg.to_dict()
+            items.append({
+                'summary': data.get('summary', data.get('text', '')[:50]),
+                'sender': data.get('sender_name', 'Unknown'),
+                'type': data.get('action_type', 'info'),
+                'actionable': data.get('is_actionable', False),
+                'created': data.get('created_at', '')
+            })
+    except Exception as e:
+        print(f"Error getting project activity: {e}")
+    
+    return items
 
 
 def get_all_pending_items():
@@ -309,6 +362,78 @@ def handle_command(message_text, sender, projects, chat_id):
     }
     
     # =========================================================================
+    # LIST PROJECT ITEMS - list Agora-gem
+    # =========================================================================
+    list_match = re.match(r'^list\s+(.+)$', lower_text, re.IGNORECASE)
+    if list_match:
+        project_hint = list_match.group(1).strip()
+        
+        matched = None
+        for p in projects:
+            if project_hint.lower() in p['name'].lower():
+                matched = p
+                break
+        
+        if matched:
+            items = get_project_pending_items(matched['name'], limit=15)
+            
+            if items:
+                lines = [f"📋 *{matched['name']}* - Pending Items ({len(items)})\n"]
+                for i, item in enumerate(items, 1):
+                    urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
+                    lines.append(f"{i}. {urgency_icon} {item['summary'][:45]}")
+                    if item.get('sender'):
+                        lines.append(f"    └ From: {item['sender'][:20]}")
+                response_message = "\n".join(lines)
+            else:
+                response_message = f"📋 *{matched['name']}*\n\n✨ No pending items!"
+        else:
+            response_message = f"❓ Project '{project_hint}' not found."
+        
+        classification['command_type'] = 'list_project'
+        classification['project_name'] = matched['name'] if matched else None
+        classification['summary'] = f"List items for {project_hint}"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
+    
+    # =========================================================================
+    # ACTIVITY - recent activity for project
+    # =========================================================================
+    activity_match = re.match(r'^activity\s+(.+)$', lower_text, re.IGNORECASE)
+    if activity_match:
+        project_hint = activity_match.group(1).strip()
+        
+        matched = None
+        for p in projects:
+            if project_hint.lower() in p['name'].lower():
+                matched = p
+                break
+        
+        if matched:
+            items = get_project_recent_activity(matched['name'], limit=10)
+            
+            if items:
+                lines = [f"📊 *{matched['name']}* - Last 24h ({len(items)} messages)\n"]
+                for item in items:
+                    action_icon = "⚡" if item['actionable'] else "💬"
+                    lines.append(f"{action_icon} {item['sender'][:15]}: {item['summary'][:35]}")
+                response_message = "\n".join(lines)
+            else:
+                response_message = f"📊 *{matched['name']}*\n\n🔇 No activity in the last 24h"
+        else:
+            response_message = f"❓ Project '{project_hint}' not found."
+        
+        classification['command_type'] = 'activity'
+        classification['project_name'] = matched['name'] if matched else None
+        classification['summary'] = f"Activity for {project_hint}"
+        
+        if response_message and chat_id:
+            send_whatsapp_message(chat_id, response_message)
+        return classification
+    
+    # =========================================================================
     # QUICK STATUS - Just project name
     # =========================================================================
     matched_project = None
@@ -331,7 +456,9 @@ def handle_command(message_text, sender, projects, chat_id):
 💬 *Messages (24h):* {stats['recent_messages']}
 📧 *Emails (24h):* {stats['recent_emails']}
 
-🕐 Last Activity: {stats['last_activity'][:10] if stats['last_activity'] else 'N/A'}"""
+🕐 Last Activity: {stats['last_activity'][:10] if stats['last_activity'] else 'N/A'}
+
+_Type `list {matched_project['name']}` to see all items_"""
         
         classification['command_type'] = 'project_status'
         classification['project_name'] = matched_project['name']
@@ -380,7 +507,6 @@ def handle_command(message_text, sender, projects, chat_id):
         items = get_all_pending_items()
         
         if items:
-            # Group by project
             by_project = {}
             for item in items:
                 proj = item['project'] or 'Unassigned'
@@ -395,6 +521,7 @@ def handle_command(message_text, sender, projects, chat_id):
                     urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
                     lines.append(f"  {urgency_icon} {item['summary'][:35]}")
             
+            lines.append(f"\n_Type `list ProjectName` for full list_")
             response_message = "\n".join(lines)
         else:
             response_message = "📋 *Pending Items*\n\n✨ All clear! No pending tasks."
@@ -440,18 +567,21 @@ Top Priorities:"""
 • `pending` - All pending tasks
 • `summary` - Overview report
 
+*Detailed Lists:*
+• `list ProjectName` - All pending items
+• `activity ProjectName` - Last 24h activity
+
 *Create Tasks:*
 • `task: ProjectName - Description`
 • `note: ProjectName - Info to log`
 
 *Queries:*
 • `what's pending on ProjectName?`
-• `status ProjectName`
 
-*Coming Soon:*
-• Document search
-• Team broadcasts
-• Daily digest"""
+*Examples:*
+• `Agora-gem`
+• `list Agora-gem`
+• `task: Agora-gem - Submit shop drawings`"""
         
         classification['command_type'] = 'help'
         classification['summary'] = "Help requested"
@@ -504,10 +634,10 @@ Top Priorities:"""
             response_message = f"📝 *Note Logged*\n\n📁 Project: {matched or 'General'}\n💬 {note_text}"
     
     # =========================================================================
-    # STATUS QUERY - what's pending on X
+    # STATUS QUERY - what's pending on X (now with items!)
     # =========================================================================
-    elif re.search(r"(what'?s?|show|get)\s+(pending|status|open)\s+(on|for|in)\s+(.+)", lower_text):
-        query_match = re.search(r"(what'?s?|show|get)\s+(pending|status|open)\s+(on|for|in)\s+(.+)", lower_text)
+    elif re.search(r"(what'?s?|show|get)\s+(pending|status|open|items)\s+(on|for|in)\s+(.+)", lower_text):
+        query_match = re.search(r"(what'?s?|show|get)\s+(pending|status|open|items)\s+(on|for|in)\s+(.+)", lower_text)
         if query_match:
             project_hint = query_match.group(4).strip().rstrip('?')
             
@@ -518,8 +648,16 @@ Top Priorities:"""
                     break
             
             if matched:
-                stats = get_project_stats(matched['name'])
-                response_message = f"📊 *{matched['name']}*\n\n📋 Pending: {stats['pending_tasks']}\n🔴 Urgent: {stats['high_urgency']}"
+                items = get_project_pending_items(matched['name'], limit=10)
+                
+                if items:
+                    lines = [f"📋 *{matched['name']}* - Pending ({len(items)})\n"]
+                    for i, item in enumerate(items, 1):
+                        urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
+                        lines.append(f"{i}. {urgency_icon} {item['summary'][:40]}")
+                    response_message = "\n".join(lines)
+                else:
+                    response_message = f"📋 *{matched['name']}*\n\n✨ No pending items!"
             else:
                 response_message = f"❓ Project '{project_hint}' not found. Try exact name."
             
@@ -740,8 +878,8 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v3.0 - Smart Command Center',
-            'features': ['group_mapping', 'command_group', 'waha_api_lookup', 'auto_reply', 'quick_status', 'today', 'urgent', 'pending'],
+            'status': 'WhatsApp Webhook v3.1 - List & Activity Commands',
+            'features': ['group_mapping', 'command_group', 'waha_api_lookup', 'auto_reply', 'quick_status', 'list_items', 'activity', 'today', 'urgent', 'pending'],
             'waha_url': WAHA_API_URL,
             'vertex_ai_enabled': VERTEX_AI_ENABLED,
             'firebase_project': FIREBASE_PROJECT
@@ -816,7 +954,7 @@ def whatsapp_webhook(request):
                 message_data['group_name'],
                 projects,
                 group_config,
-                chat_id  # Pass chat_id for auto-reply
+                chat_id
             )
             
             save_message(message_data, classification)
