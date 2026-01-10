@@ -14,7 +14,8 @@ GCP_PROJECT = os.environ.get('GCP_PROJECT', 'sigma-hq-technical-office')
 GCP_LOCATION = os.environ.get('GCP_LOCATION', 'us-central1')
 FIREBASE_PROJECT = os.environ.get('FIREBASE_PROJECT', 'sigma-hq-38843')
 APP_ID = os.environ.get('APP_ID', 'sigma-hq-production')
-WAHA_API_URL = os.environ.get('WAHA_API_URL', 'http://31.220.107.186:3002')
+WAHA_API_URL = os.environ.get('WAHA_API_URL', 'http://34.78.137.109:3000')
+WAHA_API_KEY = os.environ.get('WAHA_API_KEY', 'sigma2026')
 
 # Initialize clients
 db = firestore.Client(project=FIREBASE_PROJECT)
@@ -29,10 +30,12 @@ except Exception as e:
 
 def get_group_name_from_waha(group_id):
     """Fetch group name from Waha API"""
+    headers = {'X-Api-Key': WAHA_API_KEY} if WAHA_API_KEY else {}
+    
     try:
         # Try to get group info from Waha
         url = f"{WAHA_API_URL}/api/default/groups/{group_id}"
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
             group_name = data.get('subject') or data.get('name') or data.get('id', {}).get('user', '')
@@ -44,7 +47,7 @@ def get_group_name_from_waha(group_id):
     # Fallback: try chats endpoint
     try:
         url = f"{WAHA_API_URL}/api/default/chats/{group_id}"
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
             group_name = data.get('name') or data.get('subject') or ''
@@ -361,8 +364,9 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v2.3 - Waha API group name',
+            'status': 'WhatsApp Webhook v2.4 - Fixed Waha URL',
             'features': ['group_mapping', 'command_group', 'waha_api_lookup'],
+            'waha_url': WAHA_API_URL,
             'vertex_ai_enabled': VERTEX_AI_ENABLED,
             'firebase_project': FIREBASE_PROJECT
         }), 200, headers)
