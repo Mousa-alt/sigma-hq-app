@@ -144,7 +144,7 @@ def send_whatsapp_file(chat_id, gcs_path, filename):
         }
         media_type = media_types.get(ext, 'application/octet-stream')
         
-        # Send via Waha using base64 data
+        # Send via Waha using base64 data (no caption for sendFile)
         url = f"{WAHA_API_URL}/api/sendFile"
         payload = {
             'chatId': chat_id,
@@ -153,8 +153,7 @@ def send_whatsapp_file(chat_id, gcs_path, filename):
                 'filename': filename,
                 'data': file_base64
             },
-            'session': 'default',
-            'caption': f"📄 {filename}"
+            'session': 'default'
         }
         
         response = requests.post(url, headers=headers, json=payload, timeout=120)
@@ -1521,7 +1520,7 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.5 - Base64 File Download',
+            'status': 'WhatsApp Webhook v4.6 - Base64 File Download Fixed',
             'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'file_download'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
