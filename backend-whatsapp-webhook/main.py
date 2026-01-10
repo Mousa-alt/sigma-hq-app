@@ -2,7 +2,7 @@ import os
 import json
 import re
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import functions_framework
 from flask import jsonify
 from google.cloud import firestore
@@ -16,6 +16,7 @@ FIREBASE_PROJECT = os.environ.get('FIREBASE_PROJECT', 'sigma-hq-38843')
 APP_ID = os.environ.get('APP_ID', 'sigma-hq-production')
 WAHA_API_URL = os.environ.get('WAHA_API_URL', 'http://34.78.137.109:3000')
 WAHA_API_KEY = os.environ.get('WAHA_API_KEY', 'sigma2026')
+COMMAND_GROUP_ID = os.environ.get('COMMAND_GROUP_ID', '')
 
 # Initialize clients
 db = firestore.Client(project=FIREBASE_PROJECT)
@@ -28,12 +29,16 @@ except Exception as e:
     print(f"Vertex AI init error: {e}")
     VERTEX_AI_ENABLED = False
 
+
+# =============================================================================
+# WAHA API FUNCTIONS
+# =============================================================================
+
 def get_group_name_from_waha(group_id):
     """Fetch group name from Waha API"""
     headers = {'X-Api-Key': WAHA_API_KEY} if WAHA_API_KEY else {}
     
     try:
-        # Try to get group info from Waha
         url = f"{WAHA_API_URL}/api/default/groups/{group_id}"
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
@@ -44,7 +49,6 @@ def get_group_name_from_waha(group_id):
     except Exception as e:
         print(f"Error fetching group from Waha: {e}")
     
-    # Fallback: try chats endpoint
     try:
         url = f"{WAHA_API_URL}/api/default/chats/{group_id}"
         response = requests.get(url, headers=headers, timeout=5)
@@ -58,20 +62,50 @@ def get_group_name_from_waha(group_id):
     
     return None
 
+
+def send_whatsapp_message(chat_id, message):
+    """Send a message via Waha API"""
+    headers = {
+        'X-Api-Key': WAHA_API_KEY,
+        'Content-Type': 'application/json'
+    }
+    
+    try:
+        url = f"{WAHA_API_URL}/api/sendText"
+        payload = {
+            'chatId': chat_id,
+            'text': message,
+            'session': 'default'
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        if response.status_code == 200:
+            print(f"Message sent to {chat_id}")
+            return True
+        else:
+            print(f"Failed to send message: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"Error sending message: {e}")
+    
+    return False
+
+
+# =============================================================================
+# FIRESTORE QUERY FUNCTIONS
+# =============================================================================
+
 def get_cached_group_name(group_id):
     """Get cached group name from Firestore"""
     try:
-        # Check if we have this group cached
         docs = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_groups').where('group_id', '==', group_id).stream()
         for doc in docs:
             data = doc.to_dict()
             name = data.get('name', '')
-            # Only return if it's a real name (not just the ID)
             if name and not name.replace('@g.us', '').isdigit():
                 return name
     except Exception as e:
         print(f"Error getting cached group: {e}")
     return None
+
 
 def get_registered_projects():
     """Get list of registered projects from Firestore"""
@@ -84,11 +118,14 @@ def get_registered_projects():
                 'id': doc.id,
                 'name': data.get('name', ''),
                 'client': data.get('client', ''),
+                'location': data.get('location', ''),
+                'status': data.get('status', 'active'),
                 'keywords': data.get('keywords', [])
             })
     except Exception as e:
         print(f"Error loading projects: {e}")
     return projects
+
 
 def get_group_mappings():
     """Get WhatsApp group mappings from Firestore"""
@@ -106,7 +143,6 @@ def get_group_mappings():
                     'priority': data.get('priority', 'medium'),
                     'autoExtractTasks': data.get('autoExtractTasks', True)
                 }
-            # Also map by group_id
             if group_id:
                 mappings[group_id.lower()] = {
                     'project': data.get('project'),
@@ -119,14 +155,406 @@ def get_group_mappings():
         print(f"Error loading group mappings: {e}")
     return mappings
 
-def classify_message(message_text, sender, group_name, projects, group_config):
+
+def get_project_stats(project_name):
+    """Get statistics for a specific project"""
+    stats = {
+        'pending_tasks': 0,
+        'high_urgency': 0,
+        'recent_messages': 0,
+        'recent_emails': 0,
+        'last_activity': None
+    }
+    
+    try:
+        # Count pending actionable messages
+        messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
+            .where('project_name', '==', project_name)\
+            .where('is_actionable', '==', True)\
+            .where('status', '==', 'pending')\
+            .stream()
+        
+        for msg in messages:
+            stats['pending_tasks'] += 1
+            data = msg.to_dict()
+            if data.get('urgency') == 'high':
+                stats['high_urgency'] += 1
+            
+            created = data.get('created_at')
+            if created:
+                if not stats['last_activity'] or created > stats['last_activity']:
+                    stats['last_activity'] = created
+        
+        # Count recent messages (last 24h)
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        recent = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
+            .where('project_name', '==', project_name)\
+            .where('created_at', '>=', yesterday)\
+            .stream()
+        
+        stats['recent_messages'] = sum(1 for _ in recent)
+        
+        # Count recent emails
+        emails = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('emails')\
+            .where('project_name', '==', project_name)\
+            .where('created_at', '>=', yesterday)\
+            .stream()
+        
+        stats['recent_emails'] = sum(1 for _ in emails)
+        
+    except Exception as e:
+        print(f"Error getting project stats: {e}")
+    
+    return stats
+
+
+def get_all_pending_items():
+    """Get all pending actionable items across all projects"""
+    items = []
+    try:
+        messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
+            .where('is_actionable', '==', True)\
+            .where('status', '==', 'pending')\
+            .order_by('created_at', direction=firestore.Query.DESCENDING)\
+            .limit(20)\
+            .stream()
+        
+        for msg in messages:
+            data = msg.to_dict()
+            items.append({
+                'project': data.get('project_name', 'Unknown'),
+                'summary': data.get('summary', data.get('text', '')[:50]),
+                'urgency': data.get('urgency', 'medium'),
+                'type': data.get('action_type', 'task'),
+                'created': data.get('created_at', '')
+            })
+    except Exception as e:
+        print(f"Error getting pending items: {e}")
+    
+    return items
+
+
+def get_urgent_items():
+    """Get all high urgency items"""
+    items = []
+    try:
+        messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
+            .where('urgency', '==', 'high')\
+            .where('status', '==', 'pending')\
+            .order_by('created_at', direction=firestore.Query.DESCENDING)\
+            .limit(15)\
+            .stream()
+        
+        for msg in messages:
+            data = msg.to_dict()
+            items.append({
+                'project': data.get('project_name', 'Unknown'),
+                'summary': data.get('summary', data.get('text', '')[:50]),
+                'type': data.get('action_type', 'task'),
+                'created': data.get('created_at', '')
+            })
+    except Exception as e:
+        print(f"Error getting urgent items: {e}")
+    
+    return items
+
+
+def get_today_items():
+    """Get items created today or due today"""
+    items = []
+    try:
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        
+        messages = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_messages')\
+            .where('is_actionable', '==', True)\
+            .where('created_at', '>=', today_start)\
+            .order_by('created_at', direction=firestore.Query.DESCENDING)\
+            .limit(20)\
+            .stream()
+        
+        for msg in messages:
+            data = msg.to_dict()
+            items.append({
+                'project': data.get('project_name', 'Unknown'),
+                'summary': data.get('summary', data.get('text', '')[:50]),
+                'urgency': data.get('urgency', 'medium'),
+                'type': data.get('action_type', 'task'),
+                'status': data.get('status', 'pending')
+            })
+    except Exception as e:
+        print(f"Error getting today items: {e}")
+    
+    return items
+
+
+# =============================================================================
+# SMART COMMAND HANDLER
+# =============================================================================
+
+def handle_command(message_text, sender, projects, chat_id):
+    """Handle Command Group messages with smart responses"""
+    text = message_text.strip()
+    lower_text = text.lower()
+    
+    response_message = None
+    classification = {
+        'project_name': None,
+        'is_actionable': False,
+        'action_type': 'query',
+        'summary': '',
+        'urgency': 'low',
+        'is_command': True,
+        'command_type': None,
+        'channel_type': 'command'
+    }
+    
+    # =========================================================================
+    # QUICK STATUS - Just project name
+    # =========================================================================
+    matched_project = None
+    for p in projects:
+        if p['name'].lower() == lower_text or p['name'].lower() in lower_text:
+            matched_project = p
+            break
+    
+    if matched_project and len(lower_text.split()) <= 3:
+        stats = get_project_stats(matched_project['name'])
+        
+        status_emoji = "🟢" if stats['pending_tasks'] == 0 else "🟡" if stats['pending_tasks'] < 5 else "🔴"
+        
+        response_message = f"""📊 *{matched_project['name']}* {status_emoji}
+
+📍 {matched_project.get('location', 'N/A')} | 👤 {matched_project.get('client', 'N/A')}
+
+📋 *Pending Tasks:* {stats['pending_tasks']}
+🔴 *High Urgency:* {stats['high_urgency']}
+💬 *Messages (24h):* {stats['recent_messages']}
+📧 *Emails (24h):* {stats['recent_emails']}
+
+🕐 Last Activity: {stats['last_activity'][:10] if stats['last_activity'] else 'N/A'}"""
+        
+        classification['command_type'] = 'project_status'
+        classification['project_name'] = matched_project['name']
+        classification['summary'] = f"Status query for {matched_project['name']}"
+    
+    # =========================================================================
+    # TODAY - What's happening today
+    # =========================================================================
+    elif lower_text in ['today', 'اليوم', "what's today", 'whats today']:
+        items = get_today_items()
+        
+        if items:
+            lines = [f"📅 *Today's Items* ({len(items)})\n"]
+            for item in items[:10]:
+                urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
+                status_icon = "✅" if item['status'] == 'done' else "⏳"
+                lines.append(f"{urgency_icon} {status_icon} *{item['project']}*: {item['summary'][:40]}")
+            response_message = "\n".join(lines)
+        else:
+            response_message = "📅 *Today*\n\n✨ No new actionable items today!"
+        
+        classification['command_type'] = 'today'
+        classification['summary'] = "Today's items query"
+    
+    # =========================================================================
+    # URGENT - High priority items
+    # =========================================================================
+    elif lower_text in ['urgent', 'عاجل', 'high priority', 'critical']:
+        items = get_urgent_items()
+        
+        if items:
+            lines = [f"🔴 *Urgent Items* ({len(items)})\n"]
+            for item in items[:10]:
+                lines.append(f"• *{item['project']}*: {item['summary'][:40]}")
+            response_message = "\n".join(lines)
+        else:
+            response_message = "🔴 *Urgent Items*\n\n✨ No high-urgency items!"
+        
+        classification['command_type'] = 'urgent'
+        classification['summary'] = "Urgent items query"
+    
+    # =========================================================================
+    # PENDING - All pending tasks
+    # =========================================================================
+    elif lower_text in ['pending', 'معلق', 'open', 'tasks', 'مهام']:
+        items = get_all_pending_items()
+        
+        if items:
+            # Group by project
+            by_project = {}
+            for item in items:
+                proj = item['project'] or 'Unassigned'
+                if proj not in by_project:
+                    by_project[proj] = []
+                by_project[proj].append(item)
+            
+            lines = [f"📋 *Pending Items* ({len(items)})\n"]
+            for proj, proj_items in list(by_project.items())[:5]:
+                lines.append(f"\n*{proj}* ({len(proj_items)})")
+                for item in proj_items[:3]:
+                    urgency_icon = "🔴" if item['urgency'] == 'high' else "🟡" if item['urgency'] == 'medium' else "⚪"
+                    lines.append(f"  {urgency_icon} {item['summary'][:35]}")
+            
+            response_message = "\n".join(lines)
+        else:
+            response_message = "📋 *Pending Items*\n\n✨ All clear! No pending tasks."
+        
+        classification['command_type'] = 'pending'
+        classification['summary'] = "Pending items query"
+    
+    # =========================================================================
+    # SUMMARY - Weekly/Daily summary
+    # =========================================================================
+    elif any(kw in lower_text for kw in ['summary', 'summarize', 'ملخص', 'report']):
+        pending = get_all_pending_items()
+        urgent = get_urgent_items()
+        today = get_today_items()
+        
+        response_message = f"""📊 *Command Center Summary*
+        
+🔴 Urgent: {len(urgent)}
+📋 Pending: {len(pending)}
+📅 Today: {len(today)}
+
+Top Priorities:"""
+        
+        for item in urgent[:3]:
+            response_message += f"\n• *{item['project']}*: {item['summary'][:30]}"
+        
+        if not urgent:
+            response_message += "\n✨ No urgent items!"
+        
+        classification['command_type'] = 'summary'
+        classification['summary'] = "Summary requested"
+    
+    # =========================================================================
+    # HELP - Show available commands
+    # =========================================================================
+    elif lower_text in ['help', 'مساعدة', 'commands', '?']:
+        response_message = """🤖 *Command Center Help*
+
+*Quick Status:*
+• `ProjectName` - Get project snapshot
+• `today` - Today's items
+• `urgent` - High priority items
+• `pending` - All pending tasks
+• `summary` - Overview report
+
+*Create Tasks:*
+• `task: ProjectName - Description`
+• `note: ProjectName - Info to log`
+
+*Queries:*
+• `what's pending on ProjectName?`
+• `status ProjectName`
+
+*Coming Soon:*
+• Document search
+• Team broadcasts
+• Daily digest"""
+        
+        classification['command_type'] = 'help'
+        classification['summary'] = "Help requested"
+    
+    # =========================================================================
+    # TASK CREATION - task: Project - Description
+    # =========================================================================
+    elif lower_text.startswith('task:'):
+        task_match = re.match(r'task:\s*(.+?)\s*-\s*(.+)', text, re.IGNORECASE)
+        if task_match:
+            project_hint = task_match.group(1).strip()
+            task_desc = task_match.group(2).strip()
+            
+            matched = None
+            for p in projects:
+                if project_hint.lower() in p['name'].lower():
+                    matched = p['name']
+                    break
+            
+            classification['project_name'] = matched
+            classification['is_actionable'] = True
+            classification['action_type'] = 'task'
+            classification['summary'] = task_desc
+            classification['urgency'] = 'medium'
+            classification['command_type'] = 'create_task'
+            
+            response_message = f"✅ *Task Created*\n\n📁 Project: {matched or 'Unassigned'}\n📝 {task_desc}"
+    
+    # =========================================================================
+    # NOTE - Log information
+    # =========================================================================
+    elif lower_text.startswith('note:'):
+        note_match = re.match(r'note:\s*(.+?)\s*-\s*(.+)', text, re.IGNORECASE)
+        if note_match:
+            project_hint = note_match.group(1).strip()
+            note_text = note_match.group(2).strip()
+            
+            matched = None
+            for p in projects:
+                if project_hint.lower() in p['name'].lower():
+                    matched = p['name']
+                    break
+            
+            classification['project_name'] = matched
+            classification['is_actionable'] = False
+            classification['action_type'] = 'note'
+            classification['summary'] = note_text
+            classification['command_type'] = 'create_note'
+            
+            response_message = f"📝 *Note Logged*\n\n📁 Project: {matched or 'General'}\n💬 {note_text}"
+    
+    # =========================================================================
+    # STATUS QUERY - what's pending on X
+    # =========================================================================
+    elif re.search(r"(what'?s?|show|get)\s+(pending|status|open)\s+(on|for|in)\s+(.+)", lower_text):
+        query_match = re.search(r"(what'?s?|show|get)\s+(pending|status|open)\s+(on|for|in)\s+(.+)", lower_text)
+        if query_match:
+            project_hint = query_match.group(4).strip().rstrip('?')
+            
+            matched = None
+            for p in projects:
+                if project_hint.lower() in p['name'].lower():
+                    matched = p
+                    break
+            
+            if matched:
+                stats = get_project_stats(matched['name'])
+                response_message = f"📊 *{matched['name']}*\n\n📋 Pending: {stats['pending_tasks']}\n🔴 Urgent: {stats['high_urgency']}"
+            else:
+                response_message = f"❓ Project '{project_hint}' not found. Try exact name."
+            
+            classification['command_type'] = 'query_status'
+            classification['project_name'] = matched['name'] if matched else None
+            classification['summary'] = f"Status query for {project_hint}"
+    
+    # =========================================================================
+    # FALLBACK - Unrecognized command
+    # =========================================================================
+    else:
+        classification['is_command'] = False
+        classification['action_type'] = 'info'
+        classification['summary'] = text[:100]
+    
+    # Send response if we have one
+    if response_message and chat_id:
+        send_whatsapp_message(chat_id, response_message)
+    
+    return classification
+
+
+# =============================================================================
+# MESSAGE CLASSIFICATION
+# =============================================================================
+
+def classify_message(message_text, sender, group_name, projects, group_config, chat_id=None):
     """Use Vertex AI to classify WhatsApp message"""
     mapped_project = group_config.get('project') if group_config else None
     group_type = group_config.get('type', 'internal') if group_config else 'internal'
     group_priority = group_config.get('priority', 'medium') if group_config else 'medium'
     
+    # Handle Command Group
     if group_type == 'command':
-        return handle_command(message_text, sender, projects)
+        return handle_command(message_text, sender, projects, chat_id)
     
     if not VERTEX_AI_ENABLED:
         return fallback_classify(message_text, group_name, projects, mapped_project, group_type, group_priority)
@@ -186,67 +614,6 @@ RULES:
     
     return fallback_classify(message_text, group_name, projects, mapped_project, group_type, group_priority)
 
-def handle_command(message_text, sender, projects):
-    """Handle Command Group messages"""
-    lower_text = message_text.lower().strip()
-    
-    task_match = re.match(r'task:\s*(.+?)\s*-\s*(.+)', message_text, re.IGNORECASE)
-    if task_match:
-        project_hint = task_match.group(1).strip()
-        task_desc = task_match.group(2).strip()
-        
-        matched_project = None
-        for p in projects:
-            if project_hint.lower() in p['name'].lower():
-                matched_project = p['name']
-                break
-        
-        return {
-            'project_name': matched_project,
-            'is_actionable': True,
-            'action_type': 'task',
-            'summary': task_desc,
-            'urgency': 'medium',
-            'is_command': True,
-            'command_type': 'create_task',
-            'channel_type': 'command'
-        }
-    
-    query_match = re.search(r"what'?s?\s+(pending|status|open)\s+(on|for|in)\s+(.+)", lower_text, re.IGNORECASE)
-    if query_match:
-        project_hint = query_match.group(3).strip().rstrip('?')
-        return {
-            'project_name': project_hint,
-            'is_actionable': False,
-            'action_type': 'query',
-            'summary': f"Query: pending items for {project_hint}",
-            'urgency': 'low',
-            'is_command': True,
-            'command_type': 'query_pending',
-            'channel_type': 'command'
-        }
-    
-    if 'summarize' in lower_text or 'summary' in lower_text:
-        return {
-            'project_name': None,
-            'is_actionable': False,
-            'action_type': 'query',
-            'summary': 'Request: weekly summary',
-            'urgency': 'low',
-            'is_command': True,
-            'command_type': 'summarize',
-            'channel_type': 'command'
-        }
-    
-    return {
-        'project_name': None,
-        'is_actionable': False,
-        'action_type': 'info',
-        'summary': message_text[:100],
-        'urgency': 'low',
-        'is_command': False,
-        'channel_type': 'command'
-    }
 
 def fallback_classify(message_text, group_name, projects, mapped_project=None, group_type='internal', group_priority='medium'):
     """Fallback keyword-based classification"""
@@ -287,6 +654,11 @@ def fallback_classify(message_text, group_name, projects, mapped_project=None, g
         'channel_type': group_type
     }
 
+
+# =============================================================================
+# SAVE & AUTO-ADD FUNCTIONS
+# =============================================================================
+
 def save_message(message_data, classification):
     """Save classified message to Firestore"""
     try:
@@ -321,10 +693,10 @@ def save_message(message_data, classification):
         print(f"Error saving message: {e}")
         return False
 
+
 def auto_add_group(group_name, group_id):
     """Auto-add new group to mappings"""
     try:
-        # Use group_id as document ID to avoid duplicates
         group_doc_id = re.sub(r'[^a-zA-Z0-9]', '_', group_id)[:50]
         group_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_groups').document(group_doc_id)
         
@@ -341,7 +713,6 @@ def auto_add_group(group_name, group_id):
             })
             print(f"Auto-added group: {group_name} ({group_id})")
         else:
-            # Update name if we got a better one (not just ID)
             existing_data = existing.to_dict()
             existing_name = existing_data.get('name', '')
             if group_name and not group_name.replace('@g.us', '').isdigit() and existing_name.replace('@g.us', '').isdigit():
@@ -349,6 +720,11 @@ def auto_add_group(group_name, group_id):
                 print(f"Updated group name: {existing_name} -> {group_name}")
     except Exception as e:
         print(f"Error auto-adding group: {e}")
+
+
+# =============================================================================
+# HTTP HANDLER
+# =============================================================================
 
 @functions_framework.http
 def whatsapp_webhook(request):
@@ -364,8 +740,8 @@ def whatsapp_webhook(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v2.4 - Fixed Waha URL',
-            'features': ['group_mapping', 'command_group', 'waha_api_lookup'],
+            'status': 'WhatsApp Webhook v3.0 - Smart Command Center',
+            'features': ['group_mapping', 'command_group', 'waha_api_lookup', 'auto_reply', 'quick_status', 'today', 'urgent', 'pending'],
             'waha_url': WAHA_API_URL,
             'vertex_ai_enabled': VERTEX_AI_ENABLED,
             'firebase_project': FIREBASE_PROJECT
@@ -384,26 +760,25 @@ def whatsapp_webhook(request):
             chat_id = payload.get('chatId', '') or payload.get('from', '')
             is_group = '@g.us' in chat_id
             
-            # Extract sender name
             _data = payload.get('_data', {})
             sender_name = _data.get('notifyName', '') or payload.get('from', '').split('@')[0]
             sender = payload.get('from', '')
             
-            # Get group name - Waha webhook doesn't include it, so we need to fetch it
+            # Skip messages from self (the bot)
+            if payload.get('fromMe', False):
+                return (jsonify({'status': 'skipped', 'reason': 'own message'}), 200, headers)
+            
             group_name = ''
             if is_group:
-                # 1. Check cache first
                 group_name = get_cached_group_name(chat_id)
                 print(f"Cached group name for {chat_id}: {group_name}")
                 
-                # 2. If not cached or just ID, fetch from Waha API
                 if not group_name or group_name.replace('@g.us', '').isdigit():
                     waha_name = get_group_name_from_waha(chat_id)
                     if waha_name:
                         group_name = waha_name
                         print(f"Got group name from Waha: {group_name}")
                 
-                # 3. Fallback to group ID
                 if not group_name:
                     group_name = chat_id.replace('@g.us', '')
                     print(f"Using fallback group name: {group_name}")
@@ -421,15 +796,12 @@ def whatsapp_webhook(request):
             if not message_data['text']:
                 return (jsonify({'status': 'skipped', 'reason': 'no text'}), 200, headers)
             
-            # Auto-add/update group
             if is_group and group_name:
                 auto_add_group(group_name, chat_id)
             
-            # Get mappings - now also checks by group_id
             group_mappings = get_group_mappings()
             group_config = group_mappings.get(group_name.lower()) or group_mappings.get(chat_id.lower())
             
-            # If we have a stored name from mapping, use it
             if group_config and group_config.get('name'):
                 stored_name = group_config.get('name')
                 if stored_name and not stored_name.replace('@g.us', '').isdigit():
@@ -443,7 +815,8 @@ def whatsapp_webhook(request):
                 message_data['sender'],
                 message_data['group_name'],
                 projects,
-                group_config
+                group_config,
+                chat_id  # Pass chat_id for auto-reply
             )
             
             save_message(message_data, classification)
@@ -457,6 +830,7 @@ def whatsapp_webhook(request):
                 'actionable': classification.get('is_actionable'),
                 'action_type': classification.get('action_type'),
                 'channel_type': classification.get('channel_type'),
+                'command_type': classification.get('command_type'),
                 'summary': classification.get('summary', '')[:50]
             }), 200, headers)
             
