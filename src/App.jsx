@@ -17,11 +17,18 @@ import ChannelSettings from './components/ChannelSettings';
 import Modal from './components/Modal';
 import ChatPanel from './components/ChatPanel';
 import Icon from './components/Icon';
+import PasswordGate from './components/PasswordGate';
+import OrgChart from './components/OrgChart';
 
 // Add Settings tab
 const ALL_TABS = [...TABS, { id: 'settings', label: 'Settings', icon: 'settings' }];
 
 export default function App() {
+  // Auth state
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return sessionStorage.getItem('sigma_authenticated') === 'true';
+  });
+  
   // Core state
   const [user, setUser] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -37,6 +44,11 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
+
+  // Show password gate if not authenticated
+  if (!isAuthenticated) {
+    return <PasswordGate onAuthenticate={setIsAuthenticated} />;
+  }
 
   // Auth
   useEffect(() => {
@@ -84,20 +96,21 @@ export default function App() {
     try {
       await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'projects'), {
         ...formData,
-        status: 'Syncing...',
         createdAt: serverTimestamp(),
         userId: user.uid
       });
       
-      // Trigger sync (fire and forget)
-      fetch(SYNC_WORKER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          driveUrl: formData.driveLink, 
-          projectName: formData.name.replace(/\s+/g, '_') 
-        })
-      });
+      // Trigger sync (fire and forget) - only if driveLink provided
+      if (formData.driveLink) {
+        fetch(SYNC_WORKER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            driveUrl: formData.driveLink, 
+            projectName: formData.name.replace(/\s+/g, '_') 
+          })
+        });
+      }
       
       setIsModalOpen(false);
     } catch (err) {
@@ -132,7 +145,7 @@ export default function App() {
         
         const now = new Date();
         await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'projects', selectedProject.id), { 
-          status: 'Active',
+          status: 'active',
           lastSyncAt: now
         });
         setLastSyncTime(now);
@@ -185,6 +198,18 @@ export default function App() {
     setSyncError(null);
   };
 
+  const handleGoToOrgChart = () => {
+    setView('orgchart');
+    setSelectedProject(null);
+    setLastSyncTime(null);
+    setSyncError(null);
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('sigma_authenticated');
+    setIsAuthenticated(false);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden relative" style={{ backgroundColor: COLORS.background }}>
       {/* Sidebar overlay */}
@@ -204,8 +229,10 @@ export default function App() {
         onSelectProject={handleSelectProject}
         onGoToOverview={handleGoToOverview}
         onGoToSettings={handleGoToSettings}
+        onGoToOrgChart={handleGoToOrgChart}
         onOpenModal={() => setIsModalOpen(true)}
         onCloseSidebar={() => setIsSidebarOpen(false)}
+        onLogout={handleLogout}
       />
 
       {/* Main content - prevent horizontal scroll */}
@@ -229,6 +256,8 @@ export default function App() {
             <div className="bg-white rounded-xl border border-slate-200 min-h-[600px] overflow-hidden animate-in pb-20">
               <ChannelSettings projects={projects} />
             </div>
+          ) : view === 'orgchart' ? (
+            <OrgChart projects={projects} />
           ) : (
             <div className="h-full flex flex-col animate-in">
               {/* Sync Error Banner */}
