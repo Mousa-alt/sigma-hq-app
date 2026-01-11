@@ -28,6 +28,14 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
   const [expandedMessage, setExpandedMessage] = useState(null);
   const [expandedEmail, setExpandedEmail] = useState(null);
 
+  // Status display config
+  const statusConfig = {
+    tender: { color: 'bg-amber-500', label: 'Tender' },
+    active: { color: 'bg-emerald-500', label: 'Active' },
+    on_hold: { color: 'bg-slate-400', label: 'On Hold' },
+    completed: { color: 'bg-blue-500', label: 'Completed' },
+  };
+
   useEffect(() => {
     if (project) {
       loadStats();
@@ -249,6 +257,10 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   };
 
+  // Get current status display
+  const currentStatus = project?.status || 'active';
+  const statusDisplay = statusConfig[currentStatus] || statusConfig.active;
+
   return (
     <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-24">
       {/* Sync Status Bar */}
@@ -282,8 +294,8 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100">
           <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Status</p>
           <div className="flex items-center gap-1.5">
-            <div className={`w-2 h-2 rounded-full ${project?.completionDate ? 'bg-blue-500' : project?.status === 'Active' || !project?.status ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            <span className="text-xs sm:text-sm font-medium text-slate-900">{project?.completionDate ? 'Done' : (project?.status || 'Active')}</span>
+            <div className={`w-2 h-2 rounded-full ${statusDisplay.color}`} />
+            <span className="text-xs sm:text-sm font-medium text-slate-900">{statusDisplay.label}</span>
           </div>
         </div>
         <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100">
