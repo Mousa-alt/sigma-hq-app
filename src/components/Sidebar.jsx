@@ -29,18 +29,15 @@ export default function Sidebar({
     
     const updateBadges = () => {
       const combined = {};
-      // Combine WhatsApp badges
       Object.entries(whatsappBadges).forEach(([project, count]) => {
         combined[project] = (combined[project] || 0) + count;
       });
-      // Combine Email badges
       Object.entries(emailBadges).forEach(([project, count]) => {
         combined[project] = (combined[project] || 0) + count;
       });
       setProjectBadges(combined);
     };
     
-    // Listen to WhatsApp
     const unsubWhatsapp = onSnapshot(whatsappRef, (snapshot) => {
       whatsappBadges = {};
       snapshot.docs.forEach(doc => {
@@ -55,7 +52,6 @@ export default function Sidebar({
       console.error('Sidebar WhatsApp badges error:', error);
     });
     
-    // Listen to Emails
     const unsubEmail = onSnapshot(emailRef, (snapshot) => {
       emailBadges = {};
       snapshot.docs.forEach(doc => {
@@ -75,8 +71,6 @@ export default function Sidebar({
       unsubEmail();
     };
   }, []);
-
-  const totalPending = Object.values(projectBadges).reduce((a, b) => a + b, 0);
 
   return (
     <aside 
@@ -99,11 +93,6 @@ export default function Sidebar({
         >
           <Icon name="layout-dashboard" size={18} /> 
           <span className="font-medium text-sm">Dashboard</span>
-          {totalPending > 0 && view !== 'overview' && (
-            <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
-              {totalPending}
-            </span>
-          )}
         </button>
 
         <button 
@@ -148,7 +137,7 @@ export default function Sidebar({
                     projectStatus === 'completed' ? 'bg-blue-500' :
                     projectStatus === 'Syncing...' ? 'bg-amber-500 animate-pulse' : 
                     projectStatus === 'Sync Error' ? 'bg-red-500' :
-                    badge > 0 ? 'bg-red-400' : 'bg-emerald-400'
+                    'bg-emerald-400'
                   }`} />
                   <div className="flex-1 min-w-0">
                     <span className="text-xs font-medium truncate block">{p.name}</span>
