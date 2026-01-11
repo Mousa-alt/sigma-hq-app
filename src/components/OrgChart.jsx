@@ -4,18 +4,50 @@ import { db } from '../firebase';
 import { APP_ID, COLORS } from '../config';
 import Icon from './Icon';
 
-// Position hierarchy levels
+// Complete Position hierarchy - All company roles
 const POSITIONS = [
-  { id: 'head', label: 'Head of Technical Office', level: 0, color: '#0A1628' },
-  { id: 'team_leader', label: 'Team Leader', level: 1, color: '#1E40AF' },
-  { id: 'senior', label: 'Senior Engineer', level: 2, color: '#0369A1' },
-  { id: 'toe', label: 'Technical Office Engineer', level: 3, color: '#0891B2' },
-  { id: 'junior', label: 'Junior Engineer', level: 4, color: '#06B6D4' },
-  { id: 'trainee', label: 'Trainee', level: 5, color: '#22D3EE' },
-  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 1, color: '#7C3AED', department: 'Planning' },
+  // Executive Level
+  { id: 'executive', label: 'Executive Manager', level: 0, color: '#0F172A', department: 'Management' },
+  
+  // Technical Office
+  { id: 'head', label: 'Head of Technical Office', level: 1, color: '#0A1628', department: 'Technical Office' },
+  { id: 'team_leader', label: 'Team Leader', level: 2, color: '#1E40AF', department: 'Technical Office' },
+  { id: 'senior', label: 'Senior TOE', level: 3, color: '#0369A1', department: 'Technical Office' },
+  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#0891B2', department: 'Technical Office' },
+  { id: 'junior', label: 'Junior TOE', level: 5, color: '#06B6D4', department: 'Technical Office' },
+  { id: 'trainee', label: 'Trainee', level: 6, color: '#22D3EE', department: 'Technical Office' },
+  
+  // Project Management
+  { id: 'senior_pm', label: 'Senior Project Manager', level: 1, color: '#7C3AED', department: 'Project Management' },
+  { id: 'pm', label: 'Project Manager', level: 2, color: '#8B5CF6', department: 'Project Management' },
+  
+  // Site Team
+  { id: 'site_manager', label: 'Site Manager', level: 2, color: '#059669', department: 'Site' },
+  { id: 'site_engineer', label: 'Site Engineer', level: 3, color: '#10B981', department: 'Site' },
+  { id: 'supervisor', label: 'Supervisor', level: 4, color: '#34D399', department: 'Site' },
+  
+  // MEP Department
+  { id: 'mep_team_leader', label: 'MEP Team Leader', level: 2, color: '#DC2626', department: 'MEP' },
+  { id: 'mep_senior', label: 'Senior MEP Engineer', level: 3, color: '#EF4444', department: 'MEP' },
+  { id: 'mep_toe', label: 'MEP Technical Office Engineer', level: 4, color: '#F87171', department: 'MEP' },
+  { id: 'mep_junior', label: 'Junior MEP Engineer', level: 5, color: '#FCA5A5', department: 'MEP' },
+  
+  // Planning
+  { id: 'planning_head', label: 'Head of Planning', level: 1, color: '#EA580C', department: 'Planning' },
+  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 2, color: '#F97316', department: 'Planning' },
+  { id: 'planning_engineer', label: 'Planning Engineer', level: 3, color: '#FB923C', department: 'Planning' },
 ];
 
-const DEPARTMENTS = ['Technical Office', 'Planning'];
+const DEPARTMENTS = ['Management', 'Technical Office', 'Project Management', 'Site', 'MEP', 'Planning'];
+
+const DEPARTMENT_COLORS = {
+  'Management': '#0F172A',
+  'Technical Office': '#0A1628',
+  'Project Management': '#7C3AED',
+  'Site': '#059669',
+  'MEP': '#DC2626',
+  'Planning': '#EA580C'
+};
 
 export default function OrgChart({ projects }) {
   const [engineers, setEngineers] = useState([]);
@@ -23,7 +55,7 @@ export default function OrgChart({ projects }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingEngineer, setEditingEngineer] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('chart'); // 'chart' or 'assignments'
+  const [activeTab, setActiveTab] = useState('chart');
 
   // Load engineers
   useEffect(() => {
@@ -72,7 +104,7 @@ export default function OrgChart({ projects }) {
 
   // Delete engineer
   const handleDeleteEngineer = async (id) => {
-    if (!confirm('Remove this engineer?')) return;
+    if (!confirm('Remove this team member?')) return;
     await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'engineers', id));
   };
 
@@ -90,17 +122,6 @@ export default function OrgChart({ projects }) {
     }
   };
 
-  // Group engineers by department and level
-  const toEngineers = engineers.filter(e => {
-    const pos = POSITIONS.find(p => p.id === e.position);
-    return !pos?.department || pos.department === 'Technical Office';
-  });
-  
-  const planningEngineers = engineers.filter(e => {
-    const pos = POSITIONS.find(p => p.id === e.position);
-    return pos?.department === 'Planning';
-  });
-
   const getEngineerProjects = (engineerId) => {
     return assignments
       .filter(a => a.engineerId === engineerId)
@@ -108,22 +129,73 @@ export default function OrgChart({ projects }) {
       .filter(Boolean);
   };
 
+  // Group engineers by department
+  const getEngineersByDepartment = (dept) => {
+    return engineers.filter(e => {
+      const pos = POSITIONS.find(p => p.id === e.position);
+      return pos?.department === dept;
+    });
+  };
+
+  // Stats
+  const totalPeople = engineers.length;
+  const totalProjects = projects.length;
+  const departmentCounts = DEPARTMENTS.reduce((acc, dept) => {
+    acc[dept] = getEngineersByDepartment(dept).length;
+    return acc;
+  }, {});
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Header with Stats */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Organization</h1>
           <p className="text-slate-500 text-xs mt-0.5">Team structure & project assignments</p>
         </div>
-        <button
-          onClick={() => { setEditingEngineer(null); setIsModalOpen(true); }}
-          className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm font-medium transition-all"
-          style={{ backgroundColor: COLORS.blue }}
-        >
-          <Icon name="user-plus" size={16} />
-          Add Engineer
-        </button>
+        
+        {/* Smart Counts */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6 bg-white px-4 py-2 rounded-xl border border-slate-200">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-slate-900">{totalPeople}</p>
+              <p className="text-[10px] text-slate-400 uppercase">Team Members</p>
+            </div>
+            <div className="w-px h-8 bg-slate-200"></div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-slate-900">{totalProjects}</p>
+              <p className="text-[10px] text-slate-400 uppercase">Projects</p>
+            </div>
+          </div>
+          
+          <button
+            onClick={() => { setEditingEngineer(null); setIsModalOpen(true); }}
+            className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm font-medium transition-all"
+            style={{ backgroundColor: COLORS.blue }}
+          >
+            <Icon name="user-plus" size={16} />
+            Add Member
+          </button>
+        </div>
+      </div>
+
+      {/* Department Quick Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        {DEPARTMENTS.map(dept => (
+          <div 
+            key={dept}
+            className="bg-white rounded-lg border border-slate-200 p-3 flex items-center gap-3"
+          >
+            <div 
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: DEPARTMENT_COLORS[dept] }}
+            ></div>
+            <div>
+              <p className="text-xs font-medium text-slate-700">{dept}</p>
+              <p className="text-lg font-bold text-slate-900">{departmentCounts[dept] || 0}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Tabs */}
@@ -138,6 +210,15 @@ export default function OrgChart({ projects }) {
           Org Chart
         </button>
         <button
+          onClick={() => setActiveTab('list')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'list' ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200'
+          }`}
+        >
+          <Icon name="list" size={14} className="inline mr-2" />
+          Team List
+        </button>
+        <button
           onClick={() => setActiveTab('assignments')}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
             activeTab === 'assignments' ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200'
@@ -149,104 +230,53 @@ export default function OrgChart({ projects }) {
       </div>
 
       {activeTab === 'chart' ? (
-        /* Org Chart View */
+        /* Org Chart View - By Department */
         <div className="bg-white rounded-xl border border-slate-200 p-6 overflow-x-auto">
-          <div className="min-w-[800px]">
-            {/* Technical Office Tree */}
-            <div className="flex flex-col items-center">
-              {/* Head */}
-              {toEngineers.filter(e => e.position === 'head').map(eng => (
-                <EngineerCard 
-                  key={eng.id} 
-                  engineer={eng} 
-                  projects={getEngineerProjects(eng.id)}
-                  onEdit={() => { setEditingEngineer(eng); setIsModalOpen(true); }}
-                  onDelete={() => handleDeleteEngineer(eng.id)}
-                />
-              ))}
+          <div className="min-w-[1000px] space-y-8">
+            {DEPARTMENTS.map(dept => {
+              const deptEngineers = getEngineersByDepartment(dept);
+              if (deptEngineers.length === 0) return null;
               
-              {/* Branches: Team Leaders + Planning */}
-              <div className="flex gap-16 mt-4">
-                {/* Technical Office Branch */}
-                <div className="flex flex-col items-center">
-                  <div className="w-px h-8 bg-slate-300"></div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-4">Technical Office</p>
-                  
-                  {/* Team Leaders */}
-                  <div className="flex gap-8">
-                    {toEngineers.filter(e => e.position === 'team_leader').map(tl => (
-                      <div key={tl.id} className="flex flex-col items-center">
-                        <EngineerCard 
-                          engineer={tl} 
-                          projects={getEngineerProjects(tl.id)}
-                          onEdit={() => { setEditingEngineer(tl); setIsModalOpen(true); }}
-                          onDelete={() => handleDeleteEngineer(tl.id)}
-                        />
-                        
-                        {/* Team members under this leader */}
-                        <div className="mt-3 space-y-2">
-                          {toEngineers
-                            .filter(e => e.reportsTo === tl.id)
-                            .map(member => (
-                              <EngineerCard 
-                                key={member.id}
-                                engineer={member}
-                                projects={getEngineerProjects(member.id)}
-                                size="small"
-                                onEdit={() => { setEditingEngineer(member); setIsModalOpen(true); }}
-                                onDelete={() => handleDeleteEngineer(member.id)}
-                              />
-                            ))}
-                        </div>
-                      </div>
-                    ))}
+              // Group by level within department
+              const byLevel = {};
+              deptEngineers.forEach(eng => {
+                const pos = POSITIONS.find(p => p.id === eng.position);
+                const level = pos?.level || 99;
+                if (!byLevel[level]) byLevel[level] = [];
+                byLevel[level].push(eng);
+              });
+              
+              return (
+                <div key={dept} className="space-y-4">
+                  {/* Department Header */}
+                  <div className="flex items-center gap-3">
+                    <div 
+                      className="w-4 h-4 rounded"
+                      style={{ backgroundColor: DEPARTMENT_COLORS[dept] }}
+                    ></div>
+                    <h3 className="text-sm font-semibold text-slate-700">{dept}</h3>
+                    <span className="text-xs text-slate-400">({deptEngineers.length} members)</span>
                   </div>
                   
-                  {/* Unassigned engineers */}
-                  {toEngineers.filter(e => 
-                    !['head', 'team_leader'].includes(e.position) && !e.reportsTo
-                  ).length > 0 && (
-                    <div className="mt-6 pt-4 border-t border-dashed border-slate-200">
-                      <p className="text-[10px] text-slate-400 mb-2">Unassigned</p>
-                      <div className="flex flex-wrap gap-2">
-                        {toEngineers.filter(e => 
-                          !['head', 'team_leader'].includes(e.position) && !e.reportsTo
-                        ).map(eng => (
+                  {/* Hierarchy Display */}
+                  <div className="pl-4 border-l-2 border-slate-100 space-y-3">
+                    {Object.keys(byLevel).sort((a, b) => a - b).map(level => (
+                      <div key={level} className="flex flex-wrap gap-3">
+                        {byLevel[level].map(eng => (
                           <EngineerCard 
                             key={eng.id}
                             engineer={eng}
                             projects={getEngineerProjects(eng.id)}
-                            size="small"
                             onEdit={() => { setEditingEngineer(eng); setIsModalOpen(true); }}
                             onDelete={() => handleDeleteEngineer(eng.id)}
                           />
                         ))}
                       </div>
-                    </div>
-                  )}
+                    ))}
+                  </div>
                 </div>
-
-                {/* Planning Branch */}
-                <div className="flex flex-col items-center">
-                  <div className="w-px h-8 bg-purple-300"></div>
-                  <p className="text-[10px] font-semibold text-purple-400 uppercase tracking-wider mb-4">Planning</p>
-                  
-                  {planningEngineers.map(eng => (
-                    <EngineerCard 
-                      key={eng.id}
-                      engineer={eng}
-                      projects={getEngineerProjects(eng.id)}
-                      onEdit={() => { setEditingEngineer(eng); setIsModalOpen(true); }}
-                      onDelete={() => handleDeleteEngineer(eng.id)}
-                    />
-                  ))}
-                  
-                  {planningEngineers.length === 0 && (
-                    <div className="text-xs text-slate-400 italic">No planning engineers</div>
-                  )}
-                </div>
-              </div>
-            </div>
+              );
+            })}
 
             {/* Empty state */}
             {engineers.length === 0 && (
@@ -254,11 +284,95 @@ export default function OrgChart({ projects }) {
                 <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Icon name="users" size={24} className="text-slate-400" />
                 </div>
-                <h3 className="text-base font-semibold text-slate-900">No Engineers Yet</h3>
+                <h3 className="text-base font-semibold text-slate-900">No Team Members Yet</h3>
                 <p className="text-slate-500 mt-1 text-sm">Add your team to get started</p>
               </div>
             )}
           </div>
+        </div>
+      ) : activeTab === 'list' ? (
+        /* Team List View */
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3">Name</th>
+                <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3">Position</th>
+                <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3">Department</th>
+                <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3">Projects</th>
+                <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3">Contact</th>
+                <th className="text-right text-xs font-semibold text-slate-600 px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {engineers.map(eng => {
+                const pos = POSITIONS.find(p => p.id === eng.position);
+                const engProjects = getEngineerProjects(eng.id);
+                return (
+                  <tr key={eng.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div 
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold"
+                          style={{ backgroundColor: pos?.color || '#94A3B8' }}
+                        >
+                          {eng.name?.charAt(0) || '?'}
+                        </div>
+                        <span className="font-medium text-slate-900 text-sm">{eng.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{pos?.label || 'Unknown'}</td>
+                    <td className="px-4 py-3">
+                      <span 
+                        className="text-xs px-2 py-1 rounded-full text-white"
+                        style={{ backgroundColor: DEPARTMENT_COLORS[pos?.department] || '#94A3B8' }}
+                      >
+                        {pos?.department || 'N/A'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {engProjects.slice(0, 2).map(p => (
+                          <span key={p.id} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
+                            {p.name}
+                          </span>
+                        ))}
+                        {engProjects.length > 2 && (
+                          <span className="text-[10px] text-slate-400">+{engProjects.length - 2}</span>
+                        )}
+                        {engProjects.length === 0 && (
+                          <span className="text-[10px] text-slate-300">No projects</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      {eng.phone || eng.email || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button 
+                        onClick={() => { setEditingEngineer(eng); setIsModalOpen(true); }}
+                        className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600"
+                      >
+                        <Icon name="pencil" size={14} />
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteEngineer(eng.id)}
+                        className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500 ml-1"
+                      >
+                        <Icon name="trash-2" size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          
+          {engineers.length === 0 && (
+            <div className="text-center py-12 text-slate-400">
+              No team members yet
+            </div>
+          )}
         </div>
       ) : (
         /* Assignment Matrix View */
@@ -267,11 +381,10 @@ export default function OrgChart({ projects }) {
             <table className="w-full">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3 sticky left-0 bg-slate-50">Engineer</th>
+                  <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3 sticky left-0 bg-slate-50 min-w-[200px]">Team Member</th>
                   {projects.map(p => (
                     <th key={p.id} className="text-center text-xs font-semibold text-slate-600 px-3 py-3 min-w-[100px]">
                       <div className="truncate max-w-[100px]" title={p.name}>{p.name}</div>
-                      <div className="text-[10px] font-normal text-slate-400">{p.venue || '-'}</div>
                     </th>
                   ))}
                 </tr>
@@ -279,22 +392,35 @@ export default function OrgChart({ projects }) {
               <tbody>
                 {engineers.map(eng => {
                   const pos = POSITIONS.find(p => p.id === eng.position);
+                  // Skip assignment for Executive/Head levels - they oversee all
+                  const skipAssignment = ['executive', 'head'].includes(eng.position);
+                  
                   return (
                     <tr key={eng.id} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="px-4 py-3 sticky left-0 bg-white">
                         <div className="flex items-center gap-2">
                           <div 
-                            className="w-2 h-2 rounded-full" 
+                            className="w-2 h-2 rounded-full flex-shrink-0" 
                             style={{ backgroundColor: pos?.color || '#94A3B8' }}
                           ></div>
-                          <div>
-                            <p className="text-sm font-medium text-slate-900">{eng.name}</p>
-                            <p className="text-[10px] text-slate-400">{pos?.label || 'Unknown'}</p>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-900 truncate">{eng.name}</p>
+                            <p className="text-[10px] text-slate-400 truncate">{pos?.label || 'Unknown'}</p>
                           </div>
                         </div>
                       </td>
                       {projects.map(p => {
                         const isAssigned = assignments.some(a => a.engineerId === eng.id && a.projectId === p.id);
+                        
+                        // For executives/heads, show "All" indicator
+                        if (skipAssignment) {
+                          return (
+                            <td key={p.id} className="text-center px-3 py-3">
+                              <span className="text-[10px] text-slate-300">—</span>
+                            </td>
+                          );
+                        }
+                        
                         return (
                           <td key={p.id} className="text-center px-3 py-3">
                             <button
@@ -318,7 +444,7 @@ export default function OrgChart({ projects }) {
             
             {engineers.length === 0 && (
               <div className="text-center py-12 text-slate-400">
-                Add engineers to start assigning
+                Add team members to start assigning
               </div>
             )}
           </div>
@@ -340,68 +466,60 @@ export default function OrgChart({ projects }) {
 }
 
 // Engineer Card Component
-function EngineerCard({ engineer, projects, size = 'normal', onEdit, onDelete }) {
+function EngineerCard({ engineer, projects, onEdit, onDelete }) {
   const pos = POSITIONS.find(p => p.id === engineer.position);
-  const isSmall = size === 'small';
 
   return (
-    <div 
-      className={`bg-white border border-slate-200 rounded-xl hover:shadow-md transition-all group ${
-        isSmall ? 'p-2 min-w-[120px]' : 'p-4 min-w-[180px]'
-      }`}
-    >
+    <div className="bg-white border border-slate-200 rounded-xl p-3 hover:shadow-md transition-all group min-w-[160px] max-w-[200px]">
       <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div 
-            className={`rounded-full flex items-center justify-center text-white font-semibold ${
-              isSmall ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-sm'
-            }`}
+            className="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold text-sm flex-shrink-0"
             style={{ backgroundColor: pos?.color || '#94A3B8' }}
           >
             {engineer.name?.charAt(0) || '?'}
           </div>
-          <div>
-            <p className={`font-medium text-slate-900 ${isSmall ? 'text-xs' : 'text-sm'}`}>
+          <div className="min-w-0">
+            <p className="font-medium text-slate-900 text-sm truncate" title={engineer.name}>
               {engineer.name}
             </p>
-            <p className={`text-slate-400 ${isSmall ? 'text-[9px]' : 'text-[10px]'}`}>
+            <p className="text-[10px] text-slate-400 truncate">
               {pos?.label || 'Unknown'}
             </p>
           </div>
         </div>
         
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5 flex-shrink-0">
           <button onClick={onEdit} className="p-1 hover:bg-slate-100 rounded">
-            <Icon name="pencil" size={12} className="text-slate-400" />
+            <Icon name="pencil" size={11} className="text-slate-400" />
           </button>
           <button onClick={onDelete} className="p-1 hover:bg-red-50 rounded">
-            <Icon name="trash-2" size={12} className="text-red-400" />
+            <Icon name="trash-2" size={11} className="text-red-400" />
           </button>
         </div>
       </div>
 
-      {/* Assigned projects */}
-      {projects.length > 0 && !isSmall && (
-        <div className="mt-3 pt-3 border-t border-slate-100">
-          <p className="text-[9px] text-slate-400 uppercase tracking-wider mb-1">Projects</p>
+      {/* Assigned projects - only show for non-management */}
+      {!['executive', 'head'].includes(engineer.position) && projects.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-slate-100">
           <div className="flex flex-wrap gap-1">
-            {projects.slice(0, 3).map(p => (
-              <span key={p.id} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
+            {projects.slice(0, 2).map(p => (
+              <span key={p.id} className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full truncate max-w-[70px]" title={p.name}>
                 {p.name}
               </span>
             ))}
-            {projects.length > 3 && (
-              <span className="text-[10px] text-slate-400">+{projects.length - 3}</span>
+            {projects.length > 2 && (
+              <span className="text-[9px] text-slate-400">+{projects.length - 2}</span>
             )}
           </div>
         </div>
       )}
 
       {/* Phone */}
-      {engineer.phone && !isSmall && (
-        <div className="mt-2 flex items-center gap-1 text-[10px] text-slate-400">
+      {engineer.phone && (
+        <div className="mt-1.5 flex items-center gap-1 text-[10px] text-slate-400">
           <Icon name="phone" size={10} />
-          {engineer.phone}
+          <span className="truncate">{engineer.phone}</span>
         </div>
       )}
     </div>
@@ -431,13 +549,19 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
     return pos && currentPos && pos.level < currentPos.level && e.id !== engineer?.id;
   });
 
+  // Group positions by department for cleaner dropdown
+  const positionsByDept = DEPARTMENTS.reduce((acc, dept) => {
+    acc[dept] = POSITIONS.filter(p => p.department === dept);
+    return acc;
+  }, {});
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-        <div className="p-6 border-b border-slate-100">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="p-6 border-b border-slate-100 flex-shrink-0">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900">
-              {engineer ? 'Edit Engineer' : 'Add Engineer'}
+              {engineer ? 'Edit Team Member' : 'Add Team Member'}
             </h2>
             <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
               <Icon name="x" size={20} className="text-slate-400" />
@@ -445,7 +569,7 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-2">Name *</label>
             <input
@@ -464,10 +588,14 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
               onChange={(e) => setFormData({ ...formData, position: e.target.value, reportsTo: '' })}
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-400"
             >
-              {POSITIONS.map(pos => (
-                <option key={pos.id} value={pos.id}>
-                  {pos.label} {pos.department ? `(${pos.department})` : ''}
-                </option>
+              {DEPARTMENTS.map(dept => (
+                <optgroup key={dept} label={dept}>
+                  {positionsByDept[dept].map(pos => (
+                    <option key={pos.id} value={pos.id}>
+                      {pos.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>
@@ -527,7 +655,7 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
               {loading ? (
                 <><Icon name="loader-2" size={16} className="animate-spin" />Saving...</>
               ) : (
-                <><Icon name="check" size={16} />{engineer ? 'Update' : 'Add Engineer'}</>
+                <><Icon name="check" size={16} />{engineer ? 'Update' : 'Add'}</>
               )}
             </button>
           </div>
