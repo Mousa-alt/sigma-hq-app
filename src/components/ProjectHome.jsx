@@ -24,6 +24,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
   const [expandedMessage, setExpandedMessage] = useState(null);
   const [expandedEmail, setExpandedEmail] = useState(null);
   const [loadingTasks, setLoadingTasks] = useState(true);
+  const [taskHubTab, setTaskHubTab] = useState('all'); // 'all', 'manual', 'whatsapp', 'email'
 
   // Status display config
   const statusConfig = {
@@ -45,7 +46,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     if (project?.status === 'tender') return 'tender';
     if (project?.status === 'planning') return 'planning';
     
-    // Check completion date
+    // Check completion date - if set and in the past, it's completed
     if (project?.completionDate) {
       const completionDate = new Date(project.completionDate);
       completionDate.setHours(0, 0, 0, 0);
@@ -54,7 +55,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
       }
     }
     
-    // Check if past expected end date without completion
+    // Check if past expected end date without completion - OVERDUE
     if (project?.expectedEndDate && !project?.completionDate) {
       const expectedEnd = new Date(project.expectedEndDate);
       expectedEnd.setHours(0, 0, 0, 0);
@@ -383,6 +384,83 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
   // Count actionable items for Task Hub
   const actionableWhatsapp = whatsappMessages.filter(m => m.is_actionable && m.status !== 'done');
   const actionableEmails = recentEmails.filter(e => e.is_actionable && e.status !== 'done');
+  const incompleteTasks = tasks.filter(t => !t.done);
+
+  // Build unified task list for Task Hub
+  const buildUnifiedTasks = () => {
+    let items = [];
+    
+    // Manual tasks
+    if (taskHubTab === 'all' || taskHubTab === 'manual') {
+      items.push(...tasks.map(t => ({
+        id: t.id,
+        type: 'task',
+        text: t.text,
+        done: t.done,
+        source: t.source || 'manual',
+        created_at: t.created_at,
+        urgency: 'medium'
+      })));
+    }
+    
+    // WhatsApp actionable messages
+    if (taskHubTab === 'all' || taskHubTab === 'whatsapp') {
+      items.push(...actionableWhatsapp.map(m => ({
+        id: m.id,
+        type: 'whatsapp',
+        text: m.summary || m.text?.substring(0, 80) || 'WhatsApp action',
+        done: m.status === 'done',
+        source: 'whatsapp',
+        created_at: m.created_at,
+        urgency: m.urgency || 'medium',
+        action_type: m.action_type,
+        sender: m.sender_name || m.group_name
+      })));
+    }
+    
+    // Email actionable items
+    if (taskHubTab === 'all' || taskHubTab === 'email') {
+      items.push(...actionableEmails.map(e => ({
+        id: e.id,
+        type: 'email',
+        text: e.subject || 'Email action',
+        done: e.status === 'done',
+        source: 'email',
+        created_at: e.date,
+        urgency: 'medium',
+        action_type: e.doc_type,
+        sender: e.from?.split('<')[0]?.trim()
+      })));
+    }
+    
+    // Sort: incomplete first, then by urgency, then by date
+    return items.sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      const urgencyOrder = { high: 0, medium: 1, low: 2 };
+      if (urgencyOrder[a.urgency] !== urgencyOrder[b.urgency]) {
+        return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
+      }
+      const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
+      const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
+      return dateB - dateA;
+    });
+  };
+
+  const unifiedTasks = buildUnifiedTasks();
+  const totalActionable = incompleteTasks.length + actionableWhatsapp.length + actionableEmails.length;
+
+  // Get completion display text
+  const getCompletionDisplay = () => {
+    if (project?.completionDate) {
+      return { text: formatDate(project.completionDate), color: 'text-emerald-600' };
+    }
+    if (currentStatus === 'overdue') {
+      return { text: 'Overdue', color: 'text-red-500' };
+    }
+    return { text: 'Ongoing', color: 'text-slate-400' };
+  };
+
+  const completionDisplay = getCompletionDisplay();
 
   return (
     <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-24">
@@ -439,8 +517,8 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         </div>
         <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100 col-span-2 sm:col-span-1">
           <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Completed</p>
-          <span className={`text-[10px] sm:text-xs font-semibold ${project?.completionDate ? 'text-emerald-600' : 'text-slate-400'}`}>
-            {project?.completionDate ? formatDate(project.completionDate) : 'Ongoing'}
+          <span className={`text-[10px] sm:text-xs font-semibold ${completionDisplay.color}`}>
+            {completionDisplay.text}
           </span>
         </div>
       </div>
@@ -488,19 +566,50 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         </div>
       </div>
 
-      {/* Tasks Hub - Real data from Firestore */}
+      {/* Tasks Hub - Unified view of all actionable items */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400">Tasks Hub</h3>
           <div className="flex items-center gap-2">
-            {(actionableWhatsapp.length > 0 || actionableEmails.length > 0) && (
-              <span className="text-[8px] text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full">
-                {actionableWhatsapp.length + actionableEmails.length} from channels
+            {totalActionable > 0 && (
+              <span className="text-[8px] text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full font-medium">
+                {totalActionable} pending
               </span>
             )}
           </div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          {/* Tab filters */}
+          <div className="p-2 border-b border-slate-100 bg-slate-50 flex gap-1 overflow-x-auto">
+            {[
+              { id: 'all', label: 'All', count: incompleteTasks.length + actionableWhatsapp.length + actionableEmails.length },
+              { id: 'manual', label: 'Manual', count: incompleteTasks.length, icon: 'edit-2' },
+              { id: 'whatsapp', label: 'WhatsApp', count: actionableWhatsapp.length, icon: 'message-circle' },
+              { id: 'email', label: 'Email', count: actionableEmails.length, icon: 'mail' },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setTaskHubTab(tab.id)}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-medium whitespace-nowrap transition-colors ${
+                  taskHubTab === tab.id 
+                    ? 'bg-blue-500 text-white' 
+                    : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {tab.icon && <Icon name={tab.icon} size={10} />}
+                {tab.label}
+                {tab.count > 0 && (
+                  <span className={`ml-1 px-1 rounded text-[8px] ${
+                    taskHubTab === tab.id ? 'bg-blue-400' : 'bg-slate-300'
+                  }`}>
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Add task input */}
           <div className="p-3 border-b border-slate-100 flex gap-2">
             <input 
               type="text" 
@@ -512,34 +621,74 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
             />
             <button onClick={addTask} className="px-2.5 py-1 bg-blue-500 text-white rounded-lg text-[10px] font-medium hover:bg-blue-600 flex-shrink-0">Add</button>
           </div>
-          <div className="divide-y divide-slate-100 max-h-[200px] overflow-y-auto">
-            {loadingTasks ? (
+
+          {/* Unified task list */}
+          <div className="divide-y divide-slate-100 max-h-[280px] overflow-y-auto">
+            {loadingTasks && loadingWhatsapp && loadingEmails ? (
               <div className="p-4 text-center">
                 <Icon name="loader-2" size={16} className="animate-spin text-slate-400 mx-auto" />
               </div>
-            ) : tasks.length > 0 ? (
-              tasks.map(task => {
-                const sourceStyle = getTaskSourceStyle(task.source);
+            ) : unifiedTasks.length > 0 ? (
+              unifiedTasks.slice(0, 15).map(item => {
+                const sourceStyle = getTaskSourceStyle(item.source);
+                const isChannelItem = item.type === 'whatsapp' || item.type === 'email';
+                
                 return (
-                  <div key={task.id} className="flex items-center gap-2 p-3 hover:bg-slate-50">
-                    <button onClick={() => toggleTask(task.id, task.done)} className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'}`}>
-                      {task.done && <Icon name="check" size={10} />}
+                  <div key={`${item.type}-${item.id}`} className={`flex items-start gap-2 p-3 hover:bg-slate-50 ${item.urgency === 'high' ? 'border-l-2 border-l-red-400' : ''}`}>
+                    <button 
+                      onClick={() => {
+                        if (item.type === 'task') {
+                          toggleTask(item.id, item.done);
+                        } else {
+                          markMessageDone(item.id, item.type === 'email' ? 'email' : 'whatsapp');
+                        }
+                      }} 
+                      className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${item.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-blue-400'}`}
+                    >
+                      {item.done && <Icon name="check" size={10} />}
                     </button>
                     <div className="flex-1 min-w-0">
-                      <span className={`text-xs ${task.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.text}</span>
-                      {task.source !== 'manual' && (
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <Icon name={sourceStyle.icon} size={8} className={sourceStyle.color.split(' ')[0]} />
+                      <span className={`text-xs block ${item.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                        {item.text}
+                      </span>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <div className="flex items-center gap-1">
+                          <Icon name={sourceStyle.icon} size={9} className={sourceStyle.color.split(' ')[0]} />
                           <span className={`text-[8px] ${sourceStyle.color.split(' ')[0]}`}>{sourceStyle.label}</span>
                         </div>
-                      )}
+                        {item.sender && (
+                          <span className="text-[8px] text-slate-400">• {item.sender}</span>
+                        )}
+                        {item.urgency === 'high' && (
+                          <span className="text-[8px] text-red-500 font-medium">🔴 Urgent</span>
+                        )}
+                        {item.action_type && item.action_type !== 'info' && (
+                          <span className={`text-[8px] px-1 py-0.5 rounded ${getActionTypeStyle(item.action_type).color}`}>
+                            {getActionTypeStyle(item.action_type).label}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <button onClick={() => deleteTask(task.id)} className="p-1 text-slate-400 hover:text-red-500 flex-shrink-0"><Icon name="x" size={12} /></button>
+                    {item.type === 'task' && (
+                      <button onClick={() => deleteTask(item.id)} className="p-1 text-slate-400 hover:text-red-500 flex-shrink-0">
+                        <Icon name="x" size={12} />
+                      </button>
+                    )}
                   </div>
                 );
               })
             ) : (
-              <div className="p-4 text-center text-slate-400 text-xs">No tasks yet. Add one above!</div>
+              <div className="p-4 text-center text-slate-400 text-xs">
+                {taskHubTab === 'all' ? (
+                  <>✨ No pending tasks! Add one above.</>
+                ) : taskHubTab === 'manual' ? (
+                  <>No manual tasks. Add one above!</>
+                ) : taskHubTab === 'whatsapp' ? (
+                  <>No actionable WhatsApp messages</>
+                ) : (
+                  <>No actionable emails</>
+                )}
+              </div>
             )}
           </div>
         </div>
