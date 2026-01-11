@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { COLORS, SYNC_WORKER_URL } from '../config';
 import { db } from '../firebase';
-import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 
 export default function Overview({ projects, onSelectProject }) {
   const [stats, setStats] = useState({
@@ -16,6 +16,11 @@ export default function Overview({ projects, onSelectProject }) {
   const [assignments, setAssignments] = useState([]);
   const [engineers, setEngineers] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // Quick Add Task state
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [newTask, setNewTask] = useState({ text: '', project: '', urgency: 'medium' });
+  const [addingTask, setAddingTask] = useState(false);
 
   useEffect(() => {
     // Listen to WhatsApp messages for stats
@@ -85,6 +90,40 @@ export default function Overview({ projects, onSelectProject }) {
       unsubEngineers();
     };
   }, [projects]);
+
+  // Quick add task handler
+  const handleAddTask = async () => {
+    if (!newTask.text.trim()) {
+      alert('Please enter a task description');
+      return;
+    }
+    
+    setAddingTask(true);
+    try {
+      // Add to whatsapp_messages collection as a manual task
+      await addDoc(collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages'), {
+        text: newTask.text.trim(),
+        summary: newTask.text.trim(),
+        project_name: newTask.project || 'General',
+        is_actionable: true,
+        action_type: 'task',
+        urgency: newTask.urgency,
+        status: 'pending',
+        sender_name: 'Dashboard',
+        group_name: 'Manual Entry',
+        created_at: new Date().toISOString(),
+        source: 'dashboard'
+      });
+      
+      setNewTask({ text: '', project: '', urgency: 'medium' });
+      setShowAddTask(false);
+    } catch (err) {
+      console.error('Error adding task:', err);
+      alert('Error adding task');
+    } finally {
+      setAddingTask(false);
+    }
+  };
 
   // Get team count for a project
   const getProjectTeamCount = (projectId) => {
@@ -164,6 +203,14 @@ export default function Overview({ projects, onSelectProject }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Quick Add Task Button */}
+          <button
+            onClick={() => setShowAddTask(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-medium transition-all"
+          >
+            <Icon name="plus" size={16} />
+            Add Task
+          </button>
           <span className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full font-medium">
             <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
             System Online
@@ -427,6 +474,90 @@ export default function Overview({ projects, onSelectProject }) {
           </div>
           <h3 className="text-sm font-semibold text-emerald-900">All Clear!</h3>
           <p className="text-emerald-700 mt-1 text-xs">No pending action items across all projects</p>
+        </div>
+      )}
+
+      {/* Quick Add Task Modal */}
+      {showAddTask && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-slate-100">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-amber-100 rounded-lg">
+                    <Icon name="check-square" size={20} className="text-amber-600" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-slate-900">Quick Add Task</h2>
+                </div>
+                <button onClick={() => setShowAddTask(false)} className="p-2 hover:bg-slate-100 rounded-lg">
+                  <Icon name="x" size={20} className="text-slate-400" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-2">Task Description *</label>
+                <textarea
+                  value={newTask.text}
+                  onChange={(e) => setNewTask({ ...newTask, text: e.target.value })}
+                  placeholder="e.g., Review shop drawings for Zone A, Follow up with consultant on RFI..."
+                  rows={3}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-amber-400"
+                  autoFocus
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-2">Project</label>
+                  <select
+                    value={newTask.project}
+                    onChange={(e) => setNewTask({ ...newTask, project: e.target.value })}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-amber-400"
+                  >
+                    <option value="">General</option>
+                    {projects.map(p => (
+                      <option key={p.id} value={p.name}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-2">Urgency</label>
+                  <select
+                    value={newTask.urgency}
+                    onChange={(e) => setNewTask({ ...newTask, urgency: e.target.value })}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-amber-400"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High (Urgent)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setShowAddTask(false)}
+                  className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddTask}
+                  disabled={addingTask}
+                  className="flex-1 px-4 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {addingTask ? (
+                    <><Icon name="loader-2" size={16} className="animate-spin" />Adding...</>
+                  ) : (
+                    <><Icon name="plus" size={16} />Add Task</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
