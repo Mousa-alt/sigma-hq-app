@@ -180,12 +180,40 @@ export default function Overview({ projects, onSelectProject }) {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  const formatDateRange = (start, end) => {
-    if (!start && !end) return null;
+  // FIXED: Proper date display logic
+  const formatProjectDates = (project) => {
     const opts = { month: 'short', year: '2-digit' };
-    const startStr = start ? new Date(start).toLocaleDateString('en-US', opts) : '?';
-    const endStr = end ? new Date(end).toLocaleDateString('en-US', opts) : 'ongoing';
-    return `${startStr} → ${endStr}`;
+    const startStr = project.startDate 
+      ? new Date(project.startDate).toLocaleDateString('en-US', opts) 
+      : null;
+    
+    // Check if completed first
+    if (project.status === 'completed' || project.completionDate) {
+      const completedStr = project.completionDate 
+        ? new Date(project.completionDate).toLocaleDateString('en-US', opts)
+        : 'Completed';
+      return startStr ? `${startStr} → ${completedStr}` : completedStr;
+    }
+    
+    // For active/ongoing projects, show expected end date
+    if (project.expectedEndDate) {
+      const endStr = new Date(project.expectedEndDate).toLocaleDateString('en-US', opts);
+      return startStr ? `${startStr} → ${endStr}` : `Target: ${endStr}`;
+    }
+    
+    // Only start date known
+    if (startStr) {
+      return `${startStr} → ongoing`;
+    }
+    
+    return null;
+  };
+
+  // Check if project is overdue
+  const isProjectOverdue = (project) => {
+    if (project.status === 'completed' || project.completionDate) return false;
+    if (!project.expectedEndDate) return false;
+    return new Date(project.expectedEndDate) < new Date();
   };
 
   const completionRate = stats.totalTasks > 0 
@@ -290,7 +318,8 @@ export default function Overview({ projects, onSelectProject }) {
             const projectStatus = project.status || 'active';
             const statusStyle = statusConfig[projectStatus] || statusConfig.active;
             const teamCount = getProjectTeamCount(project.id);
-            const dateRange = formatDateRange(project.startDate, project.endDate);
+            const dateDisplay = formatProjectDates(project);
+            const overdue = isProjectOverdue(project);
             
             return (
               <div 
@@ -343,10 +372,11 @@ export default function Overview({ projects, onSelectProject }) {
                       </div>
                     )}
 
-                    {dateRange && (
-                      <div className="flex items-center gap-2 text-xs text-slate-500">
-                        <Icon name="calendar" size={12} className="text-slate-400" />
-                        <span>{dateRange}</span>
+                    {dateDisplay && (
+                      <div className={`flex items-center gap-2 text-xs ${overdue ? 'text-red-500' : 'text-slate-500'}`}>
+                        <Icon name="calendar" size={12} className={overdue ? 'text-red-400' : 'text-slate-400'} />
+                        <span>{dateDisplay}</span>
+                        {overdue && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">Overdue</span>}
                       </div>
                     )}
                   </div>
@@ -386,7 +416,7 @@ export default function Overview({ projects, onSelectProject }) {
         </div>
       </div>
 
-      {/* Recent Pending Items - IMPROVED */}
+      {/* Recent Pending Items */}
       {recentMessages.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
