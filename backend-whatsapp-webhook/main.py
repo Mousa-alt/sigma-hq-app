@@ -56,47 +56,33 @@ except Exception as e:
 # =============================================================================
 
 def extract_revision_score(filename):
-    """Extract revision number from filename and return a sortable score.
-    Higher score = newer revision.
-    
-    Patterns supported:
-    - Rev 01, Rev 1, Rev A, Rev B, REV01, R01, R1
-    - V1, V01, Version 1
-    - _01, _02 at end of filename
-    - Date patterns: 2024-01-15, 15-01-2024, 20240115
-    """
+    """Extract revision number from filename and return a sortable score."""
     if not filename:
         return 0
     
     name_upper = filename.upper()
     score = 0
     
-    # Pattern 1: Rev XX or REV XX or R XX (numeric)
     rev_num = re.search(r'REV[_\s\-\.]*(\d+)', name_upper)
     if rev_num:
         score = int(rev_num.group(1)) * 100
         return score
     
-    # Pattern 2: R01, R1 (standalone revision)
     r_num = re.search(r'[_\-\s]R(\d+)[_\-\s\.]', name_upper)
     if r_num:
         score = int(r_num.group(1)) * 100
         return score
     
-    # Pattern 3: Rev A, Rev B (letter revisions)
     rev_letter = re.search(r'REV[_\s\-\.]*([A-Z])', name_upper)
     if rev_letter:
-        # A=1, B=2, etc.
         score = (ord(rev_letter.group(1)) - ord('A') + 1) * 10
         return score
     
-    # Pattern 4: V1, V01, Version 1
     version = re.search(r'V(?:ERSION)?[_\s\-\.]*(\d+)', name_upper)
     if version:
         score = int(version.group(1)) * 100
         return score
     
-    # Pattern 5: _01, _02 suffix before extension
     suffix_num = re.search(r'[_\-](\d{2,3})(?:\.[a-zA-Z]+)?$', filename)
     if suffix_num:
         score = int(suffix_num.group(1))
@@ -106,18 +92,10 @@ def extract_revision_score(filename):
 
 
 def extract_date_score(filename):
-    """Extract date from filename and return timestamp score.
-    Higher score = more recent date.
-    
-    Patterns:
-    - 2024-01-15, 2024_01_15
-    - 15-01-2024, 15_01_2024
-    - 20240115
-    """
+    """Extract date from filename and return timestamp score."""
     if not filename:
         return 0
     
-    # Pattern 1: YYYY-MM-DD or YYYY_MM_DD
     match = re.search(r'(20\d{2})[_\-](\d{2})[_\-](\d{2})', filename)
     if match:
         try:
@@ -126,7 +104,6 @@ def extract_date_score(filename):
         except:
             pass
     
-    # Pattern 2: DD-MM-YYYY or DD_MM_YYYY
     match = re.search(r'(\d{2})[_\-](\d{2})[_\-](20\d{2})', filename)
     if match:
         try:
@@ -135,7 +112,6 @@ def extract_date_score(filename):
         except:
             pass
     
-    # Pattern 3: YYYYMMDD
     match = re.search(r'(20\d{2})(\d{2})(\d{2})', filename)
     if match:
         try:
@@ -162,32 +138,21 @@ def get_file_modified_time(gcs_path):
 
 
 def sort_results_by_revision(results):
-    """Sort search results by revision (latest first).
-    
-    Priority:
-    1. Revision number (Rev 05 > Rev 01)
-    2. Date in filename (2024-12-01 > 2024-01-01)
-    3. File modification time
-    """
+    """Sort search results by revision (latest first)."""
     def get_sort_key(doc):
         filename = doc.get('name', '')
         gcs_path = doc.get('gcs_path', '')
         
-        # Get scores (higher = newer)
         rev_score = extract_revision_score(filename)
         date_score = extract_date_score(filename)
         
-        # Only fetch GCS time if no other indicators
         if rev_score == 0 and date_score == 0 and gcs_path:
             mod_time = get_file_modified_time(gcs_path)
         else:
             mod_time = 0
         
-        # Combine scores: revision is most important, then date, then mod time
-        # Multiply to ensure proper ordering
         return (rev_score * 1000000000) + (date_score) + (mod_time // 1000)
     
-    # Sort descending (highest score = latest revision first)
     return sorted(results, key=get_sort_key, reverse=True)
 
 
@@ -197,7 +162,6 @@ def sort_results_by_revision(results):
 
 def generate_short_code(gcs_path):
     """Generate a short 6-character code for a file"""
-    # Use hash of path + timestamp for uniqueness
     data = f"{gcs_path}:{datetime.now().timestamp()}"
     hash_obj = hashlib.md5(data.encode())
     return hash_obj.hexdigest()[:6].upper()
@@ -208,12 +172,10 @@ def create_short_url(gcs_path, expiration_minutes=60):
     try:
         short_code = generate_short_code(gcs_path)
         
-        # Generate the actual signed URL
         signed_url, err = generate_signed_url(gcs_path, expiration_minutes, inline=True)
         if not signed_url:
             return None, err
         
-        # Store in Firestore
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=expiration_minutes)
         
         db.collection('artifacts').document(APP_ID).collection('public').document('data')\
@@ -240,7 +202,6 @@ def get_short_url_redirect(short_code):
             data = doc.to_dict()
             expires_at = data.get('expires_at', '')
             
-            # Check if expired
             if expires_at:
                 exp_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
                 if datetime.now(timezone.utc) > exp_dt:
@@ -323,18 +284,7 @@ def send_whatsapp_message(chat_id, message):
 
 
 def generate_signed_url(gcs_path, expiration_minutes=60, inline=True):
-    """Generate a signed URL using IAM signBlob API (no private key needed)
-    
-    This works in Cloud Run without a service account key file by using
-    the IAM Credentials API to sign the URL server-side.
-    
-    Args:
-        gcs_path: Path to file in GCS bucket
-        expiration_minutes: URL validity period
-        inline: If True, file opens in browser; if False, forces download
-    
-    Requires: roles/iam.serviceAccountTokenCreator on the service account
-    """
+    """Generate a signed URL using IAM signBlob API"""
     try:
         bucket = storage_client.bucket(GCS_BUCKET)
         blob = bucket.blob(gcs_path)
@@ -342,21 +292,15 @@ def generate_signed_url(gcs_path, expiration_minutes=60, inline=True):
         if not blob.exists():
             return None, "File not found in GCS"
         
-        # Get default credentials and refresh to obtain access token
         credentials, project = google.auth.default()
         credentials.refresh(google_requests.Request())
         
-        # Determine content disposition based on inline flag
-        # inline = opens in browser, attachment = forces download
         filename = gcs_path.split('/')[-1]
         if inline:
             content_disposition = f'inline; filename="{filename}"'
         else:
             content_disposition = f'attachment; filename="{filename}"'
         
-        # Generate signed URL using IAM signBlob API
-        # Passing service_account_email and access_token triggers the
-        # IAM Credentials API instead of local signing
         url = blob.generate_signed_url(
             version="v4",
             expiration=timedelta(minutes=expiration_minutes),
@@ -385,20 +329,12 @@ def get_file_size_mb(gcs_path):
 
 
 def send_whatsapp_file(chat_id, gcs_path, filename, use_short_url=True):
-    """Send a file from GCS via WhatsApp
+    """Send a file from GCS via WhatsApp"""
     
-    v4.12 Features:
-    - Short URLs for cleaner messages
-    - Inline view (opens in browser)
-    - Results sorted by revision (latest first)
-    """
-    
-    # Check session first
     if not check_waha_session():
         print("Waha session not connected")
         return False, "Technical Office is offline. Try again in 5 minutes."
     
-    # Check if file exists
     bucket = storage_client.bucket(GCS_BUCKET)
     blob = bucket.blob(gcs_path)
     
@@ -406,20 +342,14 @@ def send_whatsapp_file(chat_id, gcs_path, filename, use_short_url=True):
         print(f"File not found in GCS: {gcs_path}")
         return False, "File not found"
     
-    # Get file size for display
     blob.reload()
     file_size_mb = blob.size / (1024 * 1024)
     
-    # ==========================================================================
-    # FREE WAHA: Send view link (with short URL option)
-    # ==========================================================================
     if not WAHA_PLUS_ENABLED:
         print(f"Free Waha mode: Sending view link for {filename}")
         
-        # Format file size
         size_str = f"{file_size_mb:.1f}MB" if file_size_mb >= 1 else f"{int(file_size_mb * 1024)}KB"
         
-        # Try short URL first if enabled
         if use_short_url and SHORT_URL_BASE:
             short_code, err = create_short_url(gcs_path, expiration_minutes=60)
             if short_code:
@@ -433,7 +363,6 @@ _Valid 1 hour_"""
                 if send_whatsapp_message(chat_id, view_msg):
                     return True, "Short link sent"
         
-        # Fallback to full signed URL
         signed_url, err = generate_signed_url(gcs_path, expiration_minutes=60, inline=True)
         
         if not signed_url:
@@ -452,9 +381,6 @@ _Tap to view in browser_"""
         else:
             return False, "Failed to send message"
     
-    # ==========================================================================
-    # WAHA PLUS: Use sendFile API (when you upgrade)
-    # ==========================================================================
     else:
         print(f"Waha Plus mode: Sending file {filename}")
         
@@ -463,7 +389,6 @@ _Tap to view in browser_"""
             'Content-Type': 'application/json'
         }
         
-        # Get MIME type
         mime_type, _ = mimetypes.guess_type(filename)
         if not mime_type:
             ext = os.path.splitext(filename.lower())[1]
@@ -482,7 +407,6 @@ _Tap to view in browser_"""
             mime_type = mime_fallbacks.get(ext, 'application/octet-stream')
         
         try:
-            # Files > 64MB: Send link only (WhatsApp limit)
             if blob.size > 64 * 1024 * 1024:
                 signed_url, _ = generate_signed_url(gcs_path, 60, inline=True)
                 if signed_url:
@@ -491,7 +415,6 @@ _Tap to view in browser_"""
                     return True, "Sent as link (file too large)"
                 return False, "File too large"
             
-            # Files <= 15MB: Use base64
             if blob.size <= 15 * 1024 * 1024:
                 file_content = blob.download_as_bytes()
                 file_base64 = base64.b64encode(file_content).decode('utf-8')
@@ -506,7 +429,6 @@ _Tap to view in browser_"""
                     }
                 }
             else:
-                # Files 15-64MB: Use signed URL
                 signed_url, err = generate_signed_url(gcs_path, 10, inline=False)
                 if not signed_url:
                     return False, f"URL error: {err}"
@@ -528,7 +450,6 @@ _Tap to view in browser_"""
                 return True, "File sent"
             else:
                 print(f"sendFile failed: {response.status_code} - {response.text}")
-                # Fallback to view link
                 signed_url, _ = generate_signed_url(gcs_path, 30, inline=True)
                 if signed_url:
                     msg = f"📁 *{filename}*\n\n👁️ View:\n{signed_url}"
@@ -538,7 +459,6 @@ _Tap to view in browser_"""
                 
         except Exception as e:
             print(f"Error: {e}")
-            # Fallback
             signed_url, _ = generate_signed_url(gcs_path, 30, inline=True)
             if signed_url:
                 msg = f"📁 *{filename}*\n\n👁️ View:\n{signed_url}"
@@ -548,7 +468,7 @@ _Tap to view in browser_"""
 
 
 # =============================================================================
-# SEARCH RESULTS CACHE (for `get` command)
+# SEARCH RESULTS CACHE
 # =============================================================================
 
 def save_search_results(chat_id, results):
@@ -874,24 +794,19 @@ def get_overdue_items():
 # =============================================================================
 
 def search_documents(query, project_name=None, limit=10):
-    """Search for documents using Vertex AI Search (Discovery Engine)
-    
-    Results are sorted by revision/date (latest first)
-    """
+    """Search for documents using Vertex AI Search (Discovery Engine)"""
     results = []
     
     try:
         client = discoveryengine.SearchServiceClient()
         serving_config = f"projects/{GCP_PROJECT}/locations/{VERTEX_LOCATION}/collections/default_collection/engines/{ENGINE_ID}/servingConfigs/default_search"
         
-        # Add project name to query if specified
         search_query = f"{query} {project_name}" if project_name else query
         
-        # Fetch more results than needed for post-filtering and sorting
         request = discoveryengine.SearchRequest(
             serving_config=serving_config,
             query=search_query,
-            page_size=limit * 2,  # Get extra for filtering
+            page_size=limit * 2,
             content_search_spec=discoveryengine.SearchRequest.ContentSearchSpec(
                 snippet_spec=discoveryengine.SearchRequest.ContentSearchSpec.SnippetSpec(
                     return_snippet=True,
@@ -919,10 +834,8 @@ def search_documents(query, project_name=None, limit=10):
                 link = struct.get('link', '')
                 title = struct.get('title', '')
                 
-                # Extract filename from link or title
                 if link:
                     doc_data['drive_link'] = link
-                    # Extract path parts
                     gcs_path = link.replace('gs://sigma-docs-repository/', '')
                     doc_data['gcs_path'] = gcs_path
                     parts = gcs_path.split('/')
@@ -933,12 +846,10 @@ def search_documents(query, project_name=None, limit=10):
                 else:
                     doc_data['name'] = title
                 
-                # Get snippets
                 for snippet in struct.get('snippets', []):
                     if isinstance(snippet, dict) and snippet.get('snippet'):
                         doc_data['snippets'].append(snippet.get('snippet'))
                 
-                # Filter by project if specified
                 if project_name:
                     project_lower = project_name.lower().replace(' ', '_').replace('-', '_')
                     link_lower = link.lower().replace('-', '_')
@@ -947,10 +858,7 @@ def search_documents(query, project_name=None, limit=10):
                 
                 results.append(doc_data)
         
-        # Sort by revision/date (latest first)
         results = sort_results_by_revision(results)
-        
-        # Limit to requested count
         results = results[:limit]
         
         print(f"Vertex AI Search returned {len(results)} results (sorted by revision) for: {search_query}")
@@ -1119,9 +1027,7 @@ def handle_command(message_text, sender, projects, chat_id):
         'channel_type': 'command'
     }
     
-    # =========================================================================
-    # SHORTCUTS - Single letter commands
-    # =========================================================================
+    # SHORTCUTS
     if lower_text == 's':
         lower_text = 'summary'
     elif lower_text == 'u':
@@ -1135,34 +1041,27 @@ def handle_command(message_text, sender, projects, chat_id):
     elif lower_text == 'd':
         lower_text = 'digest'
     
-    # l project = list project
     shortcut_list = re.match(r'^l\s+(.+)$', lower_text)
     if shortcut_list:
         lower_text = f"list {shortcut_list.group(1)}"
     
-    # a project = activity project
     shortcut_activity = re.match(r'^a\s+(.+)$', lower_text)
     if shortcut_activity:
         lower_text = f"activity {shortcut_activity.group(1)}"
     
-    # f query = find query
     shortcut_find = re.match(r'^f\s+(.+)$', lower_text)
     if shortcut_find:
         lower_text = f"find {shortcut_find.group(1)}"
     
-    # g N = get file N from last search
     shortcut_get = re.match(r'^g\s+(\d+)$', lower_text)
     if shortcut_get:
         lower_text = f"get {shortcut_get.group(1)}"
     
-    # =========================================================================
-    # GET FILE - Download file from last search
-    # =========================================================================
+    # GET FILE
     get_match = re.match(r'^get\s+(\d+)$', lower_text)
     if get_match:
         file_num = int(get_match.group(1))
         
-        # Get last search results for this chat
         results = get_last_search_results(chat_id)
         
         if not results:
@@ -1177,11 +1076,10 @@ def handle_command(message_text, sender, projects, chat_id):
             if not gcs_path:
                 response_message = "❌ File path not available."
             else:
-                # Send file (will send view link in free mode)
                 success, msg = send_whatsapp_file(chat_id, gcs_path, filename)
                 
                 if success:
-                    response_message = None  # Message already sent
+                    response_message = None
                 else:
                     response_message = f"❌ Could not get file: {msg}"
         
@@ -1192,25 +1090,20 @@ def handle_command(message_text, sender, projects, chat_id):
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
-    # DOCUMENT SEARCH - find: query or find query (Using Vertex AI)
-    # =========================================================================
+    # DOCUMENT SEARCH
     find_match = re.match(r'^(?:find|search|doc|docs)[:\s]+(.+)$', lower_text, re.IGNORECASE)
     if find_match:
         search_query = find_match.group(1).strip()
         
-        # Check if project is specified
         project_name = None
         for p in projects:
             if p['name'].lower() in search_query.lower():
                 project_name = p['name']
-                # Remove project name from search
                 search_query = re.sub(re.escape(p['name']), '', search_query, flags=re.IGNORECASE).strip()
                 break
         
         results = search_documents(search_query, project_name, limit=5)
         
-        # Save results for `get` command
         if results:
             save_search_results(chat_id, results)
         
@@ -1220,7 +1113,6 @@ def handle_command(message_text, sender, projects, chat_id):
                 name = doc['name'][:40] if doc['name'] else 'Unnamed'
                 folder = doc['path'] if doc['path'] else ''
                 
-                # Show revision indicator if detected
                 rev_score = extract_revision_score(doc['name'])
                 rev_indicator = ""
                 if rev_score > 0:
@@ -1251,9 +1143,7 @@ Try:
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
-    # DONE - Mark item as complete
-    # =========================================================================
+    # DONE
     done_match = re.match(r'^done\s+(?:(\S+)\s+)?(\d+)$', lower_text)
     if done_match:
         project_hint = done_match.group(1)
@@ -1278,9 +1168,7 @@ Try:
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
-    # ASSIGN - Assign item to someone
-    # =========================================================================
+    # ASSIGN
     assign_match = re.match(r'^assign\s+(?:(\S+)\s+)?(\d+)\s+(?:to\s+)?(.+)$', lower_text)
     if assign_match:
         project_hint = assign_match.group(1)
@@ -1306,9 +1194,7 @@ Try:
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
-    # ESCALATE - Set to high urgency
-    # =========================================================================
+    # ESCALATE
     escalate_match = re.match(r'^(escalate|high)\s+(?:(\S+)\s+)?(\d+)$', lower_text)
     if escalate_match:
         project_hint = escalate_match.group(2)
@@ -1333,9 +1219,7 @@ Try:
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
-    # DEFER - Set to low urgency
-    # =========================================================================
+    # DEFER
     defer_match = re.match(r'^(defer|low)\s+(?:(\S+)\s+)?(\d+)$', lower_text)
     if defer_match:
         project_hint = defer_match.group(2)
@@ -1360,9 +1244,7 @@ Try:
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
-    # DIGEST - Daily digest
-    # =========================================================================
+    # DIGEST
     if lower_text in ['digest', 'morning', 'daily']:
         response_message = generate_daily_digest()
         classification['command_type'] = 'digest'
@@ -1372,9 +1254,7 @@ Try:
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
     # LIST PROJECT ITEMS
-    # =========================================================================
     list_match = re.match(r'^list\s+(.+)$', lower_text, re.IGNORECASE)
     if list_match:
         project_hint = list_match.group(1).strip()
@@ -1404,9 +1284,7 @@ Try:
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
     # ACTIVITY
-    # =========================================================================
     activity_match = re.match(r'^activity\s+(.+)$', lower_text, re.IGNORECASE)
     if activity_match:
         project_hint = activity_match.group(1).strip()
@@ -1434,9 +1312,7 @@ Try:
             send_whatsapp_message(chat_id, response_message)
         return classification
     
-    # =========================================================================
-    # QUICK STATUS - Just project name
-    # =========================================================================
+    # QUICK STATUS
     matched_project = match_project(lower_text, projects)
     
     if matched_project and len(lower_text.split()) <= 3:
@@ -1457,9 +1333,7 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
         classification['project_name'] = matched_project['name']
         classification['summary'] = f"Status for {matched_project['name']}"
     
-    # =========================================================================
     # TODAY
-    # =========================================================================
     elif lower_text in ['today', 'اليوم', "what's today", 'whats today']:
         items = get_today_items()
         
@@ -1476,9 +1350,7 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
         classification['command_type'] = 'today'
         classification['summary'] = "Today's items"
     
-    # =========================================================================
     # URGENT
-    # =========================================================================
     elif lower_text in ['urgent', 'عاجل', 'high priority', 'critical']:
         items = get_urgent_items()
         
@@ -1494,9 +1366,7 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
         classification['command_type'] = 'urgent'
         classification['summary'] = "Urgent items"
     
-    # =========================================================================
     # PENDING
-    # =========================================================================
     elif lower_text in ['pending', 'معلق', 'open', 'tasks', 'مهام']:
         items = get_all_pending_items()
         
@@ -1523,9 +1393,7 @@ _`l {matched_project['name'][:6]}` for items | `f {matched_project['name'][:6]} 
         classification['command_type'] = 'pending'
         classification['summary'] = "Pending items"
     
-    # =========================================================================
     # SUMMARY
-    # =========================================================================
     elif lower_text in ['summary', 'summarize', 'ملخص', 'report']:
         pending = get_all_pending_items()
         urgent = get_urgent_items()
@@ -1548,9 +1416,7 @@ Top Items:"""
         classification['command_type'] = 'summary'
         classification['summary'] = "Summary"
     
-    # =========================================================================
     # HELP
-    # =========================================================================
     elif lower_text in ['help', 'مساعدة', 'commands', '?']:
         response_message = """🤖 *Commands*
 
@@ -1582,9 +1448,7 @@ Top Items:"""
         classification['command_type'] = 'help'
         classification['summary'] = "Help"
     
-    # =========================================================================
     # TASK CREATION
-    # =========================================================================
     elif lower_text.startswith('task:'):
         task_match = re.match(r'task:\s*(.+?)\s*-\s*(.+)', text, re.IGNORECASE)
         if task_match:
@@ -1603,9 +1467,7 @@ Top Items:"""
             
             response_message = f"✅ *Task Created*\n\n📁 {project_name or 'Unassigned'}\n📝 {task_desc}"
     
-    # =========================================================================
     # NOTE
-    # =========================================================================
     elif lower_text.startswith('note:'):
         note_match = re.match(r'note:\s*(.+?)\s*-\s*(.+)', text, re.IGNORECASE)
         if note_match:
@@ -1623,9 +1485,7 @@ Top Items:"""
             
             response_message = f"📝 *Note Logged*\n\n📁 {project_name or 'General'}\n💬 {note_text}"
     
-    # =========================================================================
     # STATUS QUERY
-    # =========================================================================
     elif re.search(r"(what'?s?|show|get)\s+(pending|status|open|items)\s+(on|for|in)\s+(.+)", lower_text):
         query_match = re.search(r"(what'?s?|show|get)\s+(pending|status|open|items)\s+(on|for|in)\s+(.+)", lower_text)
         if query_match:
@@ -1651,9 +1511,7 @@ Top Items:"""
             classification['project_name'] = matched['name'] if matched else None
             classification['summary'] = f"Query for {project_hint}"
     
-    # =========================================================================
     # FALLBACK
-    # =========================================================================
     else:
         classification['is_command'] = False
         classification['action_type'] = 'info'
@@ -1926,11 +1784,101 @@ def whatsapp_webhook(request):
         else:
             return (jsonify({'error': err or 'Link not found'}), 404, headers)
     
+    # ==========================================================================
+    # WAHA PROXY: /waha/groups - Scan all WhatsApp groups
+    # ==========================================================================
+    if path == '/waha/groups' and request.method == 'GET':
+        try:
+            waha_headers = {'X-Api-Key': WAHA_API_KEY} if WAHA_API_KEY else {}
+            response = requests.get(f"{WAHA_API_URL}/api/default/groups", headers=waha_headers, timeout=30)
+            
+            if response.status_code == 200:
+                raw_groups = response.json()
+                # Normalize group data
+                groups = []
+                for g in raw_groups:
+                    groups.append({
+                        'id': g.get('id', {}).get('_serialized', '') if isinstance(g.get('id'), dict) else g.get('id', ''),
+                        'name': g.get('subject') or g.get('name', ''),
+                        'participants': len(g.get('participants', []))
+                    })
+                return (jsonify({'groups': groups}), 200, headers)
+            else:
+                return (jsonify({'error': f'WAHA returned {response.status_code}'}), response.status_code, headers)
+        except requests.exceptions.ConnectionError:
+            return (jsonify({'error': 'Cannot connect to WhatsApp service. Is WAHA running?'}), 503, headers)
+        except requests.exceptions.Timeout:
+            return (jsonify({'error': 'WhatsApp service timeout'}), 504, headers)
+        except Exception as e:
+            print(f"WAHA groups error: {e}")
+            return (jsonify({'error': str(e)}), 500, headers)
+    
+    # ==========================================================================
+    # WAHA PROXY: /waha/groups/create - Create a new WhatsApp group
+    # ==========================================================================
+    if path == '/waha/groups/create' and request.method == 'POST':
+        try:
+            data = request.get_json(silent=True) or {}
+            group_name = data.get('name', '')
+            participants = data.get('participants', [])
+            
+            if not group_name:
+                return (jsonify({'error': 'Group name is required'}), 400, headers)
+            if not participants:
+                return (jsonify({'error': 'At least one participant is required'}), 400, headers)
+            
+            waha_headers = {
+                'X-Api-Key': WAHA_API_KEY,
+                'Content-Type': 'application/json'
+            }
+            
+            payload = {
+                'name': group_name,
+                'participants': participants
+            }
+            
+            response = requests.post(
+                f"{WAHA_API_URL}/api/default/groups",
+                headers=waha_headers,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code in [200, 201]:
+                result = response.json()
+                group_id = result.get('id', {}).get('_serialized', '') if isinstance(result.get('id'), dict) else result.get('id', '')
+                return (jsonify({
+                    'success': True,
+                    'id': group_id,
+                    'name': group_name
+                }), 200, headers)
+            else:
+                error_text = response.text[:200] if response.text else 'Unknown error'
+                return (jsonify({'error': f'Failed to create group: {error_text}'}), response.status_code, headers)
+        except requests.exceptions.ConnectionError:
+            return (jsonify({'error': 'Cannot connect to WhatsApp service'}), 503, headers)
+        except Exception as e:
+            print(f"WAHA create group error: {e}")
+            return (jsonify({'error': str(e)}), 500, headers)
+    
+    # ==========================================================================
+    # WAHA PROXY: /waha/session - Check WAHA session status
+    # ==========================================================================
+    if path == '/waha/session' and request.method == 'GET':
+        try:
+            connected = check_waha_session()
+            return (jsonify({
+                'connected': connected,
+                'waha_url': WAHA_API_URL
+            }), 200, headers)
+        except Exception as e:
+            return (jsonify({'connected': False, 'error': str(e)}), 200, headers)
+    
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.12 - Revision Sort + Short URLs',
+            'status': 'WhatsApp Webhook v4.13 - WAHA Proxy',
             'waha_plus': WAHA_PLUS_ENABLED,
-            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'inline_view', 'revision_sort', 'short_urls'],
+            'features': ['done', 'assign', 'escalate', 'defer', 'shortcuts', 'digest', 'vertex_search', 'inline_view', 'revision_sort', 'short_urls', 'waha_proxy'],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
             'search_engine': ENGINE_ID
