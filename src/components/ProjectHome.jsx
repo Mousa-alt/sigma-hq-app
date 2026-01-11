@@ -3,14 +3,10 @@ import Icon from './Icon';
 import FolderPopup from './FolderPopup';
 import { SYNC_WORKER_URL } from '../config';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, query, where, orderBy, limit, addDoc, deleteDoc } from 'firebase/firestore';
 
 export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow, onUpdateProject }) {
-  const [tasks, setTasks] = useState([
-    { id: 1, text: 'Review shop drawings for Kitchen area', done: false, source: 'manual' },
-    { id: 2, text: 'Send RFI response to consultant', done: false, source: 'manual' },
-    { id: 3, text: 'Update BOQ with variation orders', done: true, source: 'manual' },
-  ]);
+  const [tasks, setTasks] = useState([]);
   const [newTask, setNewTask] = useState('');
   const [activePopup, setActivePopup] = useState(null);
   const [editingDates, setEditingDates] = useState(false);
@@ -27,13 +23,57 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
   const [loadingWhatsapp, setLoadingWhatsapp] = useState(true);
   const [expandedMessage, setExpandedMessage] = useState(null);
   const [expandedEmail, setExpandedEmail] = useState(null);
+  const [loadingTasks, setLoadingTasks] = useState(true);
 
   // Status display config
   const statusConfig = {
     tender: { color: 'bg-amber-500', label: 'Tender' },
+    planning: { color: 'bg-purple-500', label: 'Planning' },
     active: { color: 'bg-emerald-500', label: 'Active' },
     on_hold: { color: 'bg-slate-400', label: 'On Hold' },
     completed: { color: 'bg-blue-500', label: 'Completed' },
+    overdue: { color: 'bg-red-500', label: 'Overdue' },
+  };
+
+  // Calculate smart status based on dates
+  const getSmartStatus = () => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    
+    // If manually set status, respect certain ones
+    if (project?.status === 'on_hold') return 'on_hold';
+    if (project?.status === 'tender') return 'tender';
+    if (project?.status === 'planning') return 'planning';
+    
+    // Check completion date
+    if (project?.completionDate) {
+      const completionDate = new Date(project.completionDate);
+      completionDate.setHours(0, 0, 0, 0);
+      if (completionDate <= now) {
+        return 'completed';
+      }
+    }
+    
+    // Check if past expected end date without completion
+    if (project?.expectedEndDate && !project?.completionDate) {
+      const expectedEnd = new Date(project.expectedEndDate);
+      expectedEnd.setHours(0, 0, 0, 0);
+      if (expectedEnd < now) {
+        return 'overdue';
+      }
+    }
+    
+    // Check if started
+    if (project?.startDate) {
+      const startDate = new Date(project.startDate);
+      startDate.setHours(0, 0, 0, 0);
+      if (startDate <= now) {
+        return 'active';
+      }
+      return 'planning';
+    }
+    
+    return project?.status || 'active';
   };
 
   useEffect(() => {
@@ -47,6 +87,38 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   }, [project?.id]);
 
+  // Real-time Tasks listener from Firestore
+  useEffect(() => {
+    if (!project?.name) return;
+    
+    setLoadingTasks(true);
+    const tasksRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'tasks');
+    
+    const unsubscribe = onSnapshot(tasksRef, (snapshot) => {
+      const allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Filter by project
+      const projectTasks = allTasks
+        .filter(task => task.project_name === project.name)
+        .sort((a, b) => {
+          // Sort: incomplete first, then by created date
+          if (a.done !== b.done) return a.done ? 1 : -1;
+          const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
+          const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
+          return dateB - dateA;
+        })
+        .slice(0, 20);
+      
+      setTasks(projectTasks);
+      setLoadingTasks(false);
+    }, (error) => {
+      console.error('Tasks error:', error);
+      setLoadingTasks(false);
+    });
+
+    return () => unsubscribe();
+  }, [project?.name]);
+
   // Real-time Emails listener from Firestore
   useEffect(() => {
     if (!project?.name) return;
@@ -57,9 +129,15 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     const unsubscribe = onSnapshot(emailsRef, (snapshot) => {
       const allEmails = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Filter by project and sort by date descending
+      // Filter by project - flexible matching
+      const projectName = project.name.toLowerCase().replace(/[\s_-]+/g, '');
       const projectEmails = allEmails
-        .filter(email => email.project_name === project.name)
+        .filter(email => {
+          const emailProject = (email.project_name || '').toLowerCase().replace(/[\s_-]+/g, '');
+          return emailProject === projectName || 
+                 emailProject.includes(projectName) || 
+                 projectName.includes(emailProject);
+        })
         .sort((a, b) => {
           const dateA = a.date ? new Date(a.date) : new Date(0);
           const dateB = b.date ? new Date(b.date) : new Date(0);
@@ -87,9 +165,15 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
       const allMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Filter by project and sort by created_at descending
+      // Filter by project - flexible matching
+      const projectName = project.name.toLowerCase().replace(/[\s_-]+/g, '');
       const projectMessages = allMessages
-        .filter(msg => msg.project_name === project.name)
+        .filter(msg => {
+          const msgProject = (msg.project_name || '').toLowerCase().replace(/[\s_-]+/g, '');
+          return msgProject === projectName || 
+                 msgProject.includes(projectName) || 
+                 projectName.includes(msgProject);
+        })
         .sort((a, b) => {
           const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
           const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
@@ -152,18 +236,43 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   };
 
-  const addTask = () => {
+  const addTask = async () => {
     if (!newTask.trim()) return;
-    setTasks([...tasks, { id: Date.now(), text: newTask, done: false, source: 'manual' }]);
-    setNewTask('');
+    try {
+      const tasksRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'tasks');
+      await addDoc(tasksRef, {
+        text: newTask.trim(),
+        done: false,
+        source: 'manual',
+        project_name: project.name,
+        created_at: new Date().toISOString(),
+        created_by: 'dashboard'
+      });
+      setNewTask('');
+    } catch (err) {
+      console.error('Error adding task:', err);
+    }
   };
 
-  const toggleTask = (id) => {
-    setTasks(tasks.map(t => t.id === id ? { ...t, done: !t.done } : t));
+  const toggleTask = async (taskId, currentDone) => {
+    try {
+      const taskRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'tasks', taskId);
+      await updateDoc(taskRef, { 
+        done: !currentDone,
+        completed_at: !currentDone ? new Date().toISOString() : null
+      });
+    } catch (err) {
+      console.error('Error toggling task:', err);
+    }
   };
 
-  const deleteTask = (id) => {
-    setTasks(tasks.filter(t => t.id !== id));
+  const deleteTask = async (taskId) => {
+    try {
+      const taskRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'tasks', taskId);
+      await deleteDoc(taskRef);
+    } catch (err) {
+      console.error('Error deleting task:', err);
+    }
   };
 
   const formatLastSync = () => {
@@ -257,9 +366,23 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     }
   };
 
-  // Get current status display
-  const currentStatus = project?.status || 'active';
+  // Task source style
+  const getTaskSourceStyle = (source) => {
+    switch (source) {
+      case 'whatsapp': return { label: 'WhatsApp', color: 'text-green-600 bg-green-50', icon: 'message-circle' };
+      case 'email': return { label: 'Email', color: 'text-blue-600 bg-blue-50', icon: 'mail' };
+      case 'meeting': return { label: 'Meeting', color: 'text-purple-600 bg-purple-50', icon: 'users' };
+      default: return { label: 'Manual', color: 'text-slate-600 bg-slate-50', icon: 'edit-2' };
+    }
+  };
+
+  // Get current status display (smart calculation)
+  const currentStatus = getSmartStatus();
   const statusDisplay = statusConfig[currentStatus] || statusConfig.active;
+
+  // Count actionable items for Task Hub
+  const actionableWhatsapp = whatsappMessages.filter(m => m.is_actionable && m.status !== 'done');
+  const actionableEmails = recentEmails.filter(e => e.is_actionable && e.status !== 'done');
 
   return (
     <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-24">
@@ -311,12 +434,14 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
           <span className="text-[10px] sm:text-xs font-semibold text-slate-900">{formatDate(project?.startDate)}</span>
         </div>
         <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100">
-          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">End</p>
+          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Target</p>
           <span className="text-[10px] sm:text-xs font-semibold text-slate-900">{formatDate(project?.expectedEndDate)}</span>
         </div>
         <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100 col-span-2 sm:col-span-1">
-          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Completion</p>
-          <span className="text-[10px] sm:text-xs font-semibold text-slate-900">{formatDate(project?.completionDate)}</span>
+          <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Completed</p>
+          <span className={`text-[10px] sm:text-xs font-semibold ${project?.completionDate ? 'text-emerald-600' : 'text-slate-400'}`}>
+            {project?.completionDate ? formatDate(project.completionDate) : 'Ongoing'}
+          </span>
         </div>
       </div>
 
@@ -330,7 +455,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
                 <input type="date" value={dates.startDate} onChange={(e) => setDates({...dates, startDate: e.target.value})} className="w-full px-2 py-1.5 border rounded text-xs" />
               </div>
               <div>
-                <label className="block text-[9px] sm:text-[10px] text-slate-500 mb-1">Expected End</label>
+                <label className="block text-[9px] sm:text-[10px] text-slate-500 mb-1">Target End</label>
                 <input type="date" value={dates.expectedEndDate} onChange={(e) => setDates({...dates, expectedEndDate: e.target.value})} className="w-full px-2 py-1.5 border rounded text-xs" />
               </div>
               <div>
@@ -363,11 +488,17 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         </div>
       </div>
 
-      {/* Tasks Hub */}
+      {/* Tasks Hub - Real data from Firestore */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400">Tasks Hub</h3>
-          <span className="text-[8px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">AI coming soon</span>
+          <div className="flex items-center gap-2">
+            {(actionableWhatsapp.length > 0 || actionableEmails.length > 0) && (
+              <span className="text-[8px] text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full">
+                {actionableWhatsapp.length + actionableEmails.length} from channels
+              </span>
+            )}
+          </div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="p-3 border-b border-slate-100 flex gap-2">
@@ -381,17 +512,35 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
             />
             <button onClick={addTask} className="px-2.5 py-1 bg-blue-500 text-white rounded-lg text-[10px] font-medium hover:bg-blue-600 flex-shrink-0">Add</button>
           </div>
-          <div className="divide-y divide-slate-100 max-h-[150px] overflow-y-auto">
-            {tasks.map(task => (
-              <div key={task.id} className="flex items-center gap-2 p-3 hover:bg-slate-50">
-                <button onClick={() => toggleTask(task.id)} className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'}`}>
-                  {task.done && <Icon name="check" size={10} />}
-                </button>
-                <span className={`flex-1 text-xs ${task.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.text}</span>
-                <button onClick={() => deleteTask(task.id)} className="p-1 text-slate-400 hover:text-red-500 flex-shrink-0"><Icon name="x" size={12} /></button>
+          <div className="divide-y divide-slate-100 max-h-[200px] overflow-y-auto">
+            {loadingTasks ? (
+              <div className="p-4 text-center">
+                <Icon name="loader-2" size={16} className="animate-spin text-slate-400 mx-auto" />
               </div>
-            ))}
-            {tasks.length === 0 && <div className="p-4 text-center text-slate-400 text-xs">No tasks yet</div>}
+            ) : tasks.length > 0 ? (
+              tasks.map(task => {
+                const sourceStyle = getTaskSourceStyle(task.source);
+                return (
+                  <div key={task.id} className="flex items-center gap-2 p-3 hover:bg-slate-50">
+                    <button onClick={() => toggleTask(task.id, task.done)} className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'}`}>
+                      {task.done && <Icon name="check" size={10} />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-xs ${task.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.text}</span>
+                      {task.source !== 'manual' && (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <Icon name={sourceStyle.icon} size={8} className={sourceStyle.color.split(' ')[0]} />
+                          <span className={`text-[8px] ${sourceStyle.color.split(' ')[0]}`}>{sourceStyle.label}</span>
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={() => deleteTask(task.id)} className="p-1 text-slate-400 hover:text-red-500 flex-shrink-0"><Icon name="x" size={12} /></button>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="p-4 text-center text-slate-400 text-xs">No tasks yet. Add one above!</div>
+            )}
           </div>
         </div>
       </div>
@@ -541,7 +690,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
               })
             ) : (
               <div className="p-3 text-center text-slate-400 text-[10px]">
-                No WhatsApp messages yet
+                No messages linked to this project yet
               </div>
             )}
           </div>
