@@ -12,8 +12,10 @@ export default function Sidebar({
   onSelectProject, 
   onGoToOverview,
   onGoToSettings,
+  onGoToOrgChart,
   onOpenModal,
-  onCloseSidebar 
+  onCloseSidebar,
+  onLogout
 }) {
   const [projectBadges, setProjectBadges] = useState({});
 
@@ -104,6 +106,15 @@ export default function Sidebar({
           )}
         </button>
 
+        <button 
+          onClick={() => { onGoToOrgChart?.(); onCloseSidebar(); }} 
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all mb-2 ${view === 'orgchart' ? 'text-white shadow-lg' : 'text-slate-400 hover:text-white'}`} 
+          style={view === 'orgchart' ? { backgroundColor: COLORS.blue } : {}}
+        >
+          <Icon name="users" size={18} /> 
+          <span className="font-medium text-sm">Organization</span>
+        </button>
+
         {/* Projects */}
         <div className="mt-6">
           <div className="flex items-center justify-between px-4 mb-3">
@@ -120,6 +131,7 @@ export default function Sidebar({
           <div className="space-y-1">
             {projects.map(p => {
               const badge = projectBadges[p.name] || 0;
+              const projectStatus = p.status || 'active';
               return (
                 <button 
                   key={p.id} 
@@ -131,11 +143,19 @@ export default function Sidebar({
                   }`}
                 >
                   <div className={`shrink-0 w-2 h-2 rounded-full ${
-                    p.status === 'Syncing...' ? 'bg-amber-500 animate-pulse' : 
-                    p.status === 'Sync Error' ? 'bg-red-500' :
+                    projectStatus === 'tender' ? 'bg-amber-500' :
+                    projectStatus === 'on_hold' ? 'bg-slate-400' :
+                    projectStatus === 'completed' ? 'bg-blue-500' :
+                    projectStatus === 'Syncing...' ? 'bg-amber-500 animate-pulse' : 
+                    projectStatus === 'Sync Error' ? 'bg-red-500' :
                     badge > 0 ? 'bg-red-400' : 'bg-emerald-400'
                   }`} />
-                  <span className="text-xs font-medium truncate flex-1">{p.name}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-medium truncate block">{p.name}</span>
+                    {p.venue && (
+                      <span className="text-[9px] text-slate-500 truncate block">{p.venue}</span>
+                    )}
+                  </div>
                   {badge > 0 && (
                     <span className="bg-red-500/20 text-red-400 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
                       {badge}
@@ -178,6 +198,17 @@ export default function Sidebar({
             <Icon name="send" size={14} />
           </button>
         </div>
+      </div>
+
+      {/* Logout */}
+      <div className="border-t border-white/5 p-4">
+        <button 
+          onClick={onLogout}
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+        >
+          <Icon name="log-out" size={16} /> 
+          <span className="text-xs font-medium">Logout</span>
+        </button>
       </div>
     </aside>
   );
