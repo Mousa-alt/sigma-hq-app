@@ -7,6 +7,7 @@ export default function ProjectSettings({ project, onUpdateProject, onDeleteProj
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [formData, setFormData] = useState({
     name: project?.name || '',
+    code: project?.code || '',
     venue: project?.venue || '',
     area: project?.area || '',
     driveLink: project?.driveLink || '',
@@ -51,6 +52,20 @@ export default function ProjectSettings({ project, onUpdateProject, onDeleteProj
             />
           </div>
           <div>
+            <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Project Code</label>
+            <input
+              type="text"
+              value={formData.code}
+              onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+              placeholder="e.g., ECH-DT, AGR-GEM"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-none focus:border-blue-400 uppercase"
+            />
+            <p className="text-[9px] text-slate-400 mt-1">Short code used in emails &amp; WhatsApp groups</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <div>
             <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Venue / Location</label>
             <input
               type="text"
@@ -61,19 +76,17 @@ export default function ProjectSettings({ project, onUpdateProject, onDeleteProj
             />
             <p className="text-[9px] text-slate-400 mt-1">Where is the project? (Mall, Building, etc.)</p>
           </div>
-        </div>
-
-        {/* Area field */}
-        <div>
-          <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Area (m²)</label>
-          <input
-            type="text"
-            value={formData.area}
-            onChange={(e) => setFormData({ ...formData, area: e.target.value })}
-            placeholder="e.g., 1500"
-            className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-none focus:border-blue-400"
-          />
-          <p className="text-[9px] text-slate-400 mt-1">Total project area in square meters</p>
+          <div>
+            <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Area (m²)</label>
+            <input
+              type="text"
+              value={formData.area}
+              onChange={(e) => setFormData({ ...formData, area: e.target.value })}
+              placeholder="e.g., 1500"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-none focus:border-blue-400"
+            />
+            <p className="text-[9px] text-slate-400 mt-1">Total project area in square meters</p>
+          </div>
         </div>
 
         <div>
