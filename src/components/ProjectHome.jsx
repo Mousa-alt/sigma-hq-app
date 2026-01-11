@@ -77,6 +77,28 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     return project?.status || 'active';
   };
 
+  // Helper function to normalize project names for comparison
+  const normalizeProjectName = (name) => {
+    if (!name) return '';
+    return name.toLowerCase().replace(/[\s_-]+/g, '').trim();
+  };
+
+  // Check if a message/email belongs to this specific project (strict matching)
+  const belongsToProject = (itemProjectName) => {
+    // Must have a project_name to be displayed
+    if (!itemProjectName) return false;
+    
+    // Exclude command center and general items
+    const normalizedItem = normalizeProjectName(itemProjectName);
+    if (normalizedItem === '__general__' || normalizedItem === 'general' || normalizedItem === 'command') {
+      return false;
+    }
+    
+    // Strict match: normalized names must be equal
+    const normalizedProject = normalizeProjectName(project?.name);
+    return normalizedItem === normalizedProject;
+  };
+
   useEffect(() => {
     if (project) {
       loadStats();
@@ -98,9 +120,9 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     const unsubscribe = onSnapshot(tasksRef, (snapshot) => {
       const allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Filter by project
+      // Filter by project - strict match
       const projectTasks = allTasks
-        .filter(task => task.project_name === project.name)
+        .filter(task => normalizeProjectName(task.project_name) === normalizeProjectName(project.name))
         .sort((a, b) => {
           // Sort: incomplete first, then by created date
           if (a.done !== b.done) return a.done ? 1 : -1;
@@ -120,7 +142,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     return () => unsubscribe();
   }, [project?.name]);
 
-  // Real-time Emails listener from Firestore
+  // Real-time Emails listener from Firestore - STRICT FILTERING
   useEffect(() => {
     if (!project?.name) return;
     
@@ -130,15 +152,9 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     const unsubscribe = onSnapshot(emailsRef, (snapshot) => {
       const allEmails = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Filter by project - flexible matching
-      const projectName = project.name.toLowerCase().replace(/[\s_-]+/g, '');
+      // STRICT FILTER: Only show emails that have project_name matching this project exactly
       const projectEmails = allEmails
-        .filter(email => {
-          const emailProject = (email.project_name || '').toLowerCase().replace(/[\s_-]+/g, '');
-          return emailProject === projectName || 
-                 emailProject.includes(projectName) || 
-                 projectName.includes(emailProject);
-        })
+        .filter(email => belongsToProject(email.project_name))
         .sort((a, b) => {
           const dateA = a.date ? new Date(a.date) : new Date(0);
           const dateB = b.date ? new Date(b.date) : new Date(0);
@@ -156,7 +172,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     return () => unsubscribe();
   }, [project?.name]);
 
-  // Real-time WhatsApp messages listener
+  // Real-time WhatsApp messages listener - STRICT FILTERING
   useEffect(() => {
     if (!project?.name) return;
     
@@ -166,15 +182,10 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
       const allMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Filter by project - flexible matching
-      const projectName = project.name.toLowerCase().replace(/[\s_-]+/g, '');
+      // STRICT FILTER: Only show messages that have project_name matching this project exactly
+      // Exclude command center and general messages
       const projectMessages = allMessages
-        .filter(msg => {
-          const msgProject = (msg.project_name || '').toLowerCase().replace(/[\s_-]+/g, '');
-          return msgProject === projectName || 
-                 msgProject.includes(projectName) || 
-                 projectName.includes(msgProject);
-        })
+        .filter(msg => belongsToProject(msg.project_name))
         .sort((a, b) => {
           const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
           const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
@@ -770,7 +781,7 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
               })
             ) : (
               <div className="p-4 text-center text-slate-400 text-[10px]">
-                No emails yet. Emails sync automatically.
+                No emails linked to this project yet
               </div>
             )}
           </div>
