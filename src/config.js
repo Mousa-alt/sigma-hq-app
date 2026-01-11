@@ -33,7 +33,13 @@ export const BRANDING = {
   subtitle: "Command Center",
 };
 
-export const LOCATIONS = ['Cairo', 'Riyadh', 'Dubai'];
+// Project statuses
+export const PROJECT_STATUSES = [
+  { value: 'tender', label: 'Tender', color: 'amber' },
+  { value: 'active', label: 'Active', color: 'emerald' },
+  { value: 'on_hold', label: 'On Hold', color: 'slate' },
+  { value: 'completed', label: 'Completed', color: 'blue' },
+];
 
 export const SUBMISSION_CATEGORIES = [
   { value: 'shop_drawing', label: 'Shop Drawing' },
@@ -49,3 +55,6 @@ export const TABS = [
   { id: 'vault', label: 'Project Documents', icon: 'folder-open' },
   { id: 'actions', label: 'Actions', icon: 'zap' },
 ];
+
+// Dashboard password (change this!)
+export const DASHBOARD_PASSWORD = 'sigma2026';
