@@ -83,8 +83,8 @@ export default function Sidebar({
       className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} flex flex-col text-white shadow-2xl`} 
       style={{ backgroundColor: COLORS.navy }}
     >
-      {/* Logo */}
-      <div className="px-5 py-5 border-b border-white/5 flex justify-center">
+      {/* Logo - aligned left */}
+      <div className="px-5 py-5 border-b border-white/5 flex justify-start">
         <img src={BRANDING.logoWhite} alt="Sigma" className="h-12 w-auto" />
       </div>
 
