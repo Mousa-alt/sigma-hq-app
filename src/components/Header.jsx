@@ -15,20 +15,26 @@ export default function Header({
     switch (view) {
       case 'overview': return 'Projects';
       case 'settings': return 'Channel Settings';
+      case 'orgchart': return 'Organization';
       case 'project': return selectedProject?.name;
       default: return 'Sigma HQ';
     }
   };
 
   const getSubtitle = () => {
-    if (view === 'project' && selectedProject?.location) {
-      return selectedProject.location;
+    if (view === 'project' && selectedProject?.venue) {
+      return selectedProject.venue;
     }
     if (view === 'settings') {
       return 'Configure WhatsApp, Email, and Slack';
     }
+    if (view === 'orgchart') {
+      return 'Team structure & project assignments';
+    }
     return null;
   };
+
+  const showBackButton = ['project', 'settings', 'orgchart'].includes(view);
 
   return (
     <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
@@ -40,7 +46,7 @@ export default function Header({
           <Icon name="menu" size={20} />
         </button>
         
-        {(view === 'project' || view === 'settings') && (
+        {showBackButton && (
           <button 
             onClick={onGoBack} 
             className="p-2 bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors"
@@ -53,6 +59,9 @@ export default function Header({
           <div className="flex items-center gap-2">
             {view === 'settings' && (
               <Icon name="sliders" size={20} className="text-blue-500" />
+            )}
+            {view === 'orgchart' && (
+              <Icon name="users" size={20} className="text-blue-500" />
             )}
             <h1 className="text-lg font-semibold text-slate-900 truncate">
               {getTitle()}
