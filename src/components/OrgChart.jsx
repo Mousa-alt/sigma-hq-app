@@ -206,15 +206,15 @@ export default function OrgChart({ projects }) {
 
           {/* Org Chart - Levels by Position, Lines by ReportsTo */}
           <div className="bg-white rounded-xl border border-slate-200 p-6 overflow-x-auto">
-            <HybridOrgChart 
-              engineers={getEngineersByDepartment(selectedDepartment)}
-              allEngineers={engineers}
-              getEngineerProjects={getEngineerProjects}
-              onEdit={(eng) => { setEditingEngineer(eng); setIsModalOpen(true); }}
-              onDelete={handleDeleteEngineer}
-            />
-            
-            {getEngineersByDepartment(selectedDepartment).length === 0 && (
+            {getEngineersByDepartment(selectedDepartment).length > 0 ? (
+              <HybridOrgChart 
+                engineers={getEngineersByDepartment(selectedDepartment)}
+                allEngineers={engineers}
+                getEngineerProjects={getEngineerProjects}
+                onEdit={(eng) => { setEditingEngineer(eng); setIsModalOpen(true); }}
+                onDelete={handleDeleteEngineer}
+              />
+            ) : (
               <div className="text-center py-16">
                 <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Icon name="users" size={24} className="text-slate-400" />
@@ -257,25 +257,10 @@ export default function OrgChart({ projects }) {
 
 // Hybrid Org Chart: Position levels for rows, reportsTo for connections
 function HybridOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete }) {
-  // Group engineers by position level
-  const levelGroups = useMemo(() => {
-    const groups = {};
-    engineers.forEach(eng => {
-      const pos = POSITIONS.find(p => p.id === eng.position);
-      const level = pos?.level ?? 99;
-      if (!groups[level]) groups[level] = [];
-      groups[level].push(eng);
-    });
-    // Sort each level by name
-    Object.values(groups).forEach(group => {
-      group.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    });
-    return groups;
-  }, [engineers]);
-
-  const levels = Object.keys(levelGroups).sort((a, b) => Number(a) - Number(b));
-  
-  if (levels.length === 0) return null;
+  // Guard: return early if no engineers
+  if (!engineers || engineers.length === 0) {
+    return null;
+  }
 
   // Card dimensions for line calculations
   const CARD_WIDTH = 160;
@@ -283,47 +268,86 @@ function HybridOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, 
   const ROW_GAP = 80;
   const CARD_GAP = 16;
 
+  // Group engineers by position level
+  const levelGroups = {};
+  engineers.forEach(eng => {
+    const pos = POSITIONS.find(p => p.id === eng.position);
+    const level = pos?.level ?? 99;
+    if (!levelGroups[level]) levelGroups[level] = [];
+    levelGroups[level].push(eng);
+  });
+  
+  // Sort each level by name
+  Object.values(levelGroups).forEach(group => {
+    group.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  });
+
+  const levels = Object.keys(levelGroups).sort((a, b) => Number(a) - Number(b));
+  
+  // Guard: return early if no levels
+  if (levels.length === 0) {
+    return null;
+  }
+
   // Calculate positions for each person
-  const positions = useMemo(() => {
-    const pos = {};
-    let currentY = 0;
+  const positions = {};
+  let currentY = 0;
+  
+  levels.forEach((level) => {
+    const levelEngineers = levelGroups[level];
+    if (!levelEngineers || levelEngineers.length === 0) return;
     
-    levels.forEach((level, levelIndex) => {
-      const levelEngineers = levelGroups[level];
-      const totalWidth = levelEngineers.length * CARD_WIDTH + (levelEngineers.length - 1) * CARD_GAP;
-      const startX = -totalWidth / 2;
-      
-      levelEngineers.forEach((eng, idx) => {
-        pos[eng.id] = {
-          x: startX + idx * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2,
-          y: currentY + CARD_HEIGHT / 2,
-          level: Number(level)
-        };
-      });
-      
-      currentY += CARD_HEIGHT + ROW_GAP;
+    const totalWidth = levelEngineers.length * CARD_WIDTH + (levelEngineers.length - 1) * CARD_GAP;
+    const startX = -totalWidth / 2;
+    
+    levelEngineers.forEach((eng, idx) => {
+      positions[eng.id] = {
+        x: startX + idx * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2,
+        y: currentY + CARD_HEIGHT / 2,
+        level: Number(level)
+      };
     });
     
-    return pos;
-  }, [levels, levelGroups]);
+    currentY += CARD_HEIGHT + ROW_GAP;
+  });
 
   // Find manager (could be in this dept or another)
   const getManager = (reportsTo) => {
     if (!reportsTo) return null;
-    // First check in current department
     let manager = engineers.find(e => e.id === reportsTo);
-    // If not found, check all engineers
     if (!manager) {
       manager = allEngineers.find(e => e.id === reportsTo);
     }
     return manager;
   };
 
-  // Calculate SVG dimensions
+  // Calculate SVG dimensions with guards
   const allPositions = Object.values(positions);
-  const minX = Math.min(...allPositions.map(p => p.x)) - CARD_WIDTH / 2 - 20;
-  const maxX = Math.max(...allPositions.map(p => p.x)) + CARD_WIDTH / 2 + 20;
-  const maxY = Math.max(...allPositions.map(p => p.y)) + CARD_HEIGHT / 2 + 20;
+  
+  // Guard: if no positions calculated, return simple layout
+  if (allPositions.length === 0) {
+    return (
+      <div className="flex flex-wrap gap-4 justify-center">
+        {engineers.map(eng => (
+          <OrgCard 
+            key={eng.id}
+            engineer={eng}
+            manager={getManager(eng.reportsTo)}
+            projects={getEngineerProjects(eng.id)}
+            onEdit={() => onEdit(eng)}
+            onDelete={() => onDelete(eng.id)}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const xValues = allPositions.map(p => p.x);
+  const yValues = allPositions.map(p => p.y);
+  
+  const minX = Math.min(...xValues) - CARD_WIDTH / 2 - 20;
+  const maxX = Math.max(...xValues) + CARD_WIDTH / 2 + 20;
+  const maxY = Math.max(...yValues) + CARD_HEIGHT / 2 + 20;
   const svgWidth = maxX - minX;
   const svgHeight = maxY + 20;
   const offsetX = -minX;
@@ -346,13 +370,10 @@ function HybridOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, 
           
           if (!childPos || !parentPos) return null;
           
-          // Draw curved or stepped line from parent to child
           const x1 = parentPos.x + offsetX;
-          const y1 = parentPos.y + CARD_HEIGHT / 2 - 10; // Bottom of parent card
+          const y1 = parentPos.y + CARD_HEIGHT / 2 - 10;
           const x2 = childPos.x + offsetX;
-          const y2 = childPos.y - CARD_HEIGHT / 2 + 10; // Top of child card
-          
-          // Midpoint for the step
+          const y2 = childPos.y - CARD_HEIGHT / 2 + 10;
           const midY = (y1 + y2) / 2;
           
           return (
@@ -364,7 +385,6 @@ function HybridOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, 
                 strokeWidth="2"
                 strokeLinecap="round"
               />
-              {/* Arrow at bottom */}
               <circle cx={x2} cy={y2} r="3" fill="#CBD5E1" />
             </g>
           );
@@ -409,7 +429,7 @@ function OrgCard({ engineer, manager, projects, onEdit, onDelete }) {
   const pos = POSITIONS.find(p => p.id === engineer.position);
   
   return (
-    <div className="bg-white border-2 border-slate-200 rounded-xl p-3 hover:shadow-lg hover:border-blue-300 transition-all group relative">
+    <div className="bg-white border-2 border-slate-200 rounded-xl p-3 hover:shadow-lg hover:border-blue-300 transition-all group relative min-w-[160px]">
       {/* Position color indicator */}
       <div 
         className="absolute top-0 left-0 right-0 h-1.5 rounded-t-xl"
@@ -451,7 +471,7 @@ function OrgCard({ engineer, manager, projects, onEdit, onDelete }) {
         )}
         
         {/* Assigned Projects */}
-        {projects.length > 0 && !['executive', 'head'].includes(engineer.position) && (
+        {projects && projects.length > 0 && !['executive', 'head'].includes(engineer.position) && (
           <div className="flex flex-wrap gap-0.5 mt-1.5 justify-center">
             {projects.slice(0, 2).map(p => (
               <span key={p.id} className="text-[7px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">
