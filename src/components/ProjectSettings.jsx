@@ -1,18 +1,18 @@
 import { useState } from 'react';
 import Icon from './Icon';
 import DeleteProjectModal from './DeleteProjectModal';
-import { LOCATIONS } from '../config';
+import { PROJECT_STATUSES } from '../config';
 
 export default function ProjectSettings({ project, onUpdateProject, onDeleteProject }) {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [formData, setFormData] = useState({
     name: project?.name || '',
-    location: project?.location || 'Cairo',
+    venue: project?.venue || '',
     driveLink: project?.driveLink || '',
     startDate: project?.startDate || '',
     expectedEndDate: project?.expectedEndDate || '',
     completionDate: project?.completionDate || '',
-    status: project?.status || 'Active'
+    status: project?.status || 'active'
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -38,38 +38,47 @@ export default function ProjectSettings({ project, onUpdateProject, onDeleteProj
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4 sm:space-y-5">
-        <div>
-          <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Project Name</label>
-          <input
-            type="text"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-none focus:border-blue-400"
-          />
-        </div>
-
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div>
-            <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Location</label>
-            <select
-              value={formData.location}
-              onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+            <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Project Name</label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., Agora"
               className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-none focus:border-blue-400"
-            >
-              {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-            </select>
+            />
           </div>
           <div>
-            <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Status</label>
-            <select
-              value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+            <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Venue / Location</label>
+            <input
+              type="text"
+              value={formData.venue}
+              onChange={(e) => setFormData({ ...formData, venue: e.target.value })}
+              placeholder="e.g., GEM, Mall of Arabia"
               className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-none focus:border-blue-400"
-            >
-              <option value="Active">Active</option>
-              <option value="On Hold">On Hold</option>
-              <option value="Completed">Completed</option>
-            </select>
+            />
+            <p className="text-[9px] text-slate-400 mt-1">Where is the project? (Mall, Building, etc.)</p>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] sm:text-xs font-medium text-slate-700 mb-1.5 sm:mb-2">Status</label>
+          <div className="flex flex-wrap gap-2">
+            {PROJECT_STATUSES.map(s => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => setFormData({ ...formData, status: s.value })}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                  formData.status === s.value
+                    ? `bg-${s.color}-100 text-${s.color}-700 border-2 border-${s.color}-400`
+                    : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -79,6 +88,7 @@ export default function ProjectSettings({ project, onUpdateProject, onDeleteProj
             type="url"
             value={formData.driveLink}
             onChange={(e) => setFormData({ ...formData, driveLink: e.target.value })}
+            placeholder="https://drive.google.com/drive/folders/..."
             className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-none focus:border-blue-400"
           />
         </div>
