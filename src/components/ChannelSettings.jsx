@@ -4,6 +4,10 @@ import { db } from '../firebase';
 import { EMAIL_SYNC_URL, SYNC_WORKER_URL } from '../config';
 import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
+const WAHA_URL = 'http://34.78.137.109:3000';
+const WAHA_SESSION = 'default';
+const WAHA_API_KEY = 'sigma2026';
+
 const GROUP_TYPES = [
   { value: 'client', label: 'Client', color: 'blue' },
   { value: 'consultant', label: 'Consultant', color: 'purple' },
@@ -38,8 +42,17 @@ export default function ChannelSettings({ projects }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
   const [savedId, setSavedId] = useState(null);
-  const [detectedGroups, setDetectedGroups] = useState([]);
   const [recentMessages, setRecentMessages] = useState([]);
+  
+  // Scan groups state
+  const [scanning, setScanning] = useState(false);
+  const [wahaGroups, setWahaGroups] = useState([]);
+  
+  // Create group modal state
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupParticipants, setNewGroupParticipants] = useState('');
+  const [creatingGroup, setCreatingGroup] = useState(false);
   
   // Email sync state
   const [emailSyncing, setEmailSyncing] = useState(false);
@@ -65,24 +78,104 @@ export default function ChannelSettings({ projects }) {
     const messagesRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages');
     const messagesQuery = query(messagesRef, orderBy('created_at', 'desc'), limit(100));
     const unsubMessages = onSnapshot(messagesQuery, (snapshot) => {
-      const groupNames = new Set();
-      const messages = [];
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        messages.push({ id: doc.id, ...data });
-        if (data.group_name) {
-          groupNames.add(data.group_name);
-        }
-      });
-      setDetectedGroups(Array.from(groupNames));
+      const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setRecentMessages(messages.slice(0, 6));
     });
+
+    // Auto-scan groups on mount
+    scanGroups();
 
     return () => {
       unsubGroups();
       unsubMessages();
     };
   }, []);
+
+  // Scan all groups from WAHA
+  const scanGroups = async () => {
+    setScanning(true);
+    try {
+      const res = await fetch(`${WAHA_URL}/api/${WAHA_SESSION}/groups`, {
+        headers: { 'X-Api-Key': WAHA_API_KEY }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setWahaGroups(data || []);
+      }
+    } catch (err) {
+      console.error('Error scanning groups:', err);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  // Create a new WhatsApp group
+  const createWhatsAppGroup = async () => {
+    if (!newGroupName.trim()) {
+      alert('Please enter a group name');
+      return;
+    }
+    
+    // Parse phone numbers (one per line or comma-separated)
+    const participants = newGroupParticipants
+      .split(/[\n,]/)
+      .map(p => p.trim())
+      .filter(p => p)
+      .map(p => {
+        // Normalize phone number format
+        let num = p.replace(/[^0-9+]/g, '');
+        if (!num.startsWith('+')) {
+          // Assume Egypt if no country code
+          if (num.startsWith('0')) num = '20' + num.slice(1);
+          else if (!num.startsWith('20')) num = '20' + num;
+        } else {
+          num = num.slice(1); // Remove +
+        }
+        return num + '@c.us';
+      });
+    
+    if (participants.length === 0) {
+      alert('Please add at least one phone number');
+      return;
+    }
+    
+    setCreatingGroup(true);
+    try {
+      const res = await fetch(`${WAHA_URL}/api/${WAHA_SESSION}/groups`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Api-Key': WAHA_API_KEY 
+        },
+        body: JSON.stringify({
+          name: newGroupName.trim(),
+          participants: participants
+        })
+      });
+      
+      if (res.ok) {
+        const result = await res.json();
+        alert(`✅ Group "${newGroupName}" created successfully!`);
+        setShowCreateModal(false);
+        setNewGroupName('');
+        setNewGroupParticipants('');
+        // Refresh groups list
+        scanGroups();
+        // Auto-add to our database
+        if (result.id) {
+          addGroup(newGroupName.trim(), result.id);
+        }
+      } else {
+        const error = await res.json();
+        alert(`❌ Failed to create group: ${error.message || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Error creating group:', err);
+      alert(`❌ Error: ${err.message}`);
+    } finally {
+      setCreatingGroup(false);
+    }
+  };
 
   // Load unclassified emails when email tab is active
   useEffect(() => {
@@ -98,7 +191,6 @@ export default function ChannelSettings({ projects }) {
       if (res.ok) {
         const data = await res.json();
         setUnclassifiedEmails(data.emails || []);
-        // Initialize assignments
         const assignments = {};
         data.emails?.forEach(email => {
           assignments[email.id] = { project: '', type: email.type || 'correspondence' };
@@ -133,54 +225,13 @@ export default function ChannelSettings({ projects }) {
       
       const result = await res.json();
       if (result.success) {
-        // Remove from list
         setUnclassifiedEmails(prev => prev.filter(e => e.id !== email.id));
-        // Show success feedback
         alert(`✅ Email moved to ${assignment.project}/09-Correspondence/`);
       } else {
         alert(`❌ Error: ${result.error}`);
       }
     } catch (err) {
       console.error('Error classifying email:', err);
-      alert(`❌ Error: ${err.message}`);
-    } finally {
-      setClassifyingEmail(null);
-    }
-  };
-
-  const classifyAllWithProject = async (projectName) => {
-    const emailsToClassify = unclassifiedEmails
-      .filter(email => emailAssignments[email.id]?.project === projectName)
-      .map(email => ({
-        path: email.path,
-        project: projectName,
-        type: emailAssignments[email.id]?.type || 'correspondence'
-      }));
-    
-    if (emailsToClassify.length === 0) {
-      alert('No emails selected for this project');
-      return;
-    }
-    
-    setClassifyingEmail('batch');
-    try {
-      const res = await fetch(`${SYNC_WORKER_URL}/classify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emails: emailsToClassify })
-      });
-      
-      const result = await res.json();
-      if (result.success_count > 0) {
-        // Reload list
-        loadUnclassifiedEmails();
-        alert(`✅ Moved ${result.success_count} emails to ${projectName}`);
-      }
-      if (result.error_count > 0) {
-        alert(`⚠️ ${result.error_count} emails failed to move`);
-      }
-    } catch (err) {
-      console.error('Error batch classifying:', err);
       alert(`❌ Error: ${err.message}`);
     } finally {
       setClassifyingEmail(null);
@@ -208,11 +259,12 @@ export default function ChannelSettings({ projects }) {
     }
   };
 
-  const addGroup = async (groupName) => {
+  const addGroup = async (groupName, wahaId = null) => {
     const groupId = groupName.replace(/[^a-zA-Z0-9]/g, '_');
     const newGroup = {
       id: groupId,
       name: groupName,
+      wahaId: wahaId,
       project: null,
       type: 'internal',
       priority: 'medium',
@@ -259,8 +311,6 @@ export default function ChannelSettings({ projects }) {
       
       const result = await res.json();
       setEmailSyncResult(result);
-      
-      // Reload unclassified after sync
       loadUnclassifiedEmails();
       
       if (result.processed > 0) {
@@ -279,8 +329,9 @@ export default function ChannelSettings({ projects }) {
     }
   };
 
-  const unmappedGroups = detectedGroups.filter(
-    name => !groups.some(g => g.name === name)
+  // Get unmapped groups (in WAHA but not in our DB)
+  const unmappedWahaGroups = wahaGroups.filter(
+    wg => !groups.some(g => g.name === wg.name || g.wahaId === wg.id)
   );
 
   const tabs = [
@@ -337,6 +388,30 @@ export default function ChannelSettings({ projects }) {
       {/* WhatsApp Tab */}
       {activeTab === 'whatsapp' && (
         <div className="space-y-6">
+          {/* Action Buttons */}
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={scanGroups}
+              disabled={scanning}
+              className="flex items-center gap-2 px-4 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+            >
+              {scanning ? (
+                <Icon name="loader-2" size={16} className="animate-spin" />
+              ) : (
+                <Icon name="refresh-cw" size={16} />
+              )}
+              {scanning ? 'Scanning...' : 'Scan All Groups'}
+            </button>
+            
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-all"
+            >
+              <Icon name="plus" size={16} />
+              Create WhatsApp Group
+            </button>
+          </div>
+
           {/* Command Group Info */}
           <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
             <div className="flex items-start gap-3">
@@ -354,25 +429,32 @@ export default function ChannelSettings({ projects }) {
             </div>
           </div>
 
-          {/* Unmapped Groups Alert */}
-          {unmappedGroups.length > 0 && (
+          {/* Unmapped Groups from WAHA */}
+          {unmappedWahaGroups.length > 0 && (
             <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
               <div className="flex items-start gap-3">
-                <Icon name="plus-circle" size={20} className="text-blue-600 mt-0.5" />
+                <Icon name="users" size={20} className="text-blue-600 mt-0.5" />
                 <div className="flex-1">
-                  <h3 className="text-sm font-medium text-blue-900">New Groups Detected</h3>
+                  <h3 className="text-sm font-medium text-blue-900">
+                    Groups Found ({unmappedWahaGroups.length})
+                  </h3>
                   <p className="text-xs text-blue-700 mt-1">Click to add and map to a project:</p>
                   <div className="flex flex-wrap gap-2 mt-3">
-                    {unmappedGroups.map(name => (
+                    {unmappedWahaGroups.slice(0, 10).map(wg => (
                       <button
-                        key={name}
-                        onClick={() => addGroup(name)}
+                        key={wg.id}
+                        onClick={() => addGroup(wg.name, wg.id)}
                         className="flex items-center gap-1 px-3 py-1.5 bg-white border border-blue-200 rounded-lg text-xs text-blue-700 hover:bg-blue-100 transition-colors font-medium"
                       >
                         <Icon name="plus" size={12} />
-                        {name}
+                        {wg.name}
                       </button>
                     ))}
+                    {unmappedWahaGroups.length > 10 && (
+                      <span className="text-xs text-blue-500 py-1.5">
+                        +{unmappedWahaGroups.length - 10} more
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -394,7 +476,7 @@ export default function ChannelSettings({ projects }) {
               <div className="p-8 text-center text-slate-400">
                 <Icon name="message-circle" size={32} className="mx-auto mb-2 opacity-50" />
                 <p className="text-sm">No groups mapped yet</p>
-                <p className="text-xs mt-1">Send a message in WhatsApp to detect groups</p>
+                <p className="text-xs mt-1">Click "Scan All Groups" to find your WhatsApp groups</p>
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
@@ -603,23 +685,17 @@ export default function ChannelSettings({ projects }) {
                       onClick={() => setExpandedEmail(expandedEmail === email.id ? null : email.id)}
                     >
                       <div className="flex items-start gap-3">
-                        {/* Email Icon */}
                         <div className="p-2 bg-blue-100 rounded-lg flex-shrink-0">
                           <Icon name="mail" size={14} className="text-blue-600" />
                         </div>
                         
                         <div className="flex-1 min-w-0">
-                          {/* Subject */}
                           <p className="text-sm font-medium text-slate-900 line-clamp-1">{email.subject}</p>
-                          
-                          {/* From & Date */}
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-slate-500 truncate max-w-[200px]">{email.from}</span>
                             <span className="text-xs text-slate-400">•</span>
                             <span className="text-xs text-slate-400">{formatDate(email.date)}</span>
                           </div>
-                          
-                          {/* Type Badge */}
                           <div className="flex items-center gap-2 mt-2">
                             <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
                               email.type === 'procurement' ? 'bg-emerald-100 text-emerald-700' :
@@ -646,17 +722,14 @@ export default function ChannelSettings({ projects }) {
                       </div>
                     </div>
                     
-                    {/* Expanded Content */}
                     {expandedEmail === email.id && (
                       <div className="px-4 pb-4 pt-0">
-                        {/* Preview */}
                         {email.body_preview && (
                           <div className="mb-4 p-3 bg-white border border-slate-200 rounded-lg">
                             <p className="text-xs text-slate-600 whitespace-pre-wrap">{email.body_preview}</p>
                           </div>
                         )}
                         
-                        {/* Assignment Controls */}
                         <div className="flex items-center gap-3 flex-wrap">
                           <select
                             value={emailAssignments[email.id]?.project || ''}
@@ -699,22 +772,6 @@ export default function ChannelSettings({ projects }) {
               </div>
             )}
           </div>
-          
-          {/* Quick Batch Assign */}
-          {unclassifiedEmails.length > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-              <div className="flex items-start gap-3">
-                <Icon name="zap" size={20} className="text-blue-600 mt-0.5" />
-                <div>
-                  <h3 className="text-sm font-medium text-blue-900">Quick Tip</h3>
-                  <p className="text-xs text-blue-700 mt-1">
-                    Click on each email to expand, select a project, and click Assign. 
-                    Emails will be moved to <code className="bg-blue-100 px-1 rounded">Project/09-Correspondence/</code> folder.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -727,6 +784,77 @@ export default function ChannelSettings({ projects }) {
           <button className="mt-6 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium opacity-50 cursor-not-allowed">
             Connect Slack (Coming Soon)
           </button>
+        </div>
+      )}
+
+      {/* Create Group Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-slate-100">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-100 rounded-lg">
+                    <Icon name="users" size={20} className="text-green-600" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-slate-900">Create WhatsApp Group</h2>
+                </div>
+                <button onClick={() => setShowCreateModal(false)} className="p-2 hover:bg-slate-100 rounded-lg">
+                  <Icon name="x" size={20} className="text-slate-400" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-2">Group Name *</label>
+                <input
+                  type="text"
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  placeholder="e.g., Agora - Internal Team"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-green-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-2">
+                  Phone Numbers *
+                  <span className="text-slate-400 font-normal ml-1">(one per line)</span>
+                </label>
+                <textarea
+                  value={newGroupParticipants}
+                  onChange={(e) => setNewGroupParticipants(e.target.value)}
+                  placeholder={"01001234567\n01112223344\n+201234567890"}
+                  rows={5}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-green-400 font-mono"
+                />
+                <p className="text-[10px] text-slate-400 mt-2">
+                  Egyptian numbers auto-prefixed with +20. Include country code for international numbers.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setShowCreateModal(false)}
+                  className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={createWhatsAppGroup}
+                  disabled={creatingGroup}
+                  className="flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {creatingGroup ? (
+                    <><Icon name="loader-2" size={16} className="animate-spin" />Creating...</>
+                  ) : (
+                    <><Icon name="plus" size={16} />Create Group</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
