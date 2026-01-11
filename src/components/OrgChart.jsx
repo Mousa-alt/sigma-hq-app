@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
-import { APP_ID, COLORS } from '../config';
+import { APP_ID, COLORS, BRANDING } from '../config';
 import Icon from './Icon';
 
 // Position hierarchy
@@ -204,17 +204,18 @@ export default function OrgChart({ projects }) {
             ))}
           </div>
 
-          {/* Org Chart - Tree Layout */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6 overflow-x-auto">
-            {getEngineersByDepartment(selectedDepartment).length > 0 ? (
-              <TreeOrgChart 
-                engineers={getEngineersByDepartment(selectedDepartment)}
-                allEngineers={engineers}
-                getEngineerProjects={getEngineerProjects}
-                onEdit={(eng) => { setEditingEngineer(eng); setIsModalOpen(true); }}
-                onDelete={handleDeleteEngineer}
-              />
-            ) : (
+          {/* Premium Org Chart */}
+          {getEngineersByDepartment(selectedDepartment).length > 0 ? (
+            <PremiumOrgChart 
+              engineers={getEngineersByDepartment(selectedDepartment)}
+              allEngineers={engineers}
+              getEngineerProjects={getEngineerProjects}
+              onEdit={(eng) => { setEditingEngineer(eng); setIsModalOpen(true); }}
+              onDelete={handleDeleteEngineer}
+              department={selectedDepartment}
+            />
+          ) : (
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
               <div className="text-center py-16">
                 <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Icon name="users" size={24} className="text-slate-400" />
@@ -222,8 +223,8 @@ export default function OrgChart({ projects }) {
                 <h3 className="text-base font-semibold text-slate-900">No Team Members</h3>
                 <p className="text-slate-500 mt-1 text-sm">Add members to {selectedDepartment}</p>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       ) : activeTab === 'list' ? (
         <TeamListView 
@@ -255,174 +256,266 @@ export default function OrgChart({ projects }) {
   );
 }
 
-// Tree Org Chart - Groups people under their actual manager
-function TreeOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete }) {
+// Premium Org Chart with proper SVG connections
+function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
+  const chartRef = useRef(null);
+  const [cardPositions, setCardPositions] = useState({});
+  
   if (!engineers || engineers.length === 0) return null;
 
-  // Find manager
+  // Build tree structure
+  const buildTree = () => {
+    const getChildren = (parentId) => {
+      return engineers
+        .filter(e => e.reportsTo === parentId)
+        .sort((a, b) => {
+          const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
+          const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
+          if (posA !== posB) return posA - posB;
+          return (a.name || '').localeCompare(b.name || '');
+        });
+    };
+
+    // Find roots (no manager in this department)
+    const roots = engineers.filter(e => {
+      if (!e.reportsTo) return true;
+      return !engineers.find(m => m.id === e.reportsTo);
+    }).sort((a, b) => {
+      const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
+      const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
+      return posA - posB;
+    });
+
+    const buildNode = (person) => ({
+      person,
+      children: getChildren(person.id).map(buildNode)
+    });
+
+    return roots.map(buildNode);
+  };
+
+  const trees = buildTree();
+
+  // Get manager
   const getManager = (reportsTo) => {
     if (!reportsTo) return null;
     return engineers.find(e => e.id === reportsTo) || allEngineers.find(e => e.id === reportsTo);
   };
 
-  // Find root nodes (people with no manager or manager outside this department)
-  const roots = engineers.filter(e => {
-    if (!e.reportsTo) return true;
-    const manager = engineers.find(m => m.id === e.reportsTo);
-    return !manager; // Root if manager not in this department
-  });
-
-  // Sort roots by position level
-  roots.sort((a, b) => {
-    const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
-    const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
-    return posA - posB;
-  });
-
-  // Get direct reports of a person
-  const getDirectReports = (managerId) => {
-    return engineers
-      .filter(e => e.reportsTo === managerId)
-      .sort((a, b) => {
-        const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
-        const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
-        if (posA !== posB) return posA - posB;
-        return (a.name || '').localeCompare(b.name || '');
+  // Download as image
+  const handleDownload = async () => {
+    if (!chartRef.current) return;
+    
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(chartRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        logging: false,
+        useCORS: true
       });
+      
+      const link = document.createElement('a');
+      const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
+      link.download = `Sigma-OrgChart-${department}-${date}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error('Download failed:', err);
+      alert('Download failed. Please try again.');
+    }
   };
 
-  // Recursive tree node component
-  const TreeNode = ({ person, depth = 0 }) => {
-    const reports = getDirectReports(person.id);
-    const manager = getManager(person.reportsTo);
+  // Recursive tree renderer
+  const TreeNode = ({ node, isRoot = false }) => {
+    const { person, children } = node;
+    const pos = POSITIONS.find(p => p.id === person.position);
+    const projects = getEngineerProjects(person.id);
     
     return (
       <div className="flex flex-col items-center">
         {/* Person Card */}
-        <OrgCard 
-          engineer={person}
-          manager={manager}
-          projects={getEngineerProjects(person.id)}
-          onEdit={() => onEdit(person)}
-          onDelete={() => onDelete(person.id)}
-        />
-        
-        {/* Direct Reports */}
-        {reports.length > 0 && (
-          <>
-            {/* Vertical line down */}
-            <div className="w-0.5 h-6 bg-slate-300"></div>
-            
-            {/* Horizontal connector if multiple reports */}
-            {reports.length > 1 && (
-              <div className="relative w-full flex justify-center">
+        <div 
+          className={`relative bg-white rounded-2xl shadow-lg border-2 transition-all duration-300 hover:shadow-xl hover:scale-105 ${isRoot ? 'border-slate-800' : 'border-slate-200 hover:border-blue-400'}`}
+          style={{ width: 200 }}
+        >
+          {/* Gradient top bar */}
+          <div 
+            className="h-2 rounded-t-xl"
+            style={{ 
+              background: `linear-gradient(135deg, ${pos?.color || '#64748B'} 0%, ${pos?.color || '#64748B'}88 100%)`
+            }}
+          />
+          
+          <div className="p-4">
+            {/* Avatar with ring */}
+            <div className="flex justify-center mb-3">
+              <div className="relative">
                 <div 
-                  className="h-0.5 bg-slate-300 absolute top-0"
+                  className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl shadow-lg"
                   style={{ 
-                    width: `calc(${(reports.length - 1) * 180}px)`,
-                    left: '50%',
-                    transform: 'translateX(-50%)'
+                    background: `linear-gradient(135deg, ${pos?.color || '#64748B'} 0%, ${pos?.color || '#64748B'}CC 100%)`
                   }}
-                ></div>
+                >
+                  {person.name?.charAt(0) || '?'}
+                </div>
+                {/* Status ring */}
+                <div 
+                  className="absolute inset-0 rounded-full border-4 border-white shadow-inner"
+                  style={{ margin: -2 }}
+                />
+              </div>
+            </div>
+            
+            {/* Name */}
+            <h3 className="font-bold text-slate-900 text-sm text-center truncate" title={person.name}>
+              {person.name}
+            </h3>
+            
+            {/* Position badge */}
+            <div className="flex justify-center mt-2">
+              <span 
+                className="text-[10px] font-semibold px-3 py-1 rounded-full text-white"
+                style={{ backgroundColor: pos?.color || '#64748B' }}
+              >
+                {pos?.label || 'Team Member'}
+              </span>
+            </div>
+            
+            {/* Contact */}
+            {person.phone && (
+              <div className="flex items-center justify-center gap-1 mt-3 text-xs text-slate-500">
+                <Icon name="phone" size={10} />
+                <span>{person.phone}</span>
               </div>
             )}
             
-            {/* Reports row */}
-            <div className="flex gap-4 pt-0">
-              {reports.map((report, idx) => (
-                <div key={report.id} className="flex flex-col items-center">
-                  {/* Vertical line to each child */}
-                  <div className="w-0.5 h-6 bg-slate-300"></div>
-                  <TreeNode person={report} depth={depth + 1} />
+            {/* Projects */}
+            {projects.length > 0 && !['executive', 'head'].includes(person.position) && (
+              <div className="flex flex-wrap gap-1 mt-3 justify-center">
+                {projects.slice(0, 2).map(p => (
+                  <span key={p.id} className="text-[9px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                    {p.name}
+                  </span>
+                ))}
+                {projects.length > 2 && (
+                  <span className="text-[9px] text-slate-400 font-medium">+{projects.length - 2}</span>
+                )}
+              </div>
+            )}
+          </div>
+          
+          {/* Hover actions */}
+          <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 hover:opacity-100 transition-opacity flex gap-1">
+            <button 
+              onClick={() => onEdit(person)}
+              className="p-1.5 bg-white border border-slate-200 rounded-lg shadow-md hover:bg-blue-50 hover:border-blue-300 transition-all"
+            >
+              <Icon name="pencil" size={12} className="text-slate-600" />
+            </button>
+            <button 
+              onClick={() => onDelete(person.id)}
+              className="p-1.5 bg-white border border-slate-200 rounded-lg shadow-md hover:bg-red-50 hover:border-red-300 transition-all"
+            >
+              <Icon name="trash-2" size={12} className="text-red-500" />
+            </button>
+          </div>
+        </div>
+        
+        {/* Children */}
+        {children.length > 0 && (
+          <div className="flex flex-col items-center">
+            {/* Vertical connector from parent */}
+            <div className="w-0.5 h-8 bg-gradient-to-b from-slate-300 to-slate-400"></div>
+            
+            {/* Horizontal connector bar */}
+            {children.length > 1 && (
+              <div className="relative h-0.5 bg-slate-300" style={{ width: `${(children.length - 1) * 220 + 20}px` }}>
+                {/* Dots at connection points */}
+                {children.map((_, idx) => (
+                  <div 
+                    key={idx}
+                    className="absolute w-2 h-2 bg-slate-400 rounded-full -top-[3px]"
+                    style={{ left: `${idx * 220 / (children.length - 1) * (children.length - 1)}px`, transform: 'translateX(-50%)' }}
+                  />
+                ))}
+              </div>
+            )}
+            
+            {/* Children row */}
+            <div className="flex gap-5">
+              {children.map((child, idx) => (
+                <div key={child.person.id} className="flex flex-col items-center">
+                  {/* Vertical connector to each child */}
+                  <div className="w-0.5 h-8 bg-gradient-to-b from-slate-400 to-slate-300"></div>
+                  <TreeNode node={child} />
                 </div>
               ))}
             </div>
-          </>
+          </div>
         )}
       </div>
     );
   };
 
-  return (
-    <div className="flex flex-col items-center gap-8 min-w-fit">
-      {roots.map((root, idx) => (
-        <div key={root.id} className="flex flex-col items-center">
-          {idx > 0 && <div className="h-8"></div>}
-          <TreeNode person={root} />
-        </div>
-      ))}
-    </div>
-  );
-}
+  const currentDate = new Date().toLocaleDateString('en-US', { 
+    weekday: 'long',
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
 
-// Org Card Component
-function OrgCard({ engineer, manager, projects, onEdit, onDelete }) {
-  const pos = POSITIONS.find(p => p.id === engineer.position);
-  
   return (
-    <div className="bg-white border-2 border-slate-200 rounded-xl p-3 hover:shadow-lg hover:border-blue-300 transition-all group relative w-[170px]">
-      {/* Position color indicator */}
-      <div 
-        className="absolute top-0 left-0 right-0 h-1.5 rounded-t-xl"
-        style={{ backgroundColor: pos?.color || '#94A3B8' }}
-      />
-      
-      <div className="flex flex-col items-center text-center pt-1">
-        {/* Avatar */}
-        <div 
-          className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm mb-1.5"
-          style={{ backgroundColor: pos?.color || '#94A3B8' }}
-        >
-          {engineer.name?.charAt(0) || '?'}
+    <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl border border-slate-200 overflow-hidden">
+      {/* Header with branding */}
+      <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          {/* Logo */}
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: COLORS.blue }}>
+            <span className="text-white font-bold text-lg">S</span>
+          </div>
+          <div>
+            <h2 className="font-bold text-slate-900">
+              {BRANDING?.companyName || 'Sigma Contractors'}
+            </h2>
+            <p className="text-xs text-slate-500">{department} Organization Chart</p>
+          </div>
         </div>
         
-        {/* Name */}
-        <p className="font-semibold text-slate-900 text-xs truncate w-full" title={engineer.name}>
-          {engineer.name}
-        </p>
-        
-        {/* Position */}
-        <p className="text-[9px] text-slate-500 truncate w-full">
-          {pos?.label || 'Unknown'}
-        </p>
-        
-        {/* Phone */}
-        {engineer.phone && (
-          <div className="flex items-center gap-1 mt-1 text-[8px] text-slate-400">
-            <Icon name="phone" size={8} />
-            <span className="truncate">{engineer.phone}</span>
-          </div>
-        )}
-        
-        {/* Assigned Projects */}
-        {projects && projects.length > 0 && !['executive', 'head'].includes(engineer.position) && (
-          <div className="flex flex-wrap gap-0.5 mt-1.5 justify-center">
-            {projects.slice(0, 2).map(p => (
-              <span key={p.id} className="text-[7px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">
-                {p.name}
-              </span>
-            ))}
-            {projects.length > 2 && (
-              <span className="text-[7px] text-slate-400">+{projects.length - 2}</span>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-400">{currentDate}</span>
+          <button
+            onClick={handleDownload}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-medium transition-all shadow-md"
+          >
+            <Icon name="download" size={14} />
+            Export PNG
+          </button>
+        </div>
       </div>
       
-      {/* Action buttons */}
-      <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-        <button 
-          onClick={onEdit}
-          className="p-1 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50"
-        >
-          <Icon name="pencil" size={10} className="text-slate-500" />
-        </button>
-        <button 
-          onClick={onDelete}
-          className="p-1 bg-white border border-slate-200 rounded shadow-sm hover:bg-red-50"
-        >
-          <Icon name="trash-2" size={10} className="text-red-400" />
-        </button>
+      {/* Chart area */}
+      <div ref={chartRef} className="p-8 overflow-x-auto bg-gradient-to-br from-slate-50 via-white to-slate-50">
+        {/* Watermark pattern */}
+        <div className="absolute inset-0 opacity-[0.02] pointer-events-none" style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='30' y='35' font-family='Arial' font-size='12' fill='%23000' text-anchor='middle'%3ESIGMA%3C/text%3E%3C/svg%3E")`,
+          backgroundSize: '100px 100px'
+        }}></div>
+        
+        <div className="flex flex-col items-center gap-12 min-w-fit relative">
+          {trees.map((tree, idx) => (
+            <div key={tree.person.id} className="group">
+              <TreeNode node={tree} isRoot={idx === 0} />
+            </div>
+          ))}
+        </div>
+        
+        {/* Footer watermark */}
+        <div className="mt-8 pt-6 border-t border-slate-200/50 flex items-center justify-center gap-2 text-slate-300">
+          <span className="text-xs font-medium">Generated by Sigma HQ</span>
+          <span className="text-xs">•</span>
+          <span className="text-xs">{currentDate}</span>
+        </div>
       </div>
     </div>
   );
@@ -436,7 +529,6 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
     return manager?.name || '—';
   };
 
-  // Sort by level then name
   const sortedEngineers = [...engineers].sort((a, b) => {
     const posA = POSITIONS.find(p => p.id === a.position)?.level || 99;
     const posB = POSITIONS.find(p => p.id === b.position)?.level || 99;
@@ -508,7 +600,6 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
 
 // Assignment Matrix
 function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
-  // Sort engineers by level
   const sortedEngineers = [...engineers].sort((a, b) => {
     const posA = POSITIONS.find(p => p.id === a.position)?.level || 99;
     const posB = POSITIONS.find(p => p.id === b.position)?.level || 99;
@@ -590,7 +681,6 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
 
   const currentPos = POSITIONS.find(p => p.id === formData.position);
   
-  // Potential managers: anyone with a higher level position (lower level number)
   const potentialManagers = engineers.filter(e => {
     if (e.id === engineer?.id) return false;
     const pos = POSITIONS.find(p => p.id === e.position);
