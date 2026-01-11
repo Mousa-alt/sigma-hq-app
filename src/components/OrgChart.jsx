@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { APP_ID, COLORS } from '../config';
@@ -204,10 +204,10 @@ export default function OrgChart({ projects }) {
             ))}
           </div>
 
-          {/* Org Chart - Levels by Position, Lines by ReportsTo */}
+          {/* Org Chart - Tree Layout */}
           <div className="bg-white rounded-xl border border-slate-200 p-6 overflow-x-auto">
             {getEngineersByDepartment(selectedDepartment).length > 0 ? (
-              <HybridOrgChart 
+              <TreeOrgChart 
                 engineers={getEngineersByDepartment(selectedDepartment)}
                 allEngineers={engineers}
                 getEngineerProjects={getEngineerProjects}
@@ -255,171 +255,102 @@ export default function OrgChart({ projects }) {
   );
 }
 
-// Hybrid Org Chart: Position levels for rows, reportsTo for connections
-function HybridOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete }) {
-  // Guard: return early if no engineers
-  if (!engineers || engineers.length === 0) {
-    return null;
-  }
+// Tree Org Chart - Groups people under their actual manager
+function TreeOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete }) {
+  if (!engineers || engineers.length === 0) return null;
 
-  // Card dimensions for line calculations
-  const CARD_WIDTH = 160;
-  const CARD_HEIGHT = 140;
-  const ROW_GAP = 80;
-  const CARD_GAP = 16;
-
-  // Group engineers by position level
-  const levelGroups = {};
-  engineers.forEach(eng => {
-    const pos = POSITIONS.find(p => p.id === eng.position);
-    const level = pos?.level ?? 99;
-    if (!levelGroups[level]) levelGroups[level] = [];
-    levelGroups[level].push(eng);
-  });
-  
-  // Sort each level by name
-  Object.values(levelGroups).forEach(group => {
-    group.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  });
-
-  const levels = Object.keys(levelGroups).sort((a, b) => Number(a) - Number(b));
-  
-  // Guard: return early if no levels
-  if (levels.length === 0) {
-    return null;
-  }
-
-  // Calculate positions for each person
-  const positions = {};
-  let currentY = 0;
-  
-  levels.forEach((level) => {
-    const levelEngineers = levelGroups[level];
-    if (!levelEngineers || levelEngineers.length === 0) return;
-    
-    const totalWidth = levelEngineers.length * CARD_WIDTH + (levelEngineers.length - 1) * CARD_GAP;
-    const startX = -totalWidth / 2;
-    
-    levelEngineers.forEach((eng, idx) => {
-      positions[eng.id] = {
-        x: startX + idx * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2,
-        y: currentY + CARD_HEIGHT / 2,
-        level: Number(level)
-      };
-    });
-    
-    currentY += CARD_HEIGHT + ROW_GAP;
-  });
-
-  // Find manager (could be in this dept or another)
+  // Find manager
   const getManager = (reportsTo) => {
     if (!reportsTo) return null;
-    let manager = engineers.find(e => e.id === reportsTo);
-    if (!manager) {
-      manager = allEngineers.find(e => e.id === reportsTo);
-    }
-    return manager;
+    return engineers.find(e => e.id === reportsTo) || allEngineers.find(e => e.id === reportsTo);
   };
 
-  // Calculate SVG dimensions with guards
-  const allPositions = Object.values(positions);
-  
-  // Guard: if no positions calculated, return simple layout
-  if (allPositions.length === 0) {
+  // Find root nodes (people with no manager or manager outside this department)
+  const roots = engineers.filter(e => {
+    if (!e.reportsTo) return true;
+    const manager = engineers.find(m => m.id === e.reportsTo);
+    return !manager; // Root if manager not in this department
+  });
+
+  // Sort roots by position level
+  roots.sort((a, b) => {
+    const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
+    const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
+    return posA - posB;
+  });
+
+  // Get direct reports of a person
+  const getDirectReports = (managerId) => {
+    return engineers
+      .filter(e => e.reportsTo === managerId)
+      .sort((a, b) => {
+        const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
+        const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
+        if (posA !== posB) return posA - posB;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+  };
+
+  // Recursive tree node component
+  const TreeNode = ({ person, depth = 0 }) => {
+    const reports = getDirectReports(person.id);
+    const manager = getManager(person.reportsTo);
+    
     return (
-      <div className="flex flex-wrap gap-4 justify-center">
-        {engineers.map(eng => (
-          <OrgCard 
-            key={eng.id}
-            engineer={eng}
-            manager={getManager(eng.reportsTo)}
-            projects={getEngineerProjects(eng.id)}
-            onEdit={() => onEdit(eng)}
-            onDelete={() => onDelete(eng.id)}
-          />
-        ))}
+      <div className="flex flex-col items-center">
+        {/* Person Card */}
+        <OrgCard 
+          engineer={person}
+          manager={manager}
+          projects={getEngineerProjects(person.id)}
+          onEdit={() => onEdit(person)}
+          onDelete={() => onDelete(person.id)}
+        />
+        
+        {/* Direct Reports */}
+        {reports.length > 0 && (
+          <>
+            {/* Vertical line down */}
+            <div className="w-0.5 h-6 bg-slate-300"></div>
+            
+            {/* Horizontal connector if multiple reports */}
+            {reports.length > 1 && (
+              <div className="relative w-full flex justify-center">
+                <div 
+                  className="h-0.5 bg-slate-300 absolute top-0"
+                  style={{ 
+                    width: `calc(${(reports.length - 1) * 180}px)`,
+                    left: '50%',
+                    transform: 'translateX(-50%)'
+                  }}
+                ></div>
+              </div>
+            )}
+            
+            {/* Reports row */}
+            <div className="flex gap-4 pt-0">
+              {reports.map((report, idx) => (
+                <div key={report.id} className="flex flex-col items-center">
+                  {/* Vertical line to each child */}
+                  <div className="w-0.5 h-6 bg-slate-300"></div>
+                  <TreeNode person={report} depth={depth + 1} />
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     );
-  }
-
-  const xValues = allPositions.map(p => p.x);
-  const yValues = allPositions.map(p => p.y);
-  
-  const minX = Math.min(...xValues) - CARD_WIDTH / 2 - 20;
-  const maxX = Math.max(...xValues) + CARD_WIDTH / 2 + 20;
-  const maxY = Math.max(...yValues) + CARD_HEIGHT / 2 + 20;
-  const svgWidth = maxX - minX;
-  const svgHeight = maxY + 20;
-  const offsetX = -minX;
+  };
 
   return (
-    <div className="relative min-w-fit" style={{ minHeight: svgHeight }}>
-      {/* SVG for connection lines */}
-      <svg 
-        className="absolute top-0 left-0 pointer-events-none"
-        width={svgWidth}
-        height={svgHeight}
-        style={{ overflow: 'visible' }}
-      >
-        {engineers.map(eng => {
-          const manager = getManager(eng.reportsTo);
-          if (!manager) return null;
-          
-          const childPos = positions[eng.id];
-          const parentPos = positions[manager.id];
-          
-          if (!childPos || !parentPos) return null;
-          
-          const x1 = parentPos.x + offsetX;
-          const y1 = parentPos.y + CARD_HEIGHT / 2 - 10;
-          const x2 = childPos.x + offsetX;
-          const y2 = childPos.y - CARD_HEIGHT / 2 + 10;
-          const midY = (y1 + y2) / 2;
-          
-          return (
-            <g key={`line-${eng.id}`}>
-              <path
-                d={`M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`}
-                fill="none"
-                stroke="#CBD5E1"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-              <circle cx={x2} cy={y2} r="3" fill="#CBD5E1" />
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Cards positioned absolutely */}
-      <div className="relative" style={{ height: svgHeight }}>
-        {engineers.map(eng => {
-          const pos = positions[eng.id];
-          if (!pos) return null;
-          
-          const manager = getManager(eng.reportsTo);
-          
-          return (
-            <div
-              key={eng.id}
-              className="absolute"
-              style={{
-                left: pos.x + offsetX - CARD_WIDTH / 2,
-                top: pos.y - CARD_HEIGHT / 2,
-                width: CARD_WIDTH
-              }}
-            >
-              <OrgCard 
-                engineer={eng}
-                manager={manager}
-                projects={getEngineerProjects(eng.id)}
-                onEdit={() => onEdit(eng)}
-                onDelete={() => onDelete(eng.id)}
-              />
-            </div>
-          );
-        })}
-      </div>
+    <div className="flex flex-col items-center gap-8 min-w-fit">
+      {roots.map((root, idx) => (
+        <div key={root.id} className="flex flex-col items-center">
+          {idx > 0 && <div className="h-8"></div>}
+          <TreeNode person={root} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -429,7 +360,7 @@ function OrgCard({ engineer, manager, projects, onEdit, onDelete }) {
   const pos = POSITIONS.find(p => p.id === engineer.position);
   
   return (
-    <div className="bg-white border-2 border-slate-200 rounded-xl p-3 hover:shadow-lg hover:border-blue-300 transition-all group relative min-w-[160px]">
+    <div className="bg-white border-2 border-slate-200 rounded-xl p-3 hover:shadow-lg hover:border-blue-300 transition-all group relative w-[170px]">
       {/* Position color indicator */}
       <div 
         className="absolute top-0 left-0 right-0 h-1.5 rounded-t-xl"
@@ -454,13 +385,6 @@ function OrgCard({ engineer, manager, projects, onEdit, onDelete }) {
         <p className="text-[9px] text-slate-500 truncate w-full">
           {pos?.label || 'Unknown'}
         </p>
-        
-        {/* Reports To */}
-        {manager && (
-          <p className="text-[8px] text-blue-500 mt-1 truncate w-full">
-            → {manager.name}
-          </p>
-        )}
         
         {/* Phone */}
         {engineer.phone && (
