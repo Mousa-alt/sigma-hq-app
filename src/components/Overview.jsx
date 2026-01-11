@@ -88,6 +88,13 @@ export default function Overview({ projects, onSelectProject }) {
     critical: { color: 'text-red-500', bg: 'bg-red-50', label: 'Critical', icon: 'alert-triangle' }
   };
 
+  const statusConfig = {
+    tender: { color: 'text-amber-600', bg: 'bg-amber-50', label: 'Tender', icon: 'file-text' },
+    active: { color: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Active', icon: 'play-circle' },
+    on_hold: { color: 'text-slate-600', bg: 'bg-slate-100', label: 'On Hold', icon: 'pause-circle' },
+    completed: { color: 'text-blue-600', bg: 'bg-blue-50', label: 'Completed', icon: 'check-circle' },
+  };
+
   const formatTimeAgo = (date) => {
     if (!date) return '';
     const now = new Date();
@@ -190,6 +197,8 @@ export default function Overview({ projects, onSelectProject }) {
           {projects.map(project => {
             const health = getProjectHealth(project);
             const healthStyle = healthConfig[health];
+            const projectStatus = project.status || 'active';
+            const statusStyle = statusConfig[projectStatus] || statusConfig.active;
             
             return (
               <div 
@@ -197,8 +206,13 @@ export default function Overview({ projects, onSelectProject }) {
                 onClick={() => onSelectProject(project)} 
                 className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer overflow-hidden group"
               >
-                {/* Header stripe */}
-                <div className={`h-1 ${health === 'healthy' ? 'bg-emerald-500' : health === 'attention' ? 'bg-amber-500' : 'bg-red-500'}`} />
+                {/* Header stripe based on status */}
+                <div className={`h-1 ${
+                  projectStatus === 'active' ? 'bg-emerald-500' : 
+                  projectStatus === 'tender' ? 'bg-amber-500' :
+                  projectStatus === 'on_hold' ? 'bg-slate-400' :
+                  projectStatus === 'completed' ? 'bg-blue-500' : 'bg-emerald-500'
+                }`} />
                 
                 <div className="p-4">
                   <div className="flex items-start justify-between mb-3">
@@ -208,19 +222,33 @@ export default function Overview({ projects, onSelectProject }) {
                       </div>
                       <div>
                         <h3 className="text-sm font-semibold text-slate-900">{project.name}</h3>
-                        <p className="text-xs text-slate-500">{project.client || 'No client'}</p>
+                        {project.venue && (
+                          <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                            <Icon name="map-pin" size={10} />
+                            {project.venue}
+                          </p>
+                        )}
                       </div>
+                    </div>
+                    {/* Status badge */}
+                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${statusStyle.bg}`}>
+                      <Icon name={statusStyle.icon} size={10} className={statusStyle.color} />
+                      <span className={`text-[9px] font-medium ${statusStyle.color}`}>{statusStyle.label}</span>
                     </div>
                   </div>
                   
                   <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                    <div className="flex items-center gap-1.5">
-                      <Icon name="map-pin" size={12} className="text-slate-400" />
-                      <span className="text-xs text-slate-500">{project.location || 'N/A'}</span>
+                    <div className="flex items-center gap-3 text-xs text-slate-400">
+                      {project.startDate && (
+                        <span className="flex items-center gap-1">
+                          <Icon name="calendar" size={10} />
+                          {new Date(project.startDate).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
+                        </span>
+                      )}
                     </div>
                     <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${healthStyle.bg}`}>
-                      <Icon name={healthStyle.icon} size={12} className={healthStyle.color} />
-                      <span className={`text-[10px] font-medium ${healthStyle.color}`}>{healthStyle.label}</span>
+                      <Icon name={healthStyle.icon} size={10} className={healthStyle.color} />
+                      <span className={`text-[9px] font-medium ${healthStyle.color}`}>{healthStyle.label}</span>
                     </div>
                   </div>
                 </div>
