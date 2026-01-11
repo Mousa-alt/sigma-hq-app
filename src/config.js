@@ -27,6 +27,7 @@ export const COLORS = {
 };
 
 export const BRANDING = {
+  companyName: "Sigma Contractors",
   logo: "https://raw.githubusercontent.com/Mousa-alt/Sigma-logo-PORTRAIT/main/Sigma%20landscape.png",
   logoWhite: "https://raw.githubusercontent.com/Mousa-alt/Sigma-logo-PORTRAIT/main/Sigma%20-%20Logo-LS-white.png",
   logoIcon: "https://raw.githubusercontent.com/Mousa-alt/Sigma-logo-PORTRAIT/main/Sigma%20icon%20blue.png",
