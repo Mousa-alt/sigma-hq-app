@@ -16,6 +16,7 @@ export const APP_ID = 'sigma-hq-production';
 
 export const SYNC_WORKER_URL = "https://sigma-sync-worker-71025980302.europe-west1.run.app";
 export const EMAIL_SYNC_URL = "https://sigma-email-sync-71025980302.europe-west1.run.app";
+export const WHATSAPP_WEBHOOK_URL = "https://sigma-whatsapp-71025980302.europe-west1.run.app";
 
 export const COLORS = {
   navy: '#0A1628',
@@ -36,6 +37,7 @@ export const BRANDING = {
 // Project statuses
 export const PROJECT_STATUSES = [
   { value: 'tender', label: 'Tender', color: 'amber' },
+  { value: 'planning', label: 'Planning', color: 'purple' },
   { value: 'active', label: 'Active', color: 'emerald' },
   { value: 'on_hold', label: 'On Hold', color: 'slate' },
   { value: 'completed', label: 'Completed', color: 'blue' },
@@ -58,3 +60,13 @@ export const TABS = [
 
 // Dashboard password (change this!)
 export const DASHBOARD_PASSWORD = 'sigma2026';
+
+// Organization members for WhatsApp groups
+export const ORG_MEMBERS = [
+  { name: 'Mostafa Mosallam', phone: '201001234567', role: 'Head of TO', office: 'Cairo' },
+  { name: 'Ahmed Hassan', phone: '201112223344', role: 'Project Manager', office: 'Cairo' },
+  { name: 'Mohamed Ali', phone: '201223334455', role: 'Senior Engineer', office: 'Cairo' },
+  { name: 'Sara Ibrahim', phone: '201334445566', role: 'QS Manager', office: 'Cairo' },
+  { name: 'Omar Khalil', phone: '966501234567', role: 'Site Manager', office: 'Riyadh' },
+  { name: 'Khalid Ahmad', phone: '966512345678', role: 'Project Engineer', office: 'Riyadh' },
+];

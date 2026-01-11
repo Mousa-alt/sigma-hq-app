@@ -1,12 +1,8 @@
 import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { db } from '../firebase';
-import { EMAIL_SYNC_URL, SYNC_WORKER_URL } from '../config';
+import { EMAIL_SYNC_URL, SYNC_WORKER_URL, WHATSAPP_WEBHOOK_URL, ORG_MEMBERS } from '../config';
 import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
-
-const WAHA_URL = 'http://34.78.137.109:3000';
-const WAHA_SESSION = 'default';
-const WAHA_API_KEY = 'sigma2026';
 
 const GROUP_TYPES = [
   { value: 'client', label: 'Client', color: 'blue' },
@@ -47,12 +43,15 @@ export default function ChannelSettings({ projects }) {
   // Scan groups state
   const [scanning, setScanning] = useState(false);
   const [wahaGroups, setWahaGroups] = useState([]);
+  const [scanError, setScanError] = useState(null);
   
   // Create group modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupParticipants, setNewGroupParticipants] = useState('');
+  const [selectedMembers, setSelectedMembers] = useState([]);
+  const [customPhone, setCustomPhone] = useState('');
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [officeFilter, setOfficeFilter] = useState('all');
   
   // Email sync state
   const [emailSyncing, setEmailSyncing] = useState(false);
@@ -91,62 +90,74 @@ export default function ChannelSettings({ projects }) {
     };
   }, []);
 
-  // Scan all groups from WAHA
+  // Scan all groups via backend proxy (avoids CORS)
   const scanGroups = async () => {
     setScanning(true);
+    setScanError(null);
     try {
-      const res = await fetch(`${WAHA_URL}/api/${WAHA_SESSION}/groups`, {
-        headers: { 'X-Api-Key': WAHA_API_KEY }
-      });
+      const res = await fetch(`${WHATSAPP_WEBHOOK_URL}/waha/groups`);
       if (res.ok) {
         const data = await res.json();
-        setWahaGroups(data || []);
+        setWahaGroups(data.groups || []);
+      } else {
+        const error = await res.json();
+        setScanError(error.error || 'Failed to scan groups');
       }
     } catch (err) {
       console.error('Error scanning groups:', err);
+      setScanError('Connection error. Check if WhatsApp service is running.');
     } finally {
       setScanning(false);
     }
   };
 
-  // Create a new WhatsApp group
+  // Toggle member selection
+  const toggleMember = (member) => {
+    setSelectedMembers(prev => {
+      const exists = prev.find(m => m.phone === member.phone);
+      if (exists) {
+        return prev.filter(m => m.phone !== member.phone);
+      }
+      return [...prev, member];
+    });
+  };
+
+  // Add custom phone number
+  const addCustomPhone = () => {
+    if (!customPhone.trim()) return;
+    let phone = customPhone.trim().replace(/[^0-9+]/g, '');
+    if (!phone.startsWith('+')) {
+      if (phone.startsWith('0')) phone = '20' + phone.slice(1);
+      else if (!phone.startsWith('20') && !phone.startsWith('966')) phone = '20' + phone;
+    } else {
+      phone = phone.slice(1);
+    }
+    
+    if (!selectedMembers.find(m => m.phone === phone)) {
+      setSelectedMembers(prev => [...prev, { name: 'External', phone, role: 'External Contact', office: '' }]);
+    }
+    setCustomPhone('');
+  };
+
+  // Create a new WhatsApp group via backend proxy
   const createWhatsAppGroup = async () => {
     if (!newGroupName.trim()) {
       alert('Please enter a group name');
       return;
     }
     
-    // Parse phone numbers (one per line or comma-separated)
-    const participants = newGroupParticipants
-      .split(/[\n,]/)
-      .map(p => p.trim())
-      .filter(p => p)
-      .map(p => {
-        // Normalize phone number format
-        let num = p.replace(/[^0-9+]/g, '');
-        if (!num.startsWith('+')) {
-          // Assume Egypt if no country code
-          if (num.startsWith('0')) num = '20' + num.slice(1);
-          else if (!num.startsWith('20')) num = '20' + num;
-        } else {
-          num = num.slice(1); // Remove +
-        }
-        return num + '@c.us';
-      });
-    
-    if (participants.length === 0) {
-      alert('Please add at least one phone number');
+    if (selectedMembers.length === 0) {
+      alert('Please select at least one member');
       return;
     }
     
+    const participants = selectedMembers.map(m => m.phone + '@c.us');
+    
     setCreatingGroup(true);
     try {
-      const res = await fetch(`${WAHA_URL}/api/${WAHA_SESSION}/groups`, {
+      const res = await fetch(`${WHATSAPP_WEBHOOK_URL}/waha/groups/create`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Api-Key': WAHA_API_KEY 
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: newGroupName.trim(),
           participants: participants
@@ -158,7 +169,7 @@ export default function ChannelSettings({ projects }) {
         alert(`✅ Group "${newGroupName}" created successfully!`);
         setShowCreateModal(false);
         setNewGroupName('');
-        setNewGroupParticipants('');
+        setSelectedMembers([]);
         // Refresh groups list
         scanGroups();
         // Auto-add to our database
@@ -167,7 +178,7 @@ export default function ChannelSettings({ projects }) {
         }
       } else {
         const error = await res.json();
-        alert(`❌ Failed to create group: ${error.message || 'Unknown error'}`);
+        alert(`❌ Failed to create group: ${error.error || 'Unknown error'}`);
       }
     } catch (err) {
       console.error('Error creating group:', err);
@@ -334,6 +345,11 @@ export default function ChannelSettings({ projects }) {
     wg => !groups.some(g => g.name === wg.name || g.wahaId === wg.id)
   );
 
+  // Filter org members by office
+  const filteredMembers = ORG_MEMBERS.filter(m => 
+    officeFilter === 'all' || m.office === officeFilter
+  );
+
   const tabs = [
     { id: 'whatsapp', label: 'WhatsApp', icon: 'message-circle', color: 'green', connected: true },
     { id: 'email', label: 'Email', icon: 'mail', color: 'blue', connected: true, badge: unclassifiedEmails.length },
@@ -411,6 +427,19 @@ export default function ChannelSettings({ projects }) {
               Create WhatsApp Group
             </button>
           </div>
+
+          {/* Scan Error */}
+          {scanError && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+              <div className="flex items-start gap-3">
+                <Icon name="alert-circle" size={20} className="text-red-600 mt-0.5" />
+                <div>
+                  <h3 className="text-sm font-medium text-red-900">Scan Failed</h3>
+                  <p className="text-xs text-red-700 mt-1">{scanError}</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Command Group Info */}
           <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
@@ -787,10 +816,10 @@ export default function ChannelSettings({ projects }) {
         </div>
       )}
 
-      {/* Create Group Modal */}
+      {/* Create Group Modal - With Org Members Selector */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden max-h-[90vh] flex flex-col">
             <div className="p-6 border-b border-slate-100">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -805,7 +834,7 @@ export default function ChannelSettings({ projects }) {
               </div>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-2">Group Name *</label>
                 <input
@@ -817,33 +846,108 @@ export default function ChannelSettings({ projects }) {
                 />
               </div>
 
+              {/* Team Members Selection */}
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-2">
-                  Phone Numbers *
-                  <span className="text-slate-400 font-normal ml-1">(one per line)</span>
-                </label>
-                <textarea
-                  value={newGroupParticipants}
-                  onChange={(e) => setNewGroupParticipants(e.target.value)}
-                  placeholder={"01001234567\n01112223344\n+201234567890"}
-                  rows={5}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-green-400 font-mono"
-                />
-                <p className="text-[10px] text-slate-400 mt-2">
-                  Egyptian numbers auto-prefixed with +20. Include country code for international numbers.
-                </p>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-medium text-slate-700">Select Team Members *</label>
+                  <div className="flex gap-1">
+                    {['all', 'Cairo', 'Riyadh'].map(office => (
+                      <button
+                        key={office}
+                        onClick={() => setOfficeFilter(office)}
+                        className={`px-2 py-1 text-[10px] rounded-lg font-medium transition-colors ${
+                          officeFilter === office 
+                            ? 'bg-blue-500 text-white' 
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {office === 'all' ? 'All' : office}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-1 gap-2 max-h-[200px] overflow-y-auto p-1">
+                  {filteredMembers.map(member => {
+                    const isSelected = selectedMembers.some(m => m.phone === member.phone);
+                    return (
+                      <button
+                        key={member.phone}
+                        onClick={() => toggleMember(member)}
+                        className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
+                          isSelected 
+                            ? 'border-green-400 bg-green-50' 
+                            : 'border-slate-200 hover:border-green-300 hover:bg-green-50/50'
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                          isSelected ? 'border-green-500 bg-green-500' : 'border-slate-300'
+                        }`}>
+                          {isSelected && <Icon name="check" size={12} className="text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-900">{member.name}</p>
+                          <p className="text-[10px] text-slate-500">{member.role} • {member.office}</p>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">+{member.phone}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="flex gap-3 pt-4">
+              {/* Add External Contact */}
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-2">Add External Contact</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customPhone}
+                    onChange={(e) => setCustomPhone(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && addCustomPhone()}
+                    placeholder="Phone number (e.g., 01001234567)"
+                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-green-400 font-mono"
+                  />
+                  <button
+                    onClick={addCustomPhone}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {/* Selected Members Summary */}
+              {selectedMembers.length > 0 && (
+                <div className="p-3 bg-green-50 border border-green-200 rounded-xl">
+                  <p className="text-xs font-medium text-green-800 mb-2">
+                    {selectedMembers.length} member{selectedMembers.length > 1 ? 's' : ''} selected:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedMembers.map(m => (
+                      <span key={m.phone} className="inline-flex items-center gap-1 px-2 py-1 bg-white rounded-lg text-[10px] text-green-700 border border-green-200">
+                        {m.name}
+                        <button onClick={() => toggleMember(m)} className="hover:text-red-500">
+                          <Icon name="x" size={10} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-slate-100 bg-slate-50">
+              <div className="flex gap-3">
                 <button
                   onClick={() => setShowCreateModal(false)}
-                  className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700"
+                  className="flex-1 px-4 py-3 bg-slate-200 hover:bg-slate-300 rounded-xl text-sm font-medium text-slate-700"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={createWhatsAppGroup}
-                  disabled={creatingGroup}
+                  disabled={creatingGroup || selectedMembers.length === 0}
                   className="flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {creatingGroup ? (
