@@ -7,6 +7,7 @@ import { useProjectEmails, useProjectMessages, useProjectTasks } from '../../hoo
 // Sub-components
 import SyncBar from './SyncBar';
 import StatsGrid from './StatsGrid';
+import TeamSection from './TeamSection';
 import QuickLinks from './QuickLinks';
 import DateEditor from './DateEditor';
 import TasksHub from './TasksHub';
@@ -76,6 +77,9 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
         project={project} 
         onUpdateProject={onUpdateProject} 
       />
+
+      {/* Team Section - Shows assigned engineers */}
+      <TeamSection project={project} />
 
       {/* Quick Links */}
       <QuickLinks project={project} />
