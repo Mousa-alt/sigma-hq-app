@@ -1,14 +1,11 @@
 import { useState } from 'react';
-import { COLORS, BRANDING } from '../config';
+import { COLORS, BRANDING, DASHBOARD_PASSWORD } from '../config';
 import Icon from './Icon';
 
 export default function PasswordGate({ onAuthenticate }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  // Simple password - in production, use Firebase Auth
-  const DASHBOARD_PASSWORD = 'sigma2026';
 
   const handleSubmit = (e) => {
     e.preventDefault();
