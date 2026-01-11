@@ -44,19 +44,19 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
+  const [initializing, setInitializing] = useState(true);
 
-  // Show password gate if not authenticated
-  if (!isAuthenticated) {
-    return <PasswordGate onAuthenticate={setIsAuthenticated} />;
-  }
-
-  // Auth
+  // Firebase Auth - runs always (not dependent on password auth)
   useEffect(() => {
     signInAnonymously(auth).catch(console.error);
-    return onAuthStateChanged(auth, setUser);
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setInitializing(false);
+    });
+    return unsub;
   }, []);
 
-  // Projects listener
+  // Projects listener - runs when user is authenticated
   useEffect(() => {
     if (!user) return;
     
@@ -89,6 +89,28 @@ export default function App() {
     }
     setSyncError(null);
   }, [selectedProject?.id]);
+
+  // Handle authentication
+  const handleAuthenticate = (value) => {
+    setIsAuthenticated(value);
+  };
+
+  // Show password gate if not authenticated
+  if (!isAuthenticated) {
+    return <PasswordGate onAuthenticate={handleAuthenticate} />;
+  }
+
+  // Show loading while Firebase initializes
+  if (initializing) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: COLORS.background }}>
+        <div className="text-center">
+          <img src={BRANDING.logo} alt="Sigma" className="h-12 mx-auto mb-4 animate-pulse" />
+          <p className="text-slate-400 text-sm">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Handlers
   const handleCreateProject = async (formData) => {
