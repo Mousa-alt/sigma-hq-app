@@ -79,9 +79,80 @@ def detect_document_type(filename, path):
     """
     Detect document type based on FOLDER PATH (primary) and filename (secondary).
     Supports both OLD and NEW folder structures.
+    
+    OLD Structure: 01.drawings, 02.design, 03.loi, 04.qs, 05-approved, 06.mom, 07.invoice, 08.variation, 09-Correspondence, 10.submittal
+    NEW Structure: 01.Correspondence, 02.Project-Info, 03.Design-Drawings, 04.Shop-Drawings, 05.Contract-BOQ, 06.QS-Procurement, 07.Submittals, 08.Reports-MOM, 09.Invoices-Variations, 10.Handover
     """
     lower_name = filename.lower()
     lower_path = path.lower()
+    
+    # ===========================================
+    # NEW FOLDER STRUCTURE (check first - more specific)
+    # ===========================================
+    
+    # --- 01.Correspondence ---
+    if '01.correspondence' in lower_path:
+        return 'correspondence'
+    
+    # --- 03.Design-Drawings (Client's reference drawings) ---
+    if '03.design-drawings' in lower_path:
+        return 'drawing'
+    
+    # --- 04.Shop-Drawings (Sigma's production drawings) ---
+    if '04.shop-drawings' in lower_path:
+        return 'shop_drawing'
+    
+    # --- 05.Contract-BOQ ---
+    if '05.contract-boq' in lower_path:
+        if '/contract' in lower_path:
+            return 'contract'
+        if '/boq' in lower_path:
+            return 'boq'
+        return 'contract'  # default for this folder
+    
+    # --- 06.QS-Procurement ---
+    if '06.qs-procurement' in lower_path:
+        if '/purchase' in lower_path:
+            return 'procurement'
+        return 'boq'
+    
+    # --- 07.Submittals ---
+    if '07.submittals' in lower_path:
+        return 'submittal'
+    
+    # --- 08.Reports-MOM ---
+    if '08.reports-mom' in lower_path:
+        if '/mom' in lower_path:
+            return 'mom'
+        if '/general-reports' in lower_path or '/wms' in lower_path or '/snag' in lower_path:
+            return 'report'
+        if '/work-plan' in lower_path:
+            return 'report'
+        return 'mom'  # default for this folder
+    
+    # --- 09.Invoices-Variations ---
+    if '09.invoices-variations' in lower_path:
+        if '/variation' in lower_path:
+            return 'vo'
+        return 'invoice'
+    
+    # --- 10.Handover ---
+    if '10.handover' in lower_path:
+        if '/as-built' in lower_path:
+            return 'drawing'
+        return 'other'
+    
+    # --- 02.Project-Info ---
+    if '02.project-info' in lower_path:
+        if '/tender' in lower_path:
+            return 'contract'
+        if '/time-schedule' in lower_path:
+            return 'report'
+        return 'other'
+    
+    # ===========================================
+    # OLD FOLDER STRUCTURE (legacy support)
+    # ===========================================
     
     # --- Variation Orders (Financial) ---
     if '08.variation' in lower_path or 'extra work' in lower_path:
@@ -131,11 +202,13 @@ def detect_document_type(filename, path):
     if '/rfi/' in lower_path:
         return 'rfi'
     
-    # --- Correspondence ---
+    # --- Correspondence (old) ---
     if '09-corr' in lower_path or '/correspondence/' in lower_path:
         return 'correspondence'
     
-    # Filename-based fallback
+    # ===========================================
+    # FILENAME-BASED FALLBACK
+    # ===========================================
     if re.search(r'\bvo\b|variation', lower_name): return 'vo'
     if re.search(r'\bmom\b|minute.?of.?meeting', lower_name): return 'mom'
     if re.search(r'\brfi\b', lower_name): return 'rfi'
@@ -336,6 +409,17 @@ def list_gcs_files(bucket, prefix):
         if rel: files[rel] = {'name': blob.name, 'updated': blob.updated.isoformat() if blob.updated else ''}
     return files
 
+def is_email_folder(path):
+    """Check if path is in an email/correspondence folder (should be protected from deletion)"""
+    lower_path = path.lower()
+    # OLD structure
+    if '09-correspondence/' in lower_path or '09.correspondence/' in lower_path:
+        return True
+    # NEW structure
+    if '01.correspondence/' in lower_path:
+        return True
+    return False
+
 def sync_project(drive_url, project_name):
     bucket = storage_client.bucket(GCS_BUCKET)
     prefix = f"{project_name}/"
@@ -354,10 +438,10 @@ def sync_project(drive_url, project_name):
             # Skip deletion for:
             # - Files that exist in Drive (will be handled in sync)
             # - Extracted zip contents (_extracted/)
-            # - Emails in 09-Correspondence/ (come from IMAP, not Drive)
+            # - Emails in correspondence folders (come from IMAP, not Drive)
             # - Any .json files (likely emails or metadata)
             if path not in drive_files and '_extracted/' not in path:
-                if '09-Correspondence/' in path or path.endswith('.json'):
+                if is_email_folder(path) or path.endswith('.json'):
                     stats['protected'] += 1
                     print(f"PROTECTED (email): {path}")
                 else:
@@ -515,6 +599,26 @@ def is_valid_document(filename):
         if pattern in lower: return False
     return True
 
+def is_approved_folder(path):
+    """Check if a file is in an approved folder (supports both old and new structures)"""
+    lower_path = path.lower()
+    
+    # Generic /approved/ anywhere in path
+    if '/approved/' in lower_path or '/approved' in lower_path:
+        return True
+    
+    # OLD structure
+    if '05-approved' in lower_path:
+        return True
+    
+    # NEW structure - 04.Shop-Drawings/*/Approved and 07.Submittals/Approved
+    if '04.shop-drawings' in lower_path and '/approved' in lower_path:
+        return True
+    if '07.submittals/approved' in lower_path:
+        return True
+    
+    return False
+
 def get_latest_by_type(project_name):
     """Get latest documents - separated into APPROVED and RECENT sections"""
     bucket = storage_client.bucket(GCS_BUCKET)
@@ -532,7 +636,6 @@ def get_latest_by_type(project_name):
             continue
         
         rel_path = blob.name[len(prefix):]
-        lower_path = rel_path.lower()
         doc_type = detect_document_type(filename, rel_path)
         subject = extract_subject(filename, rel_path)
         rev_num, rev_str = extract_revision(filename)
@@ -551,8 +654,8 @@ def get_latest_by_type(project_name):
             'typeDescription': DOCUMENT_HIERARCHY.get(doc_type, {}).get('description', 'Document')
         }
         
-        # Check if in Approved folder
-        if '/approved/' in lower_path or '05-approved' in lower_path or 'approved/' in lower_path:
+        # Check if in Approved folder (supports both old and new structures)
+        if is_approved_folder(rel_path):
             approved_docs.append(doc)
         else:
             recent_docs.append(doc)
@@ -585,35 +688,56 @@ def get_latest_by_type(project_name):
 # EMAIL FUNCTIONS
 # =============================================================================
 
-def get_project_emails(project_name, limit=10):
-    """Get recent emails for a project from GCS"""
+def get_correspondence_prefix(project_name):
+    """Get the correspondence folder prefix, checking both old and new structures"""
     bucket = storage_client.bucket(GCS_BUCKET)
     folder_name = project_name.replace(' ', '-')
-    prefix = f"{folder_name}/09-Correspondence/"
+    
+    # Check NEW structure first (01.Correspondence)
+    new_prefix = f"{folder_name}/01.Correspondence/"
+    new_blobs = list(bucket.list_blobs(prefix=new_prefix, max_results=1))
+    if new_blobs:
+        return new_prefix
+    
+    # Fall back to OLD structure (09-Correspondence)
+    old_prefix = f"{folder_name}/09-Correspondence/"
+    return old_prefix
+
+def get_project_emails(project_name, limit=10):
+    """Get recent emails for a project from GCS (supports both old and new folder structures)"""
+    bucket = storage_client.bucket(GCS_BUCKET)
+    folder_name = project_name.replace(' ', '-')
     
     emails = []
     
-    for blob in bucket.list_blobs(prefix=prefix):
-        if not blob.name.endswith('.json'):
-            continue
-        if '_attachments/' in blob.name:
-            continue
-        
-        try:
-            content = blob.download_as_string()
-            email_data = json.loads(content)
-            emails.append({
-                'subject': email_data.get('subject', 'No Subject'),
-                'from': email_data.get('from', 'Unknown'),
-                'to': email_data.get('to', ''),
-                'date': email_data.get('date', ''),
-                'type': email_data.get('classified_type', 'correspondence'),
-                'path': blob.name,
-                'hasAttachments': len(email_data.get('attachments', [])) > 0
-            })
-        except Exception as e:
-            print(f"Error reading email {blob.name}: {e}")
-            continue
+    # Check both OLD and NEW correspondence folders
+    prefixes = [
+        f"{folder_name}/01.Correspondence/",  # NEW structure
+        f"{folder_name}/09-Correspondence/",  # OLD structure
+    ]
+    
+    for prefix in prefixes:
+        for blob in bucket.list_blobs(prefix=prefix):
+            if not blob.name.endswith('.json'):
+                continue
+            if '_attachments/' in blob.name:
+                continue
+            
+            try:
+                content = blob.download_as_string()
+                email_data = json.loads(content)
+                emails.append({
+                    'subject': email_data.get('subject', 'No Subject'),
+                    'from': email_data.get('from', 'Unknown'),
+                    'to': email_data.get('to', ''),
+                    'date': email_data.get('date', ''),
+                    'type': email_data.get('classified_type', 'correspondence'),
+                    'path': blob.name,
+                    'hasAttachments': len(email_data.get('attachments', [])) > 0
+                })
+            except Exception as e:
+                print(f"Error reading email {blob.name}: {e}")
+                continue
     
     # Sort by date descending
     emails.sort(key=lambda x: x.get('date', ''), reverse=True)
@@ -665,6 +789,30 @@ def get_unclassified_emails():
     return emails
 
 
+def detect_correspondence_structure(project_name):
+    """Detect which folder structure a project uses for correspondence"""
+    bucket = storage_client.bucket(GCS_BUCKET)
+    
+    # Check for NEW structure folders
+    new_folders = ['01.Correspondence/', '04.Shop-Drawings/', '07.Submittals/']
+    for folder in new_folders:
+        prefix = f"{project_name}/{folder}"
+        blobs = list(bucket.list_blobs(prefix=prefix, max_results=1))
+        if blobs:
+            return 'new'
+    
+    # Check for OLD structure folders
+    old_folders = ['09-Correspondence/', '01.drawings/', '10.submittal/']
+    for folder in old_folders:
+        prefix = f"{project_name}/{folder}"
+        blobs = list(bucket.list_blobs(prefix=prefix, max_results=1))
+        if blobs:
+            return 'old'
+    
+    # Default to NEW for new projects
+    return 'new'
+
+
 def classify_email(email_path, project_name, doc_type=None):
     """Move an email from unclassified to a project folder"""
     bucket = storage_client.bucket(GCS_BUCKET)
@@ -685,10 +833,18 @@ def classify_email(email_path, project_name, doc_type=None):
         email_data['classified_project'] = project_name
         email_data['classified_at'] = datetime.now().isoformat()
         
-        # Create destination path
-        # Format: ProjectName/09-Correspondence/YYYYMMDD_HHMM_Subject.json
+        # Detect which folder structure this project uses
+        structure = detect_correspondence_structure(project_name)
+        
+        # Create destination path based on structure
         filename = os.path.basename(email_path)
-        dest_folder = f"{project_name}/09-Correspondence"
+        if structure == 'new':
+            # NEW structure: 01.Correspondence/Client/
+            dest_folder = f"{project_name}/01.Correspondence/Client"
+        else:
+            # OLD structure: 09-Correspondence/
+            dest_folder = f"{project_name}/09-Correspondence"
+        
         dest_path = f"{dest_folder}/{filename}"
         
         # Copy to new location
@@ -710,7 +866,8 @@ def classify_email(email_path, project_name, doc_type=None):
             'success': True,
             'moved_to': dest_path,
             'project': project_name,
-            'type': doc_type or email_data.get('classified_type', 'correspondence')
+            'type': doc_type or email_data.get('classified_type', 'correspondence'),
+            'structure': structure
         }
         
     except Exception as e:
@@ -938,7 +1095,7 @@ def sync_drive_folder(request):
     path = request.path
     
     if request.method == 'GET' and (path == '/' or path == '/health'):
-        return (jsonify({'status': 'Sigma Sync Worker v5.9 - Firestore Indexing', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails', 'unclassified', 'classify', 'firestore_index'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled', 'firestore': 'enabled' if FIRESTORE_ENABLED else 'disabled'}), 200, headers)
+        return (jsonify({'status': 'Sigma Sync Worker v6.0 - New Folder Structure Support', 'capabilities': ['sync', 'search', 'list', 'files', 'view', 'compare', 'stats', 'latest', 'delete', 'emails', 'unclassified', 'classify', 'firestore_index'], 'gemini': 'enabled' if GEMINI_API_KEY else 'disabled', 'firestore': 'enabled' if FIRESTORE_ENABLED else 'disabled', 'folder_structures': ['old (09-Correspondence)', 'new (01.Correspondence)']}), 200, headers)
     
     # === EMAIL ENDPOINTS ===
     
