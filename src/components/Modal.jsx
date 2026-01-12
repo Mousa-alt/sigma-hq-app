@@ -2,6 +2,17 @@ import { useState } from 'react';
 import Icon from './Icon';
 import { COLORS } from '../config';
 
+// Generate GCS folder name from project name and venue
+const generateGcsFolderName = (name, venue) => {
+  if (!name) return '';
+  const cleanName = name.trim().replace(/\s+/g, '-');
+  if (venue && venue.trim()) {
+    const cleanVenue = venue.trim().replace(/\s+/g, '-');
+    return `${cleanName}-${cleanVenue}`;
+  }
+  return cleanName;
+};
+
 export default function Modal({ isOpen, onClose, onSubmit, loading }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -22,9 +33,19 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
       alert('Please fill in project name');
       return;
     }
-    onSubmit(formData);
+    
+    // Auto-generate gcsFolderName from name + venue
+    const gcsFolderName = generateGcsFolderName(formData.name, formData.venue);
+    
+    onSubmit({ 
+      ...formData, 
+      gcsFolderName // This ensures sync uses a consistent folder name
+    });
     setFormData({ name: '', client: '', venue: '', area: '', driveLink: '', startDate: '', endDate: '', status: 'active' });
   };
+
+  // Preview of the folder name that will be created
+  const previewFolderName = generateGcsFolderName(formData.name, formData.venue);
 
   const statusOptions = [
     { value: 'planning', label: 'Planning', icon: 'compass', bgClass: 'bg-purple-100', textClass: 'text-purple-700', borderClass: 'border-purple-400' },
@@ -97,6 +118,17 @@ export default function Modal({ isOpen, onClose, onSubmit, loading }) {
               />
             </div>
           </div>
+
+          {/* Folder Name Preview */}
+          {previewFolderName && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <div className="flex items-center gap-2">
+                <Icon name="folder" size={14} className="text-slate-400" />
+                <span className="text-[10px] text-slate-500 uppercase font-medium">Storage Folder</span>
+              </div>
+              <p className="text-sm font-mono text-slate-700 mt-1">{previewFolderName}/</p>
+            </div>
+          )}
 
           {/* Status Selection */}
           <div>
