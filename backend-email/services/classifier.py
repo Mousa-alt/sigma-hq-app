@@ -1,14 +1,15 @@
 # Email Classification Service
 import re
-from google.cloud import firestore
-import vertexai
-from vertexai.generative_models import GenerativeModel
+
 
 def get_projects_from_firestore(db, app_id):
     """Get all projects from Firestore"""
-    projects_ref = db.collection('artifacts').document(app_id).collection('public').document('data').collection('projects')
+    projects_ref = db.collection('artifacts').document(app_id)\
+        .collection('public').document('data')\
+        .collection('projects')
     docs = projects_ref.stream()
     return [{'id': d.id, **d.to_dict()} for d in docs]
+
 
 def classify_email_to_project(email_data, projects, aliases=None, ai_model=None):
     """Classify email to project using rules + AI fallback"""
@@ -25,12 +26,22 @@ def classify_email_to_project(email_data, projects, aliases=None, ai_model=None)
         # Match by project code (highest priority)
         if code and len(code) >= 3:
             if re.search(rf'\b{re.escape(code)}\b', text):
-                return {'project': project['name'], 'confidence': 0.95, 'method': 'code', 'gcsFolderName': project.get('gcsFolderName')}
+                return {
+                    'project': project['name'],
+                    'confidence': 0.95,
+                    'method': 'code',
+                    'gcsFolderName': project.get('gcsFolderName')
+                }
         
         # Match by project name
         if name and len(name) >= 4:
             if re.search(rf'\b{re.escape(name)}\b', text):
-                return {'project': project['name'], 'confidence': 0.85, 'method': 'name', 'gcsFolderName': project.get('gcsFolderName')}
+                return {
+                    'project': project['name'],
+                    'confidence': 0.85,
+                    'method': 'name',
+                    'gcsFolderName': project.get('gcsFolderName')
+                }
     
     # Check aliases
     if aliases:
@@ -40,7 +51,12 @@ def classify_email_to_project(email_data, projects, aliases=None, ai_model=None)
                     # Find matching project
                     for project in projects:
                         if project.get('name', '').lower().replace(' ', '-') == project_key:
-                            return {'project': project['name'], 'confidence': 0.8, 'method': 'alias', 'gcsFolderName': project.get('gcsFolderName')}
+                            return {
+                                'project': project['name'],
+                                'confidence': 0.8,
+                                'method': 'alias',
+                                'gcsFolderName': project.get('gcsFolderName')
+                            }
     
     # AI fallback
     if ai_model:
@@ -59,8 +75,18 @@ Body: {email_data.get('body', '')[:500]}"""
             if result != 'unclassified':
                 for project in projects:
                     if project['name'].lower() == result.lower():
-                        return {'project': project['name'], 'confidence': 0.7, 'method': 'ai', 'gcsFolderName': project.get('gcsFolderName')}
+                        return {
+                            'project': project['name'],
+                            'confidence': 0.7,
+                            'method': 'ai',
+                            'gcsFolderName': project.get('gcsFolderName')
+                        }
         except:
             pass
     
-    return {'project': None, 'confidence': 0, 'method': 'none', 'gcsFolderName': None}
+    return {
+        'project': None,
+        'confidence': 0,
+        'method': 'none',
+        'gcsFolderName': None
+    }

@@ -1,29 +1,25 @@
 # Email Backend HTTP Routes
 from flask import jsonify, request, Response
-from config import GCS_BUCKET, FIREBASE_PROJECT, APP_ID, IMAP_SERVER, IMAP_PORT, EMAIL_USER, EMAIL_PASS, PROJECT_ALIASES
+
+# Absolute imports
+from config import GCS_BUCKET, APP_ID, IMAP_SERVER, IMAP_PORT, EMAIL_USER, EMAIL_PASS, PROJECT_ALIASES
+from clients import db, ai_model, VERTEX_AI_ENABLED
 from utils.imap import connect_imap, fetch_emails
-from utils.gcs import save_email_to_gcs, detect_folder_structure
+from utils.gcs import save_email_to_gcs
 from services.classifier import classify_email_to_project, get_projects_from_firestore
-from google.cloud import firestore
-import vertexai
-from vertexai.generative_models import GenerativeModel
 
-db = firestore.Client(project=FIREBASE_PROJECT)
-
-try:
-    vertexai.init(project='sigma-hq-technical-office', location='europe-west1')
-    ai_model = GenerativeModel('gemini-2.0-flash-exp')
-    VERTEX_AI_ENABLED = True
-except:
-    ai_model = None
-    VERTEX_AI_ENABLED = False
 
 def register_routes(app):
     """Register all HTTP routes"""
     
     @app.route('/', methods=['GET'])
     def health():
-        return jsonify({'status': 'ok', 'service': 'sigma-email-sync', 'version': '4.0-modular', 'ai_enabled': VERTEX_AI_ENABLED})
+        return jsonify({
+            'status': 'ok',
+            'service': 'sigma-email-sync',
+            'version': '4.0-modular',
+            'ai_enabled': VERTEX_AI_ENABLED
+        })
     
     @app.route('/fetch', methods=['POST', 'OPTIONS'])
     def fetch():
@@ -57,7 +53,12 @@ def register_routes(app):
             return _json_response({'error': 'Email data required'}, 400)
         
         projects = get_projects_from_firestore(db, APP_ID)
-        result = classify_email_to_project(email_data, projects, PROJECT_ALIASES, ai_model if VERTEX_AI_ENABLED else None)
+        result = classify_email_to_project(
+            email_data,
+            projects,
+            PROJECT_ALIASES,
+            ai_model if VERTEX_AI_ENABLED else None
+        )
         
         return _json_response(result)
     
@@ -89,7 +90,12 @@ def register_routes(app):
             
             for email_data in emails:
                 # Classify
-                classification = classify_email_to_project(email_data, projects, PROJECT_ALIASES, ai_model if VERTEX_AI_ENABLED else None)
+                classification = classify_email_to_project(
+                    email_data,
+                    projects,
+                    PROJECT_ALIASES,
+                    ai_model if VERTEX_AI_ENABLED else None
+                )
                 
                 result = {
                     'subject': email_data.get('subject'),
@@ -104,7 +110,11 @@ def register_routes(app):
                     # Save to GCS
                     if save and classification.get('gcsFolderName'):
                         try:
-                            path = save_email_to_gcs(GCS_BUCKET, classification['gcsFolderName'], email_data)
+                            path = save_email_to_gcs(
+                                GCS_BUCKET,
+                                classification['gcsFolderName'],
+                                email_data
+                            )
                             result['saved_path'] = path
                             saved_count += 1
                         except Exception as e:
@@ -128,17 +138,25 @@ def register_routes(app):
             return _cors_response()
         
         projects = get_projects_from_firestore(db, APP_ID)
-        return _json_response({'projects': [{'id': p['id'], 'name': p.get('name'), 'code': p.get('code')} for p in projects]})
+        return _json_response({
+            'projects': [
+                {'id': p['id'], 'name': p.get('name'), 'code': p.get('code')}
+                for p in projects
+            ]
+        })
 
 
 def _cors_response():
+    """Return CORS preflight response"""
     response = Response()
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
+
 def _json_response(data, status=200):
+    """Return JSON response with CORS headers"""
     response = jsonify(data)
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.status_code = status
