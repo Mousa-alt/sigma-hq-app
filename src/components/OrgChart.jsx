@@ -648,13 +648,17 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
             ))}
           </g>
           
-          {/* Logo Watermark */}
-          <g transform={`translate(${dimensions.width - 180}, ${dimensions.height - 50})`}>
-            <rect x="0" y="0" width="160" height="40" rx="12" fill="white" fillOpacity="0.95" stroke="#e2e8f0" />
-            <rect x="10" y="8" width="24" height="24" rx="6" fill={COLORS.blue} />
-            <text x="22" y="26" textAnchor="middle" fill="white" fontSize="12" fontWeight="bold">S</text>
-            <text x="45" y="20" fill="#1e293b" fontSize="11" fontWeight="bold">{BRANDING?.companyName || 'Sigma Contractors'}</text>
-            <text x="45" y="32" fill="#64748b" fontSize="8">Technical Office HQ</text>
+          {/* Logo Watermark - Using actual Sigma logo */}
+          <g transform={`translate(${dimensions.width - 200}, ${dimensions.height - 55})`}>
+            <rect x="0" y="0" width="180" height="45" rx="12" fill="white" fillOpacity="0.95" stroke="#e2e8f0" />
+            <image 
+              href={BRANDING?.logo || "https://raw.githubusercontent.com/Mousa-alt/Sigma-logo-PORTRAIT/main/Sigma%20landscape.png"}
+              x="10"
+              y="8"
+              width="160"
+              height="30"
+              preserveAspectRatio="xMidYMid meet"
+            />
           </g>
         </svg>
       </div>
