@@ -4,51 +4,49 @@ import { db } from '../firebase';
 import { APP_ID, COLORS, BRANDING } from '../config';
 import Icon from './Icon';
 
-// Position hierarchy - Planning now part of Technical Office group
+// Position hierarchy with DISTINCT colors per position level
 const POSITIONS = [
-  { id: 'executive', label: 'Executive Manager', level: 0, color: '#1e3a5f', department: 'Management' },
-  { id: 'head', label: 'Head of Technical Office', level: 1, color: '#1e3a5f', department: 'Technical Office' },
-  { id: 'team_leader', label: 'Team Leader', level: 2, color: '#2d5a87', department: 'Technical Office' },
-  { id: 'senior', label: 'Senior TOE', level: 3, color: '#3d7ab0', department: 'Technical Office' },
-  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#5a9bd4', department: 'Technical Office' },
-  { id: 'junior', label: 'Junior TOE', level: 5, color: '#7fb8e8', department: 'Technical Office' },
-  { id: 'trainee', label: 'Trainee', level: 6, color: '#a8d4f5', department: 'Technical Office' },
-  // Planning is part of Technical Office - orange tones
-  { id: 'planning_head', label: 'Head of Planning', level: 2, color: '#c2410c', department: 'Technical Office' },
-  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 3, color: '#ea580c', department: 'Technical Office' },
-  { id: 'planning_engineer', label: 'Planning Engineer', level: 4, color: '#fb923c', department: 'Technical Office' },
-  // Other departments
-  { id: 'senior_pm', label: 'Senior Project Manager', level: 1, color: '#5b21b6', department: 'Project Management' },
-  { id: 'pm', label: 'Project Manager', level: 2, color: '#7c3aed', department: 'Project Management' },
-  { id: 'site_manager', label: 'Site Manager', level: 2, color: '#047857', department: 'Site' },
-  { id: 'site_engineer', label: 'Site Engineer', level: 3, color: '#059669', department: 'Site' },
-  { id: 'supervisor', label: 'Supervisor', level: 4, color: '#10b981', department: 'Site' },
-  { id: 'mep_team_leader', label: 'MEP Team Leader', level: 2, color: '#b91c1c', department: 'MEP' },
-  { id: 'mep_senior', label: 'Senior MEP Engineer', level: 3, color: '#dc2626', department: 'MEP' },
-  { id: 'mep_toe', label: 'MEP Technical Office Engineer', level: 4, color: '#ef4444', department: 'MEP' },
-  { id: 'mep_junior', label: 'Junior MEP Engineer', level: 5, color: '#f87171', department: 'MEP' },
+  // Management - Dark Navy
+  { id: 'executive', label: 'Executive Manager', level: 0, color: '#1e3a5f', bgColor: '#e0f2fe', department: 'Management' },
+  
+  // Technical Office - Blues & Teals
+  { id: 'head', label: 'Head of Technical Office', level: 1, color: '#0f4c81', bgColor: '#dbeafe', department: 'Technical Office' },
+  { id: 'team_leader', label: 'Team Leader', level: 2, color: '#0891b2', bgColor: '#cffafe', department: 'Technical Office' },
+  { id: 'senior', label: 'Senior TOE', level: 3, color: '#0d9488', bgColor: '#ccfbf1', department: 'Technical Office' },
+  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#059669', bgColor: '#d1fae5', department: 'Technical Office' },
+  { id: 'junior', label: 'Junior TOE', level: 5, color: '#10b981', bgColor: '#ecfdf5', department: 'Technical Office' },
+  { id: 'trainee', label: 'Trainee', level: 6, color: '#6ee7b7', bgColor: '#f0fdf4', department: 'Technical Office' },
+  
+  // Planning - Oranges (part of Technical Office)
+  { id: 'planning_head', label: 'Head of Planning', level: 2, color: '#c2410c', bgColor: '#ffedd5', department: 'Technical Office' },
+  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 3, color: '#ea580c', bgColor: '#fed7aa', department: 'Technical Office' },
+  { id: 'planning_engineer', label: 'Planning Engineer', level: 4, color: '#f97316', bgColor: '#fef3c7', department: 'Technical Office' },
+  
+  // Project Management - Purples
+  { id: 'senior_pm', label: 'Senior Project Manager', level: 1, color: '#7c3aed', bgColor: '#ede9fe', department: 'Project Management' },
+  { id: 'pm', label: 'Project Manager', level: 2, color: '#8b5cf6', bgColor: '#f3e8ff', department: 'Project Management' },
+  
+  // Site - Greens
+  { id: 'site_manager', label: 'Site Manager', level: 2, color: '#047857', bgColor: '#d1fae5', department: 'Site' },
+  { id: 'site_engineer', label: 'Site Engineer', level: 3, color: '#059669', bgColor: '#ecfdf5', department: 'Site' },
+  { id: 'supervisor', label: 'Supervisor', level: 4, color: '#10b981', bgColor: '#f0fdf4', department: 'Site' },
+  
+  // MEP - Reds
+  { id: 'mep_team_leader', label: 'MEP Team Leader', level: 2, color: '#dc2626', bgColor: '#fee2e2', department: 'MEP' },
+  { id: 'mep_senior', label: 'Senior MEP Engineer', level: 3, color: '#ef4444', bgColor: '#fef2f2', department: 'MEP' },
+  { id: 'mep_toe', label: 'MEP Technical Office Engineer', level: 4, color: '#f87171', bgColor: '#fff5f5', department: 'MEP' },
+  { id: 'mep_junior', label: 'Junior MEP Engineer', level: 5, color: '#fca5a5', bgColor: '#fff8f8', department: 'MEP' },
 ];
 
 const DEPARTMENTS = ['Management', 'Technical Office', 'Project Management', 'Site', 'MEP'];
 
 const DEPARTMENT_COLORS = {
   'Management': '#1e3a5f',
-  'Technical Office': '#1e3a5f',
-  'Project Management': '#5b21b6',
+  'Technical Office': '#0f4c81',
+  'Project Management': '#7c3aed',
   'Site': '#047857',
-  'MEP': '#b91c1c'
+  'MEP': '#dc2626'
 };
-
-// Pastel background colors for different hierarchy levels
-const LEVEL_BG_COLORS = [
-  '#f0f9ff', // Level 0 - lightest blue
-  '#e0f2fe', // Level 1
-  '#bae6fd', // Level 2
-  '#7dd3fc', // Level 3
-  '#38bdf8', // Level 4
-  '#0ea5e9', // Level 5
-  '#0284c7', // Level 6
-];
 
 export default function OrgChart({ projects }) {
   const [engineers, setEngineers] = useState([]);
@@ -268,45 +266,32 @@ export default function OrgChart({ projects }) {
   );
 }
 
-// Premium Org Chart - Spacious with color-coded levels
+// Premium Org Chart - Color coded by POSITION
 function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
   const chartRef = useRef(null);
   
   if (!engineers || engineers.length === 0) return null;
 
-  // Build tree structure based on reportsTo
-  const buildTree = () => {
-    const getChildren = (parentId) => {
-      return engineers
-        .filter(e => e.reportsTo === parentId)
-        .sort((a, b) => {
-          const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
-          const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
-          if (posA !== posB) return posA - posB;
-          return (a.name || '').localeCompare(b.name || '');
-        });
-    };
-
-    // Find roots - people without a manager in this department
-    const roots = engineers.filter(e => {
-      if (!e.reportsTo) return true;
-      return !engineers.find(m => m.id === e.reportsTo);
-    }).sort((a, b) => {
-      const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
-      const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
-      return posA - posB;
+  // Group engineers by hierarchy level for row-based layout
+  const groupByLevel = () => {
+    const levels = {};
+    engineers.forEach(eng => {
+      const pos = POSITIONS.find(p => p.id === eng.position);
+      const level = pos?.level ?? 99;
+      if (!levels[level]) levels[level] = [];
+      levels[level].push(eng);
     });
-
-    const buildNode = (person, depth = 0) => ({
-      person,
-      depth,
-      children: getChildren(person.id).map(c => buildNode(c, depth + 1))
+    
+    // Sort each level by name
+    Object.keys(levels).forEach(level => {
+      levels[level].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     });
-
-    return roots.map(r => buildNode(r, 0));
+    
+    return levels;
   };
 
-  const trees = buildTree();
+  const levelGroups = groupByLevel();
+  const sortedLevels = Object.keys(levelGroups).map(Number).sort((a, b) => a - b);
 
   // Download as PNG
   const handleDownload = async () => {
@@ -330,18 +315,17 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
     }
   };
 
-  // Person Card Component - Color coded by depth
-  const PersonCard = ({ person, depth, isRoot }) => {
+  // Person Card Component - Color coded by POSITION
+  const PersonCard = ({ person }) => {
     const pos = POSITIONS.find(p => p.id === person.position);
     const projects = getEngineerProjects(person.id);
-    const bgColor = LEVEL_BG_COLORS[Math.min(depth, LEVEL_BG_COLORS.length - 1)];
     
     return (
       <div 
         className="relative rounded-2xl shadow-lg border-2 transition-all hover:shadow-xl hover:-translate-y-1 group"
         style={{ 
-          width: 220,
-          backgroundColor: bgColor,
+          width: 200,
+          backgroundColor: pos?.bgColor || '#f8fafc',
           borderColor: pos?.color || '#64748B'
         }}
       >
@@ -351,11 +335,11 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
           style={{ backgroundColor: pos?.color || '#64748B' }} 
         />
         
-        <div className="p-5">
+        <div className="p-4">
           {/* Avatar */}
-          <div className="flex justify-center mb-4">
+          <div className="flex justify-center mb-3">
             <div 
-              className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl shadow-md border-4 border-white"
+              className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-md border-4 border-white"
               style={{ backgroundColor: pos?.color || '#64748B' }}
             >
               {person.name?.charAt(0) || '?'}
@@ -363,118 +347,60 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
           </div>
           
           {/* Name */}
-          <h3 className="font-bold text-slate-800 text-base text-center truncate mb-2">
+          <h3 className="font-bold text-slate-800 text-sm text-center truncate mb-2">
             {person.name}
           </h3>
           
           {/* Position badge */}
-          <div className="flex justify-center mb-3">
+          <div className="flex justify-center mb-2">
             <span 
-              className="text-xs font-semibold px-3 py-1.5 rounded-full text-white shadow-sm"
+              className="text-[10px] font-semibold px-2.5 py-1 rounded-full text-white shadow-sm"
               style={{ backgroundColor: pos?.color || '#64748B' }}
             >
               {pos?.label || 'Team Member'}
             </span>
           </div>
           
-          {/* Phone */}
-          {person.phone && (
-            <div className="flex items-center justify-center gap-2 text-xs text-slate-600 mb-2">
-              <Icon name="phone" size={12} />
-              <span>{person.phone}</span>
-            </div>
-          )}
-          
           {/* Projects */}
           {projects.length > 0 && !['executive', 'head'].includes(person.position) && (
-            <div className="flex flex-wrap gap-1.5 justify-center mt-3">
+            <div className="flex flex-wrap gap-1 justify-center mt-2">
               {projects.slice(0, 2).map(p => (
-                <span key={p.id} className="text-[10px] bg-white/80 text-slate-700 px-2 py-1 rounded-lg font-medium shadow-sm">
+                <span key={p.id} className="text-[9px] bg-white/80 text-slate-600 px-1.5 py-0.5 rounded font-medium border border-slate-200">
                   {p.name}
                 </span>
               ))}
               {projects.length > 2 && (
-                <span className="text-[10px] text-slate-500 font-medium">+{projects.length - 2}</span>
+                <span className="text-[9px] text-slate-400 font-medium">+{projects.length - 2}</span>
               )}
             </div>
           )}
         </div>
         
         {/* Action buttons */}
-        <div className="absolute -top-3 -right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+        <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
           <button 
             onClick={() => onEdit(person)} 
-            className="p-2 bg-white border border-slate-200 rounded-full shadow-md hover:bg-blue-50 hover:border-blue-300"
+            className="p-1.5 bg-white border border-slate-200 rounded-full shadow-md hover:bg-blue-50 hover:border-blue-300"
           >
-            <Icon name="pencil" size={12} className="text-slate-600" />
+            <Icon name="pencil" size={10} className="text-slate-600" />
           </button>
           <button 
             onClick={() => onDelete(person.id)} 
-            className="p-2 bg-white border border-slate-200 rounded-full shadow-md hover:bg-red-50 hover:border-red-300"
+            className="p-1.5 bg-white border border-slate-200 rounded-full shadow-md hover:bg-red-50 hover:border-red-300"
           >
-            <Icon name="trash-2" size={12} className="text-red-500" />
+            <Icon name="trash-2" size={10} className="text-red-500" />
           </button>
         </div>
       </div>
     );
   };
 
-  // Tree Node with spacious connectors
-  const TreeNode = ({ node, isRoot = false }) => {
-    const { person, depth, children } = node;
-    const hasChildren = children.length > 0;
-    const cardWidth = 220;
-    const horizontalGap = 40;
-    
-    return (
-      <div className="flex flex-col items-center">
-        {/* Person Card */}
-        <PersonCard person={person} depth={depth} isRoot={isRoot} />
-        
-        {/* Children with connectors */}
-        {hasChildren && (
-          <>
-            {/* Vertical line down from parent */}
-            <div 
-              className="w-1 rounded-full" 
-              style={{ 
-                height: 40, 
-                background: 'linear-gradient(to bottom, #94a3b8, #cbd5e1)'
-              }} 
-            />
-            
-            {/* Horizontal line spanning all children */}
-            {children.length > 1 && (
-              <div 
-                className="h-1 rounded-full" 
-                style={{ 
-                  width: `${(children.length - 1) * (cardWidth + horizontalGap)}px`,
-                  background: 'linear-gradient(to right, #cbd5e1, #94a3b8, #cbd5e1)'
-                }}
-              />
-            )}
-            
-            {/* Children row with spacing */}
-            <div className="flex" style={{ gap: horizontalGap }}>
-              {children.map((child) => (
-                <div key={child.person.id} className="flex flex-col items-center">
-                  {/* Vertical line down to each child */}
-                  <div 
-                    className="w-1 rounded-full" 
-                    style={{ 
-                      height: 40, 
-                      background: 'linear-gradient(to bottom, #cbd5e1, #94a3b8)'
-                    }} 
-                  />
-                  {/* Recurse */}
-                  <TreeNode node={child} />
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    );
+  // Get position label for a level
+  const getLevelLabel = (level) => {
+    const people = levelGroups[level] || [];
+    if (people.length === 0) return '';
+    const pos = POSITIONS.find(p => p.id === people[0].position);
+    return pos?.label || '';
   };
 
   const currentDate = new Date().toLocaleDateString('en-US', { 
@@ -499,27 +425,114 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
         </button>
       </div>
       
-      {/* Chart with padding and logo */}
-      <div ref={chartRef} className="p-12 overflow-x-auto bg-gradient-to-br from-white via-slate-50 to-white min-h-[500px] relative">
-        {/* Main chart content */}
-        <div className="flex flex-col items-center gap-12 min-w-fit pb-16">
-          {trees.map((tree, idx) => (
-            <TreeNode key={tree.person.id} node={tree} isRoot={idx === 0 && trees.length === 1} />
-          ))}
+      {/* Chart - Row based layout by level */}
+      <div ref={chartRef} className="p-8 overflow-x-auto bg-gradient-to-br from-white via-slate-50/50 to-white min-h-[400px] relative">
+        <div className="flex flex-col items-center gap-0 min-w-fit pb-20">
+          {sortedLevels.map((level, levelIdx) => {
+            const people = levelGroups[level];
+            const isLastLevel = levelIdx === sortedLevels.length - 1;
+            
+            return (
+              <div key={level} className="flex flex-col items-center">
+                {/* Connector from previous level */}
+                {levelIdx > 0 && (
+                  <div className="flex flex-col items-center">
+                    {/* Vertical line down */}
+                    <div 
+                      className="w-1 rounded-full"
+                      style={{ 
+                        height: 30,
+                        backgroundColor: '#94a3b8'
+                      }}
+                    />
+                    {/* Horizontal line spanning cards */}
+                    {people.length > 1 && (
+                      <div 
+                        className="h-1 rounded-full"
+                        style={{ 
+                          width: `${(people.length - 1) * 240 + 200}px`,
+                          backgroundColor: '#94a3b8'
+                        }}
+                      />
+                    )}
+                    {/* Vertical lines down to each card */}
+                    <div className="flex" style={{ gap: 40 }}>
+                      {people.map((_, idx) => (
+                        <div 
+                          key={idx}
+                          className="w-1 rounded-full"
+                          style={{ 
+                            height: 30,
+                            width: 200,
+                            display: 'flex',
+                            justifyContent: 'center'
+                          }}
+                        >
+                          <div 
+                            className="w-1 rounded-full"
+                            style={{ 
+                              height: 30,
+                              backgroundColor: '#94a3b8'
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {/* People row */}
+                <div className="flex justify-center" style={{ gap: 40 }}>
+                  {people.map(person => (
+                    <PersonCard key={person.id} person={person} />
+                  ))}
+                </div>
+                
+                {/* Vertical line down to next level */}
+                {!isLastLevel && (
+                  <div 
+                    className="w-1 rounded-full mt-4"
+                    style={{ 
+                      height: 30,
+                      backgroundColor: '#94a3b8'
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+        
+        {/* Legend */}
+        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm rounded-xl p-3 border border-slate-100 shadow-sm">
+          <p className="text-[10px] font-semibold text-slate-500 mb-2">POSITIONS</p>
+          <div className="space-y-1">
+            {sortedLevels.map(level => {
+              const people = levelGroups[level];
+              if (!people?.length) return null;
+              const pos = POSITIONS.find(p => p.id === people[0].position);
+              return (
+                <div key={level} className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded" style={{ backgroundColor: pos?.color }}></div>
+                  <span className="text-[10px] text-slate-600">{pos?.label}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
         
         {/* Logo watermark in bottom right */}
-        <div className="absolute bottom-6 right-6 flex items-center gap-3 opacity-80">
-          <div className="flex items-center gap-2 bg-white/90 backdrop-blur-sm px-4 py-2 rounded-xl shadow-sm border border-slate-100">
+        <div className="absolute bottom-4 right-4 flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-white/90 backdrop-blur-sm px-3 py-2 rounded-xl shadow-sm border border-slate-100">
             <div 
-              className="w-8 h-8 rounded-lg flex items-center justify-center" 
+              className="w-7 h-7 rounded-lg flex items-center justify-center" 
               style={{ backgroundColor: COLORS.blue }}
             >
-              <span className="text-white font-bold text-sm">S</span>
+              <span className="text-white font-bold text-xs">S</span>
             </div>
             <div className="text-left">
-              <p className="font-bold text-slate-800 text-sm">{BRANDING?.companyName || 'Sigma Contractors'}</p>
-              <p className="text-[10px] text-slate-500">Technical Office HQ</p>
+              <p className="font-bold text-slate-800 text-xs">{BRANDING?.companyName || 'Sigma Contractors'}</p>
+              <p className="text-[9px] text-slate-500">Technical Office HQ</p>
             </div>
           </div>
         </div>
@@ -573,7 +586,14 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
                     <span className="font-medium text-slate-900 text-sm">{eng.name}</span>
                   </div>
                 </td>
-                <td className="px-4 py-3 text-sm text-slate-600">{pos?.label || 'Unknown'}</td>
+                <td className="px-4 py-3">
+                  <span 
+                    className="text-xs font-medium px-2 py-1 rounded-full text-white"
+                    style={{ backgroundColor: pos?.color || '#94A3B8' }}
+                  >
+                    {pos?.label || 'Unknown'}
+                  </span>
+                </td>
                 <td className="px-4 py-3 hidden sm:table-cell">
                   <span className="text-xs text-slate-500">{getManagerName(eng.reportsTo)}</span>
                 </td>
@@ -636,7 +656,7 @@ function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
                 <tr key={eng.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3 sticky left-0 bg-white">
                     <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: pos?.color || '#94A3B8' }}></div>
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: pos?.color || '#94A3B8' }}></div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-900 truncate">{eng.name}</p>
                         <p className="text-[10px] text-slate-400 truncate">{pos?.label || 'Unknown'}</p>
