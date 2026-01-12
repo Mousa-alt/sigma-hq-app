@@ -13,6 +13,13 @@ import DateEditor from './DateEditor';
 import TasksHub from './TasksHub';
 import ActivityFeed from './ActivityFeed';
 
+// Helper to get GCS folder name - uses gcsFolderName field if set, otherwise project.name
+const getGcsFolderName = (project) => {
+  if (!project) return '';
+  const folderName = project.gcsFolderName || project.name || '';
+  return folderName.replace(/\s+/g, '_');
+};
+
 /**
  * ProjectHome - Main project dashboard
  * 
@@ -35,15 +42,16 @@ export default function ProjectHome({ project, syncing, lastSyncTime, onSyncNow,
     if (project?.name) {
       loadStats();
     }
-  }, [project?.id]);
+  }, [project?.id, project?.gcsFolderName]);
 
   const loadStats = async () => {
     setLoadingStats(true);
     try {
+      const gcsFolderName = getGcsFolderName(project);
       const res = await fetch(`${SYNC_WORKER_URL}/stats`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: project.name.replace(/\\s+/g, '_') })
+        body: JSON.stringify({ projectName: gcsFolderName })
       });
       if (res.ok) {
         const data = await res.json();
