@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import { APP_ID, COLORS, BRANDING } from '../config';
 import Icon from './Icon';
 
-// Position hierarchy
+// Position hierarchy - Planning now part of Technical Office group
 const POSITIONS = [
   { id: 'executive', label: 'Executive Manager', level: 0, color: '#0F172A', department: 'Management' },
   { id: 'head', label: 'Head of Technical Office', level: 1, color: '#0A1628', department: 'Technical Office' },
@@ -13,6 +13,11 @@ const POSITIONS = [
   { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#0891B2', department: 'Technical Office' },
   { id: 'junior', label: 'Junior TOE', level: 5, color: '#06B6D4', department: 'Technical Office' },
   { id: 'trainee', label: 'Trainee', level: 6, color: '#22D3EE', department: 'Technical Office' },
+  // Planning is part of Technical Office
+  { id: 'planning_head', label: 'Head of Planning', level: 2, color: '#EA580C', department: 'Technical Office' },
+  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 3, color: '#F97316', department: 'Technical Office' },
+  { id: 'planning_engineer', label: 'Planning Engineer', level: 4, color: '#FB923C', department: 'Technical Office' },
+  // Other departments
   { id: 'senior_pm', label: 'Senior Project Manager', level: 1, color: '#7C3AED', department: 'Project Management' },
   { id: 'pm', label: 'Project Manager', level: 2, color: '#8B5CF6', department: 'Project Management' },
   { id: 'site_manager', label: 'Site Manager', level: 2, color: '#059669', department: 'Site' },
@@ -22,20 +27,16 @@ const POSITIONS = [
   { id: 'mep_senior', label: 'Senior MEP Engineer', level: 3, color: '#EF4444', department: 'MEP' },
   { id: 'mep_toe', label: 'MEP Technical Office Engineer', level: 4, color: '#F87171', department: 'MEP' },
   { id: 'mep_junior', label: 'Junior MEP Engineer', level: 5, color: '#FCA5A5', department: 'MEP' },
-  { id: 'planning_head', label: 'Head of Planning', level: 1, color: '#EA580C', department: 'Planning' },
-  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 2, color: '#F97316', department: 'Planning' },
-  { id: 'planning_engineer', label: 'Planning Engineer', level: 3, color: '#FB923C', department: 'Planning' },
 ];
 
-const DEPARTMENTS = ['Management', 'Technical Office', 'Project Management', 'Site', 'MEP', 'Planning'];
+const DEPARTMENTS = ['Management', 'Technical Office', 'Project Management', 'Site', 'MEP'];
 
 const DEPARTMENT_COLORS = {
   'Management': '#0F172A',
   'Technical Office': '#0A1628',
   'Project Management': '#7C3AED',
   'Site': '#059669',
-  'MEP': '#DC2626',
-  'Planning': '#EA580C'
+  'MEP': '#DC2626'
 };
 
 export default function OrgChart({ projects }) {
@@ -204,9 +205,9 @@ export default function OrgChart({ projects }) {
             ))}
           </div>
 
-          {/* Premium Org Chart */}
+          {/* Org Chart */}
           {getEngineersByDepartment(selectedDepartment).length > 0 ? (
-            <PremiumOrgChart 
+            <CleanOrgChart 
               engineers={getEngineersByDepartment(selectedDepartment)}
               allEngineers={engineers}
               getEngineerProjects={getEngineerProjects}
@@ -256,14 +257,13 @@ export default function OrgChart({ projects }) {
   );
 }
 
-// Premium Org Chart with proper SVG connections
-function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
+// Clean Org Chart with proper SVG lines
+function CleanOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
   const chartRef = useRef(null);
-  const [cardPositions, setCardPositions] = useState({});
   
   if (!engineers || engineers.length === 0) return null;
 
-  // Build tree structure
+  // Build tree structure based on reportsTo
   const buildTree = () => {
     const getChildren = (parentId) => {
       return engineers
@@ -276,7 +276,7 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
         });
     };
 
-    // Find roots (no manager in this department)
+    // Find roots - people without a manager in this department
     const roots = engineers.filter(e => {
       if (!e.reportsTo) return true;
       return !engineers.find(m => m.id === e.reportsTo);
@@ -296,16 +296,9 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
 
   const trees = buildTree();
 
-  // Get manager
-  const getManager = (reportsTo) => {
-    if (!reportsTo) return null;
-    return engineers.find(e => e.id === reportsTo) || allEngineers.find(e => e.id === reportsTo);
-  };
-
-  // Download as image
+  // Download as PNG
   const handleDownload = async () => {
     if (!chartRef.current) return;
-    
     try {
       const html2canvas = (await import('html2canvas')).default;
       const canvas = await html2canvas(chartRef.current, {
@@ -314,7 +307,6 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
         logging: false,
         useCORS: true
       });
-      
       const link = document.createElement('a');
       const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
       link.download = `Sigma-OrgChart-${department}-${date}.png`;
@@ -322,199 +314,143 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
       link.click();
     } catch (err) {
       console.error('Download failed:', err);
-      alert('Download failed. Please try again.');
+      alert('Download failed');
     }
   };
 
-  // Recursive tree renderer
-  const TreeNode = ({ node, isRoot = false }) => {
-    const { person, children } = node;
+  // Person Card Component
+  const PersonCard = ({ person, isRoot }) => {
     const pos = POSITIONS.find(p => p.id === person.position);
     const projects = getEngineerProjects(person.id);
     
     return (
-      <div className="flex flex-col items-center">
-        {/* Person Card */}
-        <div 
-          className={`relative bg-white rounded-2xl shadow-lg border-2 transition-all duration-300 hover:shadow-xl hover:scale-105 ${isRoot ? 'border-slate-800' : 'border-slate-200 hover:border-blue-400'}`}
-          style={{ width: 200 }}
-        >
-          {/* Gradient top bar */}
-          <div 
-            className="h-2 rounded-t-xl"
-            style={{ 
-              background: `linear-gradient(135deg, ${pos?.color || '#64748B'} 0%, ${pos?.color || '#64748B'}88 100%)`
-            }}
-          />
-          
-          <div className="p-4">
-            {/* Avatar with ring */}
-            <div className="flex justify-center mb-3">
-              <div className="relative">
-                <div 
-                  className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl shadow-lg"
-                  style={{ 
-                    background: `linear-gradient(135deg, ${pos?.color || '#64748B'} 0%, ${pos?.color || '#64748B'}CC 100%)`
-                  }}
-                >
-                  {person.name?.charAt(0) || '?'}
-                </div>
-                {/* Status ring */}
-                <div 
-                  className="absolute inset-0 rounded-full border-4 border-white shadow-inner"
-                  style={{ margin: -2 }}
-                />
-              </div>
+      <div 
+        className={`relative bg-white rounded-xl shadow-md border-2 transition-all hover:shadow-lg hover:scale-[1.02] ${isRoot ? 'border-slate-700' : 'border-slate-200'}`}
+        style={{ width: 180 }}
+      >
+        {/* Color bar */}
+        <div className="h-1.5 rounded-t-lg" style={{ backgroundColor: pos?.color || '#64748B' }} />
+        
+        <div className="p-3">
+          {/* Avatar */}
+          <div className="flex justify-center mb-2">
+            <div 
+              className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg"
+              style={{ backgroundColor: pos?.color || '#64748B' }}
+            >
+              {person.name?.charAt(0) || '?'}
             </div>
-            
-            {/* Name */}
-            <h3 className="font-bold text-slate-900 text-sm text-center truncate" title={person.name}>
-              {person.name}
-            </h3>
-            
-            {/* Position badge */}
-            <div className="flex justify-center mt-2">
-              <span 
-                className="text-[10px] font-semibold px-3 py-1 rounded-full text-white"
-                style={{ backgroundColor: pos?.color || '#64748B' }}
-              >
-                {pos?.label || 'Team Member'}
-              </span>
-            </div>
-            
-            {/* Contact */}
-            {person.phone && (
-              <div className="flex items-center justify-center gap-1 mt-3 text-xs text-slate-500">
-                <Icon name="phone" size={10} />
-                <span>{person.phone}</span>
-              </div>
-            )}
-            
-            {/* Projects */}
-            {projects.length > 0 && !['executive', 'head'].includes(person.position) && (
-              <div className="flex flex-wrap gap-1 mt-3 justify-center">
-                {projects.slice(0, 2).map(p => (
-                  <span key={p.id} className="text-[9px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium">
-                    {p.name}
-                  </span>
-                ))}
-                {projects.length > 2 && (
-                  <span className="text-[9px] text-slate-400 font-medium">+{projects.length - 2}</span>
-                )}
-              </div>
-            )}
           </div>
           
-          {/* Hover actions */}
-          <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 hover:opacity-100 transition-opacity flex gap-1">
-            <button 
-              onClick={() => onEdit(person)}
-              className="p-1.5 bg-white border border-slate-200 rounded-lg shadow-md hover:bg-blue-50 hover:border-blue-300 transition-all"
-            >
-              <Icon name="pencil" size={12} className="text-slate-600" />
-            </button>
-            <button 
-              onClick={() => onDelete(person.id)}
-              className="p-1.5 bg-white border border-slate-200 rounded-lg shadow-md hover:bg-red-50 hover:border-red-300 transition-all"
-            >
-              <Icon name="trash-2" size={12} className="text-red-500" />
-            </button>
-          </div>
+          {/* Name */}
+          <h3 className="font-semibold text-slate-900 text-sm text-center truncate">{person.name}</h3>
+          
+          {/* Position */}
+          <p className="text-[10px] text-center mt-1 font-medium px-2 py-0.5 rounded-full mx-auto w-fit"
+             style={{ backgroundColor: `${pos?.color}15`, color: pos?.color }}>
+            {pos?.label || 'Team Member'}
+          </p>
+          
+          {/* Projects */}
+          {projects.length > 0 && !['executive', 'head'].includes(person.position) && (
+            <div className="flex flex-wrap gap-1 mt-2 justify-center">
+              {projects.slice(0, 2).map(p => (
+                <span key={p.id} className="text-[8px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                  {p.name}
+                </span>
+              ))}
+              {projects.length > 2 && <span className="text-[8px] text-slate-400">+{projects.length - 2}</span>}
+            </div>
+          )}
         </div>
         
-        {/* Children */}
-        {children.length > 0 && (
-          <div className="flex flex-col items-center">
-            {/* Vertical connector from parent */}
-            <div className="w-0.5 h-8 bg-gradient-to-b from-slate-300 to-slate-400"></div>
+        {/* Action buttons on hover */}
+        <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 hover:opacity-100 transition-opacity">
+          <button onClick={() => onEdit(person)} className="p-1 bg-white border rounded shadow-sm hover:bg-blue-50">
+            <Icon name="pencil" size={10} className="text-slate-500" />
+          </button>
+          <button onClick={() => onDelete(person.id)} className="p-1 bg-white border rounded shadow-sm hover:bg-red-50">
+            <Icon name="trash-2" size={10} className="text-red-400" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // Tree Node with proper connectors
+  const TreeNode = ({ node, isRoot = false }) => {
+    const { person, children } = node;
+    const hasChildren = children.length > 0;
+    
+    return (
+      <div className="flex flex-col items-center">
+        {/* Person Card */}
+        <PersonCard person={person} isRoot={isRoot} />
+        
+        {/* Children with connectors */}
+        {hasChildren && (
+          <>
+            {/* Vertical line down from parent */}
+            <div className="w-0.5 h-6 bg-slate-300" />
             
-            {/* Horizontal connector bar */}
+            {/* Horizontal line spanning all children */}
             {children.length > 1 && (
-              <div className="relative h-0.5 bg-slate-300" style={{ width: `${(children.length - 1) * 220 + 20}px` }}>
-                {/* Dots at connection points */}
-                {children.map((_, idx) => (
-                  <div 
-                    key={idx}
-                    className="absolute w-2 h-2 bg-slate-400 rounded-full -top-[3px]"
-                    style={{ left: `${idx * 220 / (children.length - 1) * (children.length - 1)}px`, transform: 'translateX(-50%)' }}
-                  />
-                ))}
-              </div>
+              <div 
+                className="h-0.5 bg-slate-300" 
+                style={{ width: `${(children.length - 1) * 200}px` }}
+              />
             )}
             
             {/* Children row */}
-            <div className="flex gap-5">
+            <div className="flex">
               {children.map((child, idx) => (
-                <div key={child.person.id} className="flex flex-col items-center">
-                  {/* Vertical connector to each child */}
-                  <div className="w-0.5 h-8 bg-gradient-to-b from-slate-400 to-slate-300"></div>
+                <div key={child.person.id} className="flex flex-col items-center" style={{ width: 200 }}>
+                  {/* Vertical line down to each child */}
+                  <div className="w-0.5 h-6 bg-slate-300" />
+                  {/* Recurse */}
                   <TreeNode node={child} />
                 </div>
               ))}
             </div>
-          </div>
+          </>
         )}
       </div>
     );
   };
 
   const currentDate = new Date().toLocaleDateString('en-US', { 
-    weekday: 'long',
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric' 
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
   });
 
   return (
-    <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl border border-slate-200 overflow-hidden">
-      {/* Header with branding */}
-      <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          {/* Logo */}
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: COLORS.blue }}>
-            <span className="text-white font-bold text-lg">S</span>
+    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      {/* Header */}
+      <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between bg-slate-50">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: COLORS.blue }}>
+            <span className="text-white font-bold">S</span>
           </div>
           <div>
-            <h2 className="font-bold text-slate-900">
-              {BRANDING?.companyName || 'Sigma Contractors'}
-            </h2>
-            <p className="text-xs text-slate-500">{department} Organization Chart</p>
+            <h2 className="font-semibold text-slate-900">{BRANDING?.companyName || 'Sigma Contractors'}</h2>
+            <p className="text-xs text-slate-500">{department} • {currentDate}</p>
           </div>
         </div>
         
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-400">{currentDate}</span>
-          <button
-            onClick={handleDownload}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-medium transition-all shadow-md"
-          >
-            <Icon name="download" size={14} />
-            Export PNG
-          </button>
-        </div>
+        <button
+          onClick={handleDownload}
+          className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-sm hover:bg-slate-800"
+        >
+          <Icon name="download" size={14} />
+          Export PNG
+        </button>
       </div>
       
-      {/* Chart area */}
-      <div ref={chartRef} className="p-8 overflow-x-auto bg-gradient-to-br from-slate-50 via-white to-slate-50">
-        {/* Watermark pattern */}
-        <div className="absolute inset-0 opacity-[0.02] pointer-events-none" style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='30' y='35' font-family='Arial' font-size='12' fill='%23000' text-anchor='middle'%3ESIGMA%3C/text%3E%3C/svg%3E")`,
-          backgroundSize: '100px 100px'
-        }}></div>
-        
-        <div className="flex flex-col items-center gap-12 min-w-fit relative">
+      {/* Chart */}
+      <div ref={chartRef} className="p-8 overflow-x-auto bg-white min-h-[400px]">
+        <div className="flex flex-col items-center gap-8 min-w-fit">
           {trees.map((tree, idx) => (
-            <div key={tree.person.id} className="group">
-              <TreeNode node={tree} isRoot={idx === 0} />
-            </div>
+            <TreeNode key={tree.person.id} node={tree} isRoot={idx === 0 && trees.length === 1} />
           ))}
-        </div>
-        
-        {/* Footer watermark */}
-        <div className="mt-8 pt-6 border-t border-slate-200/50 flex items-center justify-center gap-2 text-slate-300">
-          <span className="text-xs font-medium">Generated by Sigma HQ</span>
-          <span className="text-xs">•</span>
-          <span className="text-xs">{currentDate}</span>
         </div>
       </div>
     </div>
@@ -558,12 +494,12 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     <div 
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold"
                       style={{ backgroundColor: pos?.color || '#94A3B8' }}
                     >
                       {eng.name?.charAt(0) || '?'}
                     </div>
-                    <span className="font-medium text-slate-900 text-sm truncate">{eng.name}</span>
+                    <span className="font-medium text-slate-900 text-sm">{eng.name}</span>
                   </div>
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-600">{pos?.label || 'Unknown'}</td>
@@ -629,7 +565,7 @@ function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
                 <tr key={eng.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3 sticky left-0 bg-white">
                     <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: pos?.color || '#94A3B8' }}></div>
+                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: pos?.color || '#94A3B8' }}></div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-900 truncate">{eng.name}</p>
                         <p className="text-[10px] text-slate-400 truncate">{pos?.label || 'Unknown'}</p>
@@ -681,6 +617,7 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
 
   const currentPos = POSITIONS.find(p => p.id === formData.position);
   
+  // Get managers from all engineers (across departments for cross-department reporting)
   const potentialManagers = engineers.filter(e => {
     if (e.id === engineer?.id) return false;
     const pos = POSITIONS.find(p => p.id === e.position);
@@ -699,7 +636,7 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
-        <div className="p-6 border-b border-slate-100 flex-shrink-0">
+        <div className="p-6 border-b border-slate-100">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900">{engineer ? 'Edit' : 'Add'} Team Member</h2>
             <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
@@ -738,7 +675,7 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-2">Reports To *</label>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Reports To</label>
             <select
               value={formData.reportsTo}
               onChange={(e) => setFormData({ ...formData, reportsTo: e.target.value })}
@@ -754,7 +691,6 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
                 );
               })}
             </select>
-            <p className="text-[9px] text-slate-400 mt-1">Who does this person directly report to?</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -782,8 +718,8 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
 
           <div className="flex gap-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 px-4 py-3 bg-slate-900 text-white rounded-xl text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
-              {loading ? <><Icon name="loader-2" size={16} className="animate-spin" />Saving...</> : <><Icon name="check" size={16} />{engineer ? 'Update' : 'Add'}</>}
+            <button type="submit" disabled={loading} className="flex-1 px-4 py-3 bg-slate-900 text-white rounded-xl text-sm font-medium disabled:opacity-50">
+              {loading ? 'Saving...' : (engineer ? 'Update' : 'Add')}
             </button>
           </div>
         </form>
