@@ -71,6 +71,18 @@ const getFolderStyle = (folderName) => {
 
 const cleanFolderName = (name) => name.replace(/^\d+[\.-_]\s*/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 
+// Helper to get GCS folder name - combines name + venue to match original sync format
+const getGcsFolderName = (project) => {
+  if (!project) return '';
+  const name = project.name || '';
+  const venue = project.venue || '';
+  // If venue exists, combine with dash (matching original sync format)
+  if (venue) {
+    return `${name}-${venue}`.replace(/\s+/g, '_');
+  }
+  return name.replace(/\s+/g, '_');
+};
+
 export default function Vault({ project }) {
   const [folders, setFolders] = useState([]);
   const [loadingFolders, setLoadingFolders] = useState(true);
@@ -79,6 +91,8 @@ export default function Vault({ project }) {
   const [recentDocs, setRecentDocs] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [viewingFile, setViewingFile] = useState(null);
+
+  const gcsFolderName = getGcsFolderName(project);
 
   useEffect(() => {
     if (project) {
@@ -93,7 +107,7 @@ export default function Vault({ project }) {
       const res = await fetch(`${SYNC_WORKER_URL}/files`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: project.name.replace(/\s+/g, '_'), folderPath: '' })
+        body: JSON.stringify({ projectName: gcsFolderName, folderPath: '' })
       });
       if (res.ok) {
         const data = await res.json();
@@ -113,7 +127,7 @@ export default function Vault({ project }) {
       const res = await fetch(`${SYNC_WORKER_URL}/latest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: project.name.replace(/\s+/g, '_') })
+        body: JSON.stringify({ projectName: gcsFolderName })
       });
       if (res.ok) {
         const data = await res.json();
@@ -149,7 +163,7 @@ export default function Vault({ project }) {
   };
 
   const handleDocClick = (doc) => {
-    const filePath = `${project.name.replace(/\s+/g, '_')}/${doc.path}`;
+    const filePath = `${gcsFolderName}/${doc.path}`;
     setViewingFile({ name: doc.name, path: filePath });
   };
 
@@ -286,7 +300,7 @@ export default function Vault({ project }) {
         )}
       </div>
 
-      {activePopup && <FolderPopup project={project} folder={activePopup.folder} title={activePopup.title} onClose={() => setActivePopup(null)} />}
+      {activePopup && <FolderPopup project={project} folder={activePopup.folder} title={activePopup.title} gcsFolderName={gcsFolderName} onClose={() => setActivePopup(null)} />}
       {viewingFile && <FileViewer file={viewingFile} onClose={() => setViewingFile(null)} />}
     </div>
   );
