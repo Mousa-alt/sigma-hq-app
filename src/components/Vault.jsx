@@ -71,16 +71,12 @@ const getFolderStyle = (folderName) => {
 
 const cleanFolderName = (name) => name.replace(/^\d+[\.-_]\s*/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 
-// Helper to get GCS folder name - combines name + venue to match original sync format
+// Helper to get GCS folder name - uses gcsFolderName field if set, otherwise project.name
 const getGcsFolderName = (project) => {
   if (!project) return '';
-  const name = project.name || '';
-  const venue = project.venue || '';
-  // If venue exists, combine with dash (matching original sync format)
-  if (venue) {
-    return `${name}-${venue}`.replace(/\s+/g, '_');
-  }
-  return name.replace(/\s+/g, '_');
+  // Use explicit gcsFolderName if set, otherwise fall back to project name
+  const folderName = project.gcsFolderName || project.name || '';
+  return folderName.replace(/\s+/g, '_');
 };
 
 export default function Vault({ project }) {
@@ -99,7 +95,7 @@ export default function Vault({ project }) {
       loadFolders();
       loadLatestDocs();
     }
-  }, [project?.id]);
+  }, [project?.id, project?.gcsFolderName]);
 
   const loadFolders = async () => {
     setLoadingFolders(true);
