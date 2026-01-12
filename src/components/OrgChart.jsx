@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { APP_ID, COLORS, BRANDING } from '../config';
 import Icon from './Icon';
+import * as d3 from 'd3-hierarchy';
 
 // Position hierarchy with DISTINCT colors per position level
 const POSITIONS = [
@@ -216,7 +217,7 @@ export default function OrgChart({ projects }) {
 
           {/* Org Chart */}
           {getEngineersByDepartment(selectedDepartment).length > 0 ? (
-            <PremiumOrgChart 
+            <D3OrgChart 
               engineers={getEngineersByDepartment(selectedDepartment)}
               allEngineers={engineers}
               getEngineerProjects={getEngineerProjects}
@@ -266,32 +267,159 @@ export default function OrgChart({ projects }) {
   );
 }
 
-// Premium Org Chart - Color coded by POSITION
-function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
+// =============================================================================
+// D3 HIERARCHY ORG CHART - Uses d3-hierarchy for layout, React for rendering
+// =============================================================================
+
+function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
   const chartRef = useRef(null);
+  const containerRef = useRef(null);
   
-  if (!engineers || engineers.length === 0) return null;
+  // Card dimensions
+  const CARD_WIDTH = 200;
+  const CARD_HEIGHT = 140;
+  const HORIZONTAL_SPACING = 60;  // Space between siblings
+  const VERTICAL_SPACING = 80;    // Space between levels
+  
+  // Build the tree using d3-hierarchy
+  const { root, nodes, links, dimensions } = useMemo(() => {
+    if (!engineers || engineers.length === 0) {
+      return { root: null, nodes: [], links: [], dimensions: { width: 0, height: 0 } };
+    }
 
-  // Group engineers by hierarchy level for row-based layout
-  const groupByLevel = () => {
-    const levels = {};
-    engineers.forEach(eng => {
-      const pos = POSITIONS.find(p => p.id === eng.position);
-      const level = pos?.level ?? 99;
-      if (!levels[level]) levels[level] = [];
-      levels[level].push(eng);
-    });
+    // Step 1: Prepare data - handle orphans and find root(s)
+    const engineerIds = new Set(engineers.map(e => e.id));
     
-    // Sort each level by name
-    Object.keys(levels).forEach(level => {
-      levels[level].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    // Find the root node(s) - engineers with no reportsTo or reportsTo not in this department
+    const rootCandidates = engineers.filter(e => {
+      if (!e.reportsTo) return true;
+      // If reportsTo exists but is not in this department's engineers, treat as root
+      return !engineerIds.has(e.reportsTo);
     });
-    
-    return levels;
-  };
 
-  const levelGroups = groupByLevel();
-  const sortedLevels = Object.keys(levelGroups).map(Number).sort((a, b) => a - b);
+    // If no root found, use the highest level person
+    if (rootCandidates.length === 0) {
+      const sorted = [...engineers].sort((a, b) => {
+        const posA = POSITIONS.find(p => p.id === a.position)?.level ?? 99;
+        const posB = POSITIONS.find(p => p.id === b.position)?.level ?? 99;
+        return posA - posB;
+      });
+      if (sorted.length > 0) {
+        rootCandidates.push(sorted[0]);
+      }
+    }
+
+    // If still no engineers, return empty
+    if (rootCandidates.length === 0) {
+      return { root: null, nodes: [], links: [], dimensions: { width: 0, height: 0 } };
+    }
+
+    // Step 2: Create a virtual root if multiple top-level people exist
+    let dataForStratify;
+    let hasVirtualRoot = false;
+    
+    if (rootCandidates.length > 1) {
+      // Create a virtual root node that all root candidates report to
+      hasVirtualRoot = true;
+      const virtualRoot = { 
+        id: '__virtual_root__', 
+        name: department, 
+        position: null, 
+        reportsTo: null,
+        isVirtual: true 
+      };
+      
+      dataForStratify = [
+        virtualRoot,
+        ...engineers.map(e => ({
+          ...e,
+          // If this is a root candidate, make it report to virtual root
+          reportsTo: rootCandidates.some(r => r.id === e.id) ? '__virtual_root__' : e.reportsTo
+        }))
+      ];
+    } else {
+      // Single root - ensure it has no reportsTo
+      dataForStratify = engineers.map(e => ({
+        ...e,
+        reportsTo: rootCandidates[0].id === e.id ? null : e.reportsTo
+      }));
+    }
+
+    // Step 3: Handle orphans - engineers whose reportsTo doesn't exist in dataset
+    // Re-assign them to the first root candidate
+    const validIds = new Set(dataForStratify.map(e => e.id));
+    dataForStratify = dataForStratify.map(e => {
+      if (e.reportsTo && !validIds.has(e.reportsTo)) {
+        // Orphan - assign to first root or virtual root
+        return { 
+          ...e, 
+          reportsTo: hasVirtualRoot ? '__virtual_root__' : rootCandidates[0].id 
+        };
+      }
+      return e;
+    });
+
+    // Step 4: Build hierarchy using d3.stratify
+    try {
+      const stratify = d3.stratify()
+        .id(d => d.id)
+        .parentId(d => d.reportsTo);
+      
+      const hierarchyRoot = stratify(dataForStratify);
+      
+      // Step 5: Calculate layout using d3.tree
+      const treeLayout = d3.tree()
+        .nodeSize([CARD_WIDTH + HORIZONTAL_SPACING, CARD_HEIGHT + VERTICAL_SPACING])
+        .separation((a, b) => a.parent === b.parent ? 1 : 1.2);
+      
+      treeLayout(hierarchyRoot);
+      
+      // Step 6: Get all nodes and links
+      let allNodes = hierarchyRoot.descendants();
+      let allLinks = hierarchyRoot.links();
+      
+      // Filter out virtual root from display (but keep its links for children positioning)
+      if (hasVirtualRoot) {
+        allNodes = allNodes.filter(n => n.data.id !== '__virtual_root__');
+        allLinks = allLinks.filter(l => l.source.data.id !== '__virtual_root__');
+      }
+      
+      // Step 7: Calculate bounds and normalize positions
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      allNodes.forEach(node => {
+        minX = Math.min(minX, node.x);
+        maxX = Math.max(maxX, node.x);
+        minY = Math.min(minY, node.y);
+        maxY = Math.max(maxY, node.y);
+      });
+      
+      // Add padding
+      const padding = 100;
+      const width = maxX - minX + CARD_WIDTH + padding * 2;
+      const height = maxY - minY + CARD_HEIGHT + padding * 2;
+      
+      // Offset to make all coordinates positive
+      const offsetX = -minX + padding + CARD_WIDTH / 2;
+      const offsetY = -minY + padding;
+      
+      // Apply offset to nodes
+      allNodes.forEach(node => {
+        node.x += offsetX;
+        node.y += offsetY;
+      });
+      
+      return {
+        root: hierarchyRoot,
+        nodes: allNodes,
+        links: allLinks,
+        dimensions: { width: Math.max(width, 400), height: Math.max(height, 300) }
+      };
+      
+    } catch (err) {
+      console.error('D3 hierarchy error:', err);
+      return { root: null, nodes: [], links: [], dimensions: { width: 0, height: 0 } };
+    }
+  }, [engineers, department]);
 
   // Download as PNG
   const handleDownload = async () => {
@@ -315,97 +443,131 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
     }
   };
 
-  // Person Card Component - Color coded by POSITION
-  const PersonCard = ({ person }) => {
+  // Person Card Component
+  const PersonCard = ({ node }) => {
+    const person = node.data;
+    if (person.isVirtual) return null; // Don't render virtual root
+    
     const pos = POSITIONS.find(p => p.id === person.position);
     const projects = getEngineerProjects(person.id);
     
     return (
       <div 
-        className="relative rounded-2xl shadow-lg border-2 transition-all hover:shadow-xl hover:-translate-y-1 group"
+        className="absolute transform -translate-x-1/2 transition-all hover:-translate-y-1 group"
         style={{ 
-          width: 200,
-          backgroundColor: pos?.bgColor || '#f8fafc',
-          borderColor: pos?.color || '#64748B'
+          left: node.x,
+          top: node.y,
+          width: CARD_WIDTH
         }}
       >
-        {/* Color accent bar */}
         <div 
-          className="h-2 rounded-t-xl" 
-          style={{ backgroundColor: pos?.color || '#64748B' }} 
-        />
-        
-        <div className="p-4">
-          {/* Avatar */}
-          <div className="flex justify-center mb-3">
-            <div 
-              className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-md border-4 border-white"
-              style={{ backgroundColor: pos?.color || '#64748B' }}
-            >
-              {person.name?.charAt(0) || '?'}
+          className="rounded-2xl shadow-lg border-2 transition-all hover:shadow-xl bg-white"
+          style={{ 
+            backgroundColor: pos?.bgColor || '#f8fafc',
+            borderColor: pos?.color || '#64748B'
+          }}
+        >
+          {/* Color accent bar */}
+          <div 
+            className="h-2 rounded-t-xl" 
+            style={{ backgroundColor: pos?.color || '#64748B' }} 
+          />
+          
+          <div className="p-3">
+            {/* Avatar */}
+            <div className="flex justify-center mb-2">
+              <div 
+                className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-base shadow-md border-3 border-white"
+                style={{ backgroundColor: pos?.color || '#64748B' }}
+              >
+                {person.name?.charAt(0) || '?'}
+              </div>
             </div>
+            
+            {/* Name */}
+            <h3 className="font-bold text-slate-800 text-xs text-center truncate mb-1.5">
+              {person.name}
+            </h3>
+            
+            {/* Position badge */}
+            <div className="flex justify-center mb-1.5">
+              <span 
+                className="text-[9px] font-semibold px-2 py-0.5 rounded-full text-white shadow-sm"
+                style={{ backgroundColor: pos?.color || '#64748B' }}
+              >
+                {pos?.label || 'Team Member'}
+              </span>
+            </div>
+            
+            {/* Projects */}
+            {projects.length > 0 && !['executive', 'head'].includes(person.position) && (
+              <div className="flex flex-wrap gap-1 justify-center">
+                {projects.slice(0, 2).map(p => (
+                  <span key={p.id} className="text-[8px] bg-white/80 text-slate-600 px-1.5 py-0.5 rounded font-medium border border-slate-200">
+                    {p.name}
+                  </span>
+                ))}
+                {projects.length > 2 && (
+                  <span className="text-[8px] text-slate-400 font-medium">+{projects.length - 2}</span>
+                )}
+              </div>
+            )}
           </div>
           
-          {/* Name */}
-          <h3 className="font-bold text-slate-800 text-sm text-center truncate mb-2">
-            {person.name}
-          </h3>
-          
-          {/* Position badge */}
-          <div className="flex justify-center mb-2">
-            <span 
-              className="text-[10px] font-semibold px-2.5 py-1 rounded-full text-white shadow-sm"
-              style={{ backgroundColor: pos?.color || '#64748B' }}
+          {/* Action buttons */}
+          <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-10">
+            <button 
+              onClick={() => onEdit(person)} 
+              className="p-1.5 bg-white border border-slate-200 rounded-full shadow-md hover:bg-blue-50 hover:border-blue-300"
             >
-              {pos?.label || 'Team Member'}
-            </span>
+              <Icon name="pencil" size={10} className="text-slate-600" />
+            </button>
+            <button 
+              onClick={() => onDelete(person.id)} 
+              className="p-1.5 bg-white border border-slate-200 rounded-full shadow-md hover:bg-red-50 hover:border-red-300"
+            >
+              <Icon name="trash-2" size={10} className="text-red-500" />
+            </button>
           </div>
-          
-          {/* Projects */}
-          {projects.length > 0 && !['executive', 'head'].includes(person.position) && (
-            <div className="flex flex-wrap gap-1 justify-center mt-2">
-              {projects.slice(0, 2).map(p => (
-                <span key={p.id} className="text-[9px] bg-white/80 text-slate-600 px-1.5 py-0.5 rounded font-medium border border-slate-200">
-                  {p.name}
-                </span>
-              ))}
-              {projects.length > 2 && (
-                <span className="text-[9px] text-slate-400 font-medium">+{projects.length - 2}</span>
-              )}
-            </div>
-          )}
-        </div>
-        
-        {/* Action buttons */}
-        <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-          <button 
-            onClick={() => onEdit(person)} 
-            className="p-1.5 bg-white border border-slate-200 rounded-full shadow-md hover:bg-blue-50 hover:border-blue-300"
-          >
-            <Icon name="pencil" size={10} className="text-slate-600" />
-          </button>
-          <button 
-            onClick={() => onDelete(person.id)} 
-            className="p-1.5 bg-white border border-slate-200 rounded-full shadow-md hover:bg-red-50 hover:border-red-300"
-          >
-            <Icon name="trash-2" size={10} className="text-red-500" />
-          </button>
         </div>
       </div>
     );
   };
 
-  // Get position label for a level
-  const getLevelLabel = (level) => {
-    const people = levelGroups[level] || [];
-    if (people.length === 0) return '';
-    const pos = POSITIONS.find(p => p.id === people[0].position);
-    return pos?.label || '';
+  // Generate SVG path for connector lines (curved)
+  const generatePath = (link) => {
+    const sourceX = link.source.x;
+    const sourceY = link.source.y + CARD_HEIGHT; // Bottom of source card
+    const targetX = link.target.x;
+    const targetY = link.target.y; // Top of target card
+    
+    // Curved path using cubic bezier
+    const midY = (sourceY + targetY) / 2;
+    
+    return `M ${sourceX} ${sourceY} 
+            C ${sourceX} ${midY}, 
+              ${targetX} ${midY}, 
+              ${targetX} ${targetY}`;
   };
 
   const currentDate = new Date().toLocaleDateString('en-US', { 
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
   });
+
+  if (!root || nodes.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <div className="text-center py-16">
+          <Icon name="users" size={24} className="text-slate-400 mx-auto mb-4" />
+          <p className="text-slate-500">No hierarchy data available</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Get unique positions for legend
+  const uniquePositions = [...new Set(nodes.map(n => n.data.position))].filter(Boolean);
+  const legendPositions = uniquePositions.map(posId => POSITIONS.find(p => p.id === posId)).filter(Boolean);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
@@ -425,114 +587,78 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
         </button>
       </div>
       
-      {/* Chart - Row based layout by level */}
-      <div ref={chartRef} className="p-8 overflow-x-auto bg-gradient-to-br from-white via-slate-50/50 to-white min-h-[400px] relative">
-        <div className="flex flex-col items-center gap-0 min-w-fit pb-20">
-          {sortedLevels.map((level, levelIdx) => {
-            const people = levelGroups[level];
-            const isLastLevel = levelIdx === sortedLevels.length - 1;
+      {/* Chart Container with Scroll */}
+      <div 
+        ref={containerRef}
+        className="overflow-auto bg-gradient-to-br from-white via-slate-50/50 to-white"
+        style={{ maxHeight: '70vh' }}
+      >
+        <div 
+          ref={chartRef}
+          className="relative"
+          style={{ 
+            width: dimensions.width,
+            height: dimensions.height,
+            minWidth: '100%',
+            minHeight: '400px'
+          }}
+        >
+          {/* SVG Layer for Connection Lines */}
+          <svg 
+            className="absolute inset-0 pointer-events-none"
+            style={{ width: dimensions.width, height: dimensions.height }}
+          >
+            <defs>
+              {/* Gradient for lines */}
+              <linearGradient id="lineGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#94a3b8" />
+                <stop offset="100%" stopColor="#cbd5e1" />
+              </linearGradient>
+            </defs>
             
-            return (
-              <div key={level} className="flex flex-col items-center">
-                {/* Connector from previous level */}
-                {levelIdx > 0 && (
-                  <div className="flex flex-col items-center">
-                    {/* Vertical line down */}
-                    <div 
-                      className="w-1 rounded-full"
-                      style={{ 
-                        height: 30,
-                        backgroundColor: '#94a3b8'
-                      }}
-                    />
-                    {/* Horizontal line spanning cards */}
-                    {people.length > 1 && (
-                      <div 
-                        className="h-1 rounded-full"
-                        style={{ 
-                          width: `${(people.length - 1) * 240 + 200}px`,
-                          backgroundColor: '#94a3b8'
-                        }}
-                      />
-                    )}
-                    {/* Vertical lines down to each card */}
-                    <div className="flex" style={{ gap: 40 }}>
-                      {people.map((_, idx) => (
-                        <div 
-                          key={idx}
-                          className="w-1 rounded-full"
-                          style={{ 
-                            height: 30,
-                            width: 200,
-                            display: 'flex',
-                            justifyContent: 'center'
-                          }}
-                        >
-                          <div 
-                            className="w-1 rounded-full"
-                            style={{ 
-                              height: 30,
-                              backgroundColor: '#94a3b8'
-                            }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {/* People row */}
-                <div className="flex justify-center" style={{ gap: 40 }}>
-                  {people.map(person => (
-                    <PersonCard key={person.id} person={person} />
-                  ))}
+            {links.map((link, i) => (
+              <path
+                key={i}
+                d={generatePath(link)}
+                fill="none"
+                stroke="url(#lineGradient)"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            ))}
+          </svg>
+          
+          {/* Node Cards Layer */}
+          {nodes.map(node => (
+            <PersonCard key={node.data.id} node={node} />
+          ))}
+          
+          {/* Legend */}
+          <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-sm rounded-xl p-3 border border-slate-100 shadow-sm">
+            <p className="text-[10px] font-semibold text-slate-500 mb-2">POSITIONS</p>
+            <div className="space-y-1">
+              {legendPositions.map(pos => (
+                <div key={pos.id} className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded" style={{ backgroundColor: pos.color }}></div>
+                  <span className="text-[10px] text-slate-600">{pos.label}</span>
                 </div>
-                
-                {/* Vertical line down to next level */}
-                {!isLastLevel && (
-                  <div 
-                    className="w-1 rounded-full mt-4"
-                    style={{ 
-                      height: 30,
-                      backgroundColor: '#94a3b8'
-                    }}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-        
-        {/* Legend */}
-        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm rounded-xl p-3 border border-slate-100 shadow-sm">
-          <p className="text-[10px] font-semibold text-slate-500 mb-2">POSITIONS</p>
-          <div className="space-y-1">
-            {sortedLevels.map(level => {
-              const people = levelGroups[level];
-              if (!people?.length) return null;
-              const pos = POSITIONS.find(p => p.id === people[0].position);
-              return (
-                <div key={level} className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded" style={{ backgroundColor: pos?.color }}></div>
-                  <span className="text-[10px] text-slate-600">{pos?.label}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        
-        {/* Logo watermark in bottom right */}
-        <div className="absolute bottom-4 right-4 flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-white/90 backdrop-blur-sm px-3 py-2 rounded-xl shadow-sm border border-slate-100">
-            <div 
-              className="w-7 h-7 rounded-lg flex items-center justify-center" 
-              style={{ backgroundColor: COLORS.blue }}
-            >
-              <span className="text-white font-bold text-xs">S</span>
+              ))}
             </div>
-            <div className="text-left">
-              <p className="font-bold text-slate-800 text-xs">{BRANDING?.companyName || 'Sigma Contractors'}</p>
-              <p className="text-[9px] text-slate-500">Technical Office HQ</p>
+          </div>
+          
+          {/* Logo watermark */}
+          <div className="absolute bottom-4 right-4 flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-sm border border-slate-100">
+              <div 
+                className="w-7 h-7 rounded-lg flex items-center justify-center" 
+                style={{ backgroundColor: COLORS.blue }}
+              >
+                <span className="text-white font-bold text-xs">S</span>
+              </div>
+              <div className="text-left">
+                <p className="font-bold text-slate-800 text-xs">{BRANDING?.companyName || 'Sigma Contractors'}</p>
+                <p className="text-[9px] text-slate-500">Technical Office HQ</p>
+              </div>
             </div>
           </div>
         </div>
@@ -541,7 +667,10 @@ function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit,
   );
 }
 
-// Team List View
+// =============================================================================
+// TEAM LIST VIEW
+// =============================================================================
+
 function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete }) {
   const getManagerName = (reportsTo) => {
     if (!reportsTo) return '—';
@@ -625,7 +754,10 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
   );
 }
 
-// Assignment Matrix
+// =============================================================================
+// ASSIGNMENT MATRIX
+// =============================================================================
+
 function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
   const sortedEngineers = [...engineers].sort((a, b) => {
     const posA = POSITIONS.find(p => p.id === a.position)?.level || 99;
@@ -690,7 +822,10 @@ function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
   );
 }
 
-// Engineer Modal
+// =============================================================================
+// ENGINEER MODAL
+// =============================================================================
+
 function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
   const [formData, setFormData] = useState({
     name: engineer?.name || '',
