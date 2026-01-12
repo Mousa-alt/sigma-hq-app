@@ -118,7 +118,8 @@ def get_registered_projects():
                 'name': project_name,
                 'client': data.get('client', ''),
                 'keywords': data.get('keywords', []),
-                'aliases': aliases
+                'aliases': aliases,
+                'gcsFolderName': data.get('gcsFolderName', '')
             })
         print(f"📋 Loaded projects: {[p['name'] for p in projects]}")
     except Exception as e:
@@ -247,8 +248,39 @@ def fallback_classify(subject, body, projects):
     
     return None, 'correspondence', 'low'
 
+
+def detect_folder_structure(folder_name):
+    """Detect which folder structure a project uses (old or new)
+    
+    OLD: 09-Correspondence/
+    NEW: 01.Correspondence/Client/
+    
+    Returns 'new' or 'old'
+    """
+    bucket = storage_client.bucket(GCS_BUCKET)
+    
+    # Check for NEW structure folders
+    new_folders = ['01.Correspondence/', '04.Shop-Drawings/', '07.Submittals/']
+    for folder in new_folders:
+        prefix = f"{folder_name}/{folder}"
+        blobs = list(bucket.list_blobs(prefix=prefix, max_results=1))
+        if blobs:
+            return 'new'
+    
+    # Check for OLD structure folders
+    old_folders = ['09-Correspondence/', '01.drawings/', '10.submittal/']
+    for folder in old_folders:
+        prefix = f"{folder_name}/{folder}"
+        blobs = list(bucket.list_blobs(prefix=prefix, max_results=1))
+        if blobs:
+            return 'old'
+    
+    # Default to NEW for new projects
+    return 'new'
+
+
 def save_email_to_gcs(email_data, project_name, doc_type):
-    """Save email content to GCS"""
+    """Save email content to GCS (supports both old and new folder structures)"""
     bucket = storage_client.bucket(GCS_BUCKET)
     
     date_str = email_data['date'].strftime('%Y%m%d_%H%M') if email_data['date'] else datetime.now().strftime('%Y%m%d_%H%M')
@@ -256,7 +288,18 @@ def save_email_to_gcs(email_data, project_name, doc_type):
     
     if project_name:
         folder_name = project_name.replace(' ', '-')
-        path = f"{folder_name}/09-Correspondence/{doc_type.upper()}/{date_str}_{safe_subject}"
+        
+        # Detect which folder structure this project uses
+        structure = detect_folder_structure(folder_name)
+        
+        if structure == 'new':
+            # NEW structure: 01.Correspondence/Client/{DOC_TYPE}/
+            path = f"{folder_name}/01.Correspondence/Client/{doc_type.upper()}/{date_str}_{safe_subject}"
+        else:
+            # OLD structure: 09-Correspondence/{DOC_TYPE}/
+            path = f"{folder_name}/09-Correspondence/{doc_type.upper()}/{date_str}_{safe_subject}"
+        
+        print(f"📂 Using {structure.upper()} folder structure for {project_name}")
     else:
         path = f"_Unclassified_Emails/{date_str}_{safe_subject}"
     
@@ -467,14 +510,15 @@ def email_sync(request):
     
     if request.method == 'GET':
         return (jsonify({
-            'status': 'Email Sync Worker v3.0 - Smart Detection',
+            'status': 'Email Sync Worker v3.1 - New Folder Structure Support',
             'imap_server': IMAP_SERVER,
             'email_configured': bool(EMAIL_USER and EMAIL_PASS),
             'vertex_ai_enabled': VERTEX_AI_ENABLED,
             'gcp_project': GCP_PROJECT,
             'firebase_project': FIREBASE_PROJECT,
             'app_id': APP_ID,
-            'features': ['alias_matching', 'body_search', 'firestore_sync']
+            'features': ['alias_matching', 'body_search', 'firestore_sync', 'new_folder_structure'],
+            'folder_structures': ['old (09-Correspondence)', 'new (01.Correspondence/Client)']
         }), 200, headers)
     
     if request.method == 'POST':
