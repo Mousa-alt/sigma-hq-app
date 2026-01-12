@@ -3,13 +3,10 @@ import os
 from google.cloud import discoveryengine_v1 as discoveryengine
 import google.generativeai as genai
 
-PROJECT_ID = 'sigma-hq-technical-office'
-LOCATION = 'global'
-ENGINE_ID = 'sigma-search_1767650825639'
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+# Absolute imports
+from config import PROJECT_ID, LOCATION, ENGINE_ID, GEMINI_API_KEY
+from clients import GEMINI_ENABLED
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 def search_documents(query, project_filter=None, doc_type_filter=None, page_size=10):
     """Search documents using Vertex AI Search"""
@@ -20,7 +17,8 @@ def search_documents(query, project_filter=None, doc_type_filter=None, page_size
     if project_filter:
         filter_str = f'project: "{project_filter}"'
     if doc_type_filter:
-        if filter_str: filter_str += ' AND '
+        if filter_str:
+            filter_str += ' AND '
         filter_str += f'type: "{doc_type_filter}"'
     
     request = discoveryengine.SearchRequest(
@@ -35,7 +33,10 @@ def search_documents(query, project_filter=None, doc_type_filter=None, page_size
         results = []
         for result in response.results:
             doc = result.document
-            data = {f.key: f.value for f in doc.struct_data.fields.items()} if doc.struct_data else {}
+            data = {}
+            if doc.struct_data:
+                for key, value in doc.struct_data.fields.items():
+                    data[key] = value
             results.append({
                 'id': doc.id,
                 'title': data.get('title', doc.id),
@@ -49,9 +50,10 @@ def search_documents(query, project_filter=None, doc_type_filter=None, page_size
         print(f'Search error: {e}')
         return []
 
+
 def search_with_ai(query, context_docs=None):
     """AI-powered search with Gemini"""
-    if not GEMINI_API_KEY:
+    if not GEMINI_ENABLED:
         return {'error': 'Gemini not configured'}
     
     model = genai.GenerativeModel('gemini-2.0-flash-exp')
@@ -69,6 +71,9 @@ Question: {query}
     
     try:
         response = model.generate_content(prompt)
-        return {'answer': response.text, 'sources': context_docs[:5] if context_docs else []}
+        return {
+            'answer': response.text,
+            'sources': context_docs[:5] if context_docs else []
+        }
     except Exception as e:
         return {'error': str(e)}
