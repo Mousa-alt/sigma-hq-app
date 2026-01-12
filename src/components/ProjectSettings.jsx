@@ -58,6 +58,7 @@ export default function ProjectSettings({ project, onUpdateProject, onDeleteProj
     venue: project?.venue || '',
     area: project?.area || '',
     driveLink: project?.driveLink || '',
+    gcsFolderName: project?.gcsFolderName || '', // Legacy GCS folder name
     startDate: project?.startDate || '',
     contractualDuration: project?.contractualDuration || '', // in months
     timeExtensions: project?.timeExtensions || [], // [{weeks, reason, date}]
@@ -209,6 +210,25 @@ export default function ProjectSettings({ project, onUpdateProject, onDeleteProj
             placeholder="https://drive.google.com/drive/folders/..."
             className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-none focus:border-blue-400"
           />
+        </div>
+
+        {/* GCS Folder Name - Critical for legacy projects */}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <label className="block text-[10px] sm:text-xs font-medium text-amber-800 mb-1.5 sm:mb-2 flex items-center gap-2">
+            <Icon name="folder" size={14} />
+            Storage Folder Name
+          </label>
+          <input
+            type="text"
+            value={formData.gcsFolderName}
+            onChange={(e) => setFormData({ ...formData, gcsFolderName: e.target.value })}
+            placeholder={`Leave empty to use: ${formData.name || 'project name'}`}
+            className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-white border border-amber-300 rounded-xl text-xs sm:text-sm outline-none focus:border-amber-500"
+          />
+          <p className="text-[9px] text-amber-700 mt-2">
+            <strong>Important:</strong> Set this to match your existing synced folder name (e.g., "Agora-GEM", "Eichholtz-Downtown"). 
+            If empty, uses the project name. This determines where files are stored and retrieved.
+          </p>
         </div>
 
         {/* Duration Section */}
