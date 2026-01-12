@@ -10,13 +10,13 @@ const POSITIONS = [
   // Management - Dark Navy
   { id: 'executive', label: 'Executive Manager', level: 0, color: '#1e3a5f', bgColor: '#e0f2fe', department: 'Management' },
   
-  // Technical Office - Blues & Teals
+  // Technical Office - Distinct color progression: Navy → Cyan → Teal → Green → Lime
   { id: 'head', label: 'Head of Technical Office', level: 1, color: '#0f4c81', bgColor: '#dbeafe', department: 'Technical Office' },
   { id: 'team_leader', label: 'Team Leader', level: 2, color: '#0891b2', bgColor: '#cffafe', department: 'Technical Office' },
   { id: 'senior', label: 'Senior TOE', level: 3, color: '#0d9488', bgColor: '#ccfbf1', department: 'Technical Office' },
-  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#059669', bgColor: '#d1fae5', department: 'Technical Office' },
-  { id: 'junior', label: 'Junior TOE', level: 5, color: '#10b981', bgColor: '#ecfdf5', department: 'Technical Office' },
-  { id: 'trainee', label: 'Trainee', level: 6, color: '#6ee7b7', bgColor: '#f0fdf4', department: 'Technical Office' },
+  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#16a34a', bgColor: '#dcfce7', department: 'Technical Office' },
+  { id: 'junior', label: 'Junior TOE', level: 5, color: '#65a30d', bgColor: '#ecfccb', department: 'Technical Office' },
+  { id: 'trainee', label: 'Trainee', level: 6, color: '#ca8a04', bgColor: '#fef9c3', department: 'Technical Office' },
   
   // Planning - Oranges (part of Technical Office)
   { id: 'planning_head', label: 'Head of Planning', level: 2, color: '#c2410c', bgColor: '#ffedd5', department: 'Technical Office' },
