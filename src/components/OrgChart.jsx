@@ -6,38 +6,49 @@ import Icon from './Icon';
 
 // Position hierarchy - Planning now part of Technical Office group
 const POSITIONS = [
-  { id: 'executive', label: 'Executive Manager', level: 0, color: '#0F172A', department: 'Management' },
-  { id: 'head', label: 'Head of Technical Office', level: 1, color: '#0A1628', department: 'Technical Office' },
-  { id: 'team_leader', label: 'Team Leader', level: 2, color: '#1E40AF', department: 'Technical Office' },
-  { id: 'senior', label: 'Senior TOE', level: 3, color: '#0369A1', department: 'Technical Office' },
-  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#0891B2', department: 'Technical Office' },
-  { id: 'junior', label: 'Junior TOE', level: 5, color: '#06B6D4', department: 'Technical Office' },
-  { id: 'trainee', label: 'Trainee', level: 6, color: '#22D3EE', department: 'Technical Office' },
-  // Planning is part of Technical Office
-  { id: 'planning_head', label: 'Head of Planning', level: 2, color: '#EA580C', department: 'Technical Office' },
-  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 3, color: '#F97316', department: 'Technical Office' },
-  { id: 'planning_engineer', label: 'Planning Engineer', level: 4, color: '#FB923C', department: 'Technical Office' },
+  { id: 'executive', label: 'Executive Manager', level: 0, color: '#1e3a5f', department: 'Management' },
+  { id: 'head', label: 'Head of Technical Office', level: 1, color: '#1e3a5f', department: 'Technical Office' },
+  { id: 'team_leader', label: 'Team Leader', level: 2, color: '#2d5a87', department: 'Technical Office' },
+  { id: 'senior', label: 'Senior TOE', level: 3, color: '#3d7ab0', department: 'Technical Office' },
+  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#5a9bd4', department: 'Technical Office' },
+  { id: 'junior', label: 'Junior TOE', level: 5, color: '#7fb8e8', department: 'Technical Office' },
+  { id: 'trainee', label: 'Trainee', level: 6, color: '#a8d4f5', department: 'Technical Office' },
+  // Planning is part of Technical Office - orange tones
+  { id: 'planning_head', label: 'Head of Planning', level: 2, color: '#c2410c', department: 'Technical Office' },
+  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 3, color: '#ea580c', department: 'Technical Office' },
+  { id: 'planning_engineer', label: 'Planning Engineer', level: 4, color: '#fb923c', department: 'Technical Office' },
   // Other departments
-  { id: 'senior_pm', label: 'Senior Project Manager', level: 1, color: '#7C3AED', department: 'Project Management' },
-  { id: 'pm', label: 'Project Manager', level: 2, color: '#8B5CF6', department: 'Project Management' },
-  { id: 'site_manager', label: 'Site Manager', level: 2, color: '#059669', department: 'Site' },
-  { id: 'site_engineer', label: 'Site Engineer', level: 3, color: '#10B981', department: 'Site' },
-  { id: 'supervisor', label: 'Supervisor', level: 4, color: '#34D399', department: 'Site' },
-  { id: 'mep_team_leader', label: 'MEP Team Leader', level: 2, color: '#DC2626', department: 'MEP' },
-  { id: 'mep_senior', label: 'Senior MEP Engineer', level: 3, color: '#EF4444', department: 'MEP' },
-  { id: 'mep_toe', label: 'MEP Technical Office Engineer', level: 4, color: '#F87171', department: 'MEP' },
-  { id: 'mep_junior', label: 'Junior MEP Engineer', level: 5, color: '#FCA5A5', department: 'MEP' },
+  { id: 'senior_pm', label: 'Senior Project Manager', level: 1, color: '#5b21b6', department: 'Project Management' },
+  { id: 'pm', label: 'Project Manager', level: 2, color: '#7c3aed', department: 'Project Management' },
+  { id: 'site_manager', label: 'Site Manager', level: 2, color: '#047857', department: 'Site' },
+  { id: 'site_engineer', label: 'Site Engineer', level: 3, color: '#059669', department: 'Site' },
+  { id: 'supervisor', label: 'Supervisor', level: 4, color: '#10b981', department: 'Site' },
+  { id: 'mep_team_leader', label: 'MEP Team Leader', level: 2, color: '#b91c1c', department: 'MEP' },
+  { id: 'mep_senior', label: 'Senior MEP Engineer', level: 3, color: '#dc2626', department: 'MEP' },
+  { id: 'mep_toe', label: 'MEP Technical Office Engineer', level: 4, color: '#ef4444', department: 'MEP' },
+  { id: 'mep_junior', label: 'Junior MEP Engineer', level: 5, color: '#f87171', department: 'MEP' },
 ];
 
 const DEPARTMENTS = ['Management', 'Technical Office', 'Project Management', 'Site', 'MEP'];
 
 const DEPARTMENT_COLORS = {
-  'Management': '#0F172A',
-  'Technical Office': '#0A1628',
-  'Project Management': '#7C3AED',
-  'Site': '#059669',
-  'MEP': '#DC2626'
+  'Management': '#1e3a5f',
+  'Technical Office': '#1e3a5f',
+  'Project Management': '#5b21b6',
+  'Site': '#047857',
+  'MEP': '#b91c1c'
 };
+
+// Pastel background colors for different hierarchy levels
+const LEVEL_BG_COLORS = [
+  '#f0f9ff', // Level 0 - lightest blue
+  '#e0f2fe', // Level 1
+  '#bae6fd', // Level 2
+  '#7dd3fc', // Level 3
+  '#38bdf8', // Level 4
+  '#0ea5e9', // Level 5
+  '#0284c7', // Level 6
+];
 
 export default function OrgChart({ projects }) {
   const [engineers, setEngineers] = useState([]);
@@ -207,7 +218,7 @@ export default function OrgChart({ projects }) {
 
           {/* Org Chart */}
           {getEngineersByDepartment(selectedDepartment).length > 0 ? (
-            <CleanOrgChart 
+            <PremiumOrgChart 
               engineers={getEngineersByDepartment(selectedDepartment)}
               allEngineers={engineers}
               getEngineerProjects={getEngineerProjects}
@@ -257,8 +268,8 @@ export default function OrgChart({ projects }) {
   );
 }
 
-// Clean Org Chart with proper SVG lines
-function CleanOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
+// Premium Org Chart - Spacious with color-coded levels
+function PremiumOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
   const chartRef = useRef(null);
   
   if (!engineers || engineers.length === 0) return null;
@@ -286,12 +297,13 @@ function CleanOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, o
       return posA - posB;
     });
 
-    const buildNode = (person) => ({
+    const buildNode = (person, depth = 0) => ({
       person,
-      children: getChildren(person.id).map(buildNode)
+      depth,
+      children: getChildren(person.id).map(c => buildNode(c, depth + 1))
     });
 
-    return roots.map(buildNode);
+    return roots.map(r => buildNode(r, 0));
   };
 
   const trees = buildTree();
@@ -318,24 +330,32 @@ function CleanOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, o
     }
   };
 
-  // Person Card Component
-  const PersonCard = ({ person, isRoot }) => {
+  // Person Card Component - Color coded by depth
+  const PersonCard = ({ person, depth, isRoot }) => {
     const pos = POSITIONS.find(p => p.id === person.position);
     const projects = getEngineerProjects(person.id);
+    const bgColor = LEVEL_BG_COLORS[Math.min(depth, LEVEL_BG_COLORS.length - 1)];
     
     return (
       <div 
-        className={`relative bg-white rounded-xl shadow-md border-2 transition-all hover:shadow-lg hover:scale-[1.02] ${isRoot ? 'border-slate-700' : 'border-slate-200'}`}
-        style={{ width: 180 }}
+        className="relative rounded-2xl shadow-lg border-2 transition-all hover:shadow-xl hover:-translate-y-1 group"
+        style={{ 
+          width: 220,
+          backgroundColor: bgColor,
+          borderColor: pos?.color || '#64748B'
+        }}
       >
-        {/* Color bar */}
-        <div className="h-1.5 rounded-t-lg" style={{ backgroundColor: pos?.color || '#64748B' }} />
+        {/* Color accent bar */}
+        <div 
+          className="h-2 rounded-t-xl" 
+          style={{ backgroundColor: pos?.color || '#64748B' }} 
+        />
         
-        <div className="p-3">
+        <div className="p-5">
           {/* Avatar */}
-          <div className="flex justify-center mb-2">
+          <div className="flex justify-center mb-4">
             <div 
-              className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg"
+              className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl shadow-md border-4 border-white"
               style={{ backgroundColor: pos?.color || '#64748B' }}
             >
               {person.name?.charAt(0) || '?'}
@@ -343,70 +363,109 @@ function CleanOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, o
           </div>
           
           {/* Name */}
-          <h3 className="font-semibold text-slate-900 text-sm text-center truncate">{person.name}</h3>
+          <h3 className="font-bold text-slate-800 text-base text-center truncate mb-2">
+            {person.name}
+          </h3>
           
-          {/* Position */}
-          <p className="text-[10px] text-center mt-1 font-medium px-2 py-0.5 rounded-full mx-auto w-fit"
-             style={{ backgroundColor: `${pos?.color}15`, color: pos?.color }}>
-            {pos?.label || 'Team Member'}
-          </p>
+          {/* Position badge */}
+          <div className="flex justify-center mb-3">
+            <span 
+              className="text-xs font-semibold px-3 py-1.5 rounded-full text-white shadow-sm"
+              style={{ backgroundColor: pos?.color || '#64748B' }}
+            >
+              {pos?.label || 'Team Member'}
+            </span>
+          </div>
+          
+          {/* Phone */}
+          {person.phone && (
+            <div className="flex items-center justify-center gap-2 text-xs text-slate-600 mb-2">
+              <Icon name="phone" size={12} />
+              <span>{person.phone}</span>
+            </div>
+          )}
           
           {/* Projects */}
           {projects.length > 0 && !['executive', 'head'].includes(person.position) && (
-            <div className="flex flex-wrap gap-1 mt-2 justify-center">
+            <div className="flex flex-wrap gap-1.5 justify-center mt-3">
               {projects.slice(0, 2).map(p => (
-                <span key={p.id} className="text-[8px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                <span key={p.id} className="text-[10px] bg-white/80 text-slate-700 px-2 py-1 rounded-lg font-medium shadow-sm">
                   {p.name}
                 </span>
               ))}
-              {projects.length > 2 && <span className="text-[8px] text-slate-400">+{projects.length - 2}</span>}
+              {projects.length > 2 && (
+                <span className="text-[10px] text-slate-500 font-medium">+{projects.length - 2}</span>
+              )}
             </div>
           )}
         </div>
         
-        {/* Action buttons on hover */}
-        <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 hover:opacity-100 transition-opacity">
-          <button onClick={() => onEdit(person)} className="p-1 bg-white border rounded shadow-sm hover:bg-blue-50">
-            <Icon name="pencil" size={10} className="text-slate-500" />
+        {/* Action buttons */}
+        <div className="absolute -top-3 -right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+          <button 
+            onClick={() => onEdit(person)} 
+            className="p-2 bg-white border border-slate-200 rounded-full shadow-md hover:bg-blue-50 hover:border-blue-300"
+          >
+            <Icon name="pencil" size={12} className="text-slate-600" />
           </button>
-          <button onClick={() => onDelete(person.id)} className="p-1 bg-white border rounded shadow-sm hover:bg-red-50">
-            <Icon name="trash-2" size={10} className="text-red-400" />
+          <button 
+            onClick={() => onDelete(person.id)} 
+            className="p-2 bg-white border border-slate-200 rounded-full shadow-md hover:bg-red-50 hover:border-red-300"
+          >
+            <Icon name="trash-2" size={12} className="text-red-500" />
           </button>
         </div>
       </div>
     );
   };
 
-  // Tree Node with proper connectors
+  // Tree Node with spacious connectors
   const TreeNode = ({ node, isRoot = false }) => {
-    const { person, children } = node;
+    const { person, depth, children } = node;
     const hasChildren = children.length > 0;
+    const cardWidth = 220;
+    const horizontalGap = 40;
     
     return (
       <div className="flex flex-col items-center">
         {/* Person Card */}
-        <PersonCard person={person} isRoot={isRoot} />
+        <PersonCard person={person} depth={depth} isRoot={isRoot} />
         
         {/* Children with connectors */}
         {hasChildren && (
           <>
             {/* Vertical line down from parent */}
-            <div className="w-0.5 h-6 bg-slate-300" />
+            <div 
+              className="w-1 rounded-full" 
+              style={{ 
+                height: 40, 
+                background: 'linear-gradient(to bottom, #94a3b8, #cbd5e1)'
+              }} 
+            />
             
             {/* Horizontal line spanning all children */}
             {children.length > 1 && (
               <div 
-                className="h-0.5 bg-slate-300" 
-                style={{ width: `${(children.length - 1) * 200}px` }}
+                className="h-1 rounded-full" 
+                style={{ 
+                  width: `${(children.length - 1) * (cardWidth + horizontalGap)}px`,
+                  background: 'linear-gradient(to right, #cbd5e1, #94a3b8, #cbd5e1)'
+                }}
               />
             )}
             
-            {/* Children row */}
-            <div className="flex">
-              {children.map((child, idx) => (
-                <div key={child.person.id} className="flex flex-col items-center" style={{ width: 200 }}>
+            {/* Children row with spacing */}
+            <div className="flex" style={{ gap: horizontalGap }}>
+              {children.map((child) => (
+                <div key={child.person.id} className="flex flex-col items-center">
                   {/* Vertical line down to each child */}
-                  <div className="w-0.5 h-6 bg-slate-300" />
+                  <div 
+                    className="w-1 rounded-full" 
+                    style={{ 
+                      height: 40, 
+                      background: 'linear-gradient(to bottom, #cbd5e1, #94a3b8)'
+                    }} 
+                  />
                   {/* Recurse */}
                   <TreeNode node={child} />
                 </div>
@@ -423,34 +482,46 @@ function CleanOrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, o
   });
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
       {/* Header */}
-      <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between bg-slate-50">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: COLORS.blue }}>
-            <span className="text-white font-bold">S</span>
-          </div>
-          <div>
-            <h2 className="font-semibold text-slate-900">{BRANDING?.companyName || 'Sigma Contractors'}</h2>
-            <p className="text-xs text-slate-500">{department} • {currentDate}</p>
-          </div>
+      <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between bg-gradient-to-r from-slate-50 to-white">
+        <div>
+          <h2 className="font-bold text-slate-900 text-lg">{department}</h2>
+          <p className="text-xs text-slate-500">{currentDate}</p>
         </div>
         
         <button
           onClick={handleDownload}
-          className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-sm hover:bg-slate-800"
+          className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-sm hover:bg-slate-800 transition-all shadow-md"
         >
           <Icon name="download" size={14} />
           Export PNG
         </button>
       </div>
       
-      {/* Chart */}
-      <div ref={chartRef} className="p-8 overflow-x-auto bg-white min-h-[400px]">
-        <div className="flex flex-col items-center gap-8 min-w-fit">
+      {/* Chart with padding and logo */}
+      <div ref={chartRef} className="p-12 overflow-x-auto bg-gradient-to-br from-white via-slate-50 to-white min-h-[500px] relative">
+        {/* Main chart content */}
+        <div className="flex flex-col items-center gap-12 min-w-fit pb-16">
           {trees.map((tree, idx) => (
             <TreeNode key={tree.person.id} node={tree} isRoot={idx === 0 && trees.length === 1} />
           ))}
+        </div>
+        
+        {/* Logo watermark in bottom right */}
+        <div className="absolute bottom-6 right-6 flex items-center gap-3 opacity-80">
+          <div className="flex items-center gap-2 bg-white/90 backdrop-blur-sm px-4 py-2 rounded-xl shadow-sm border border-slate-100">
+            <div 
+              className="w-8 h-8 rounded-lg flex items-center justify-center" 
+              style={{ backgroundColor: COLORS.blue }}
+            >
+              <span className="text-white font-bold text-sm">S</span>
+            </div>
+            <div className="text-left">
+              <p className="font-bold text-slate-800 text-sm">{BRANDING?.companyName || 'Sigma Contractors'}</p>
+              <p className="text-[10px] text-slate-500">Technical Office HQ</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -617,7 +688,7 @@ function EngineerModal({ engineer, engineers, onClose, onSave, loading }) {
 
   const currentPos = POSITIONS.find(p => p.id === formData.position);
   
-  // Get managers from all engineers (across departments for cross-department reporting)
+  // Get managers from all engineers
   const potentialManagers = engineers.filter(e => {
     if (e.id === engineer?.id) return false;
     const pos = POSITIONS.find(p => p.id === e.position);
