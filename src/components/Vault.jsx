@@ -198,7 +198,7 @@ export default function Vault({ project }) {
   };
 
   const DocSection = ({ title, docs, isApproved, icon, emptyText }) => (
-    <div className="mb-4 sm:mb-6 overflow-hidden">
+    <div className="mb-4 sm:mb-6">
       <div className="flex items-center gap-2 mb-2 sm:mb-3">
         <Icon name={icon} size={12} className={isApproved ? 'text-green-500' : 'text-blue-500'} />
         <h3 className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wide text-slate-400">{title}</h3>
@@ -213,8 +213,8 @@ export default function Vault({ project }) {
           <p className="text-[10px] text-slate-400">{emptyText}</p>
         </div>
       ) : (
-        <div className="overflow-x-auto no-scrollbar -mx-4 px-4">
-          <div className="flex gap-2 sm:gap-3 pb-2 w-max">
+        <div className="overflow-x-auto overflow-y-visible no-scrollbar -mx-4 px-4 py-1">
+          <div className="flex gap-2 sm:gap-3 pb-2" style={{ width: 'max-content' }}>
             {docs.map((doc, i) => <DocCard key={i} doc={doc} isApproved={isApproved} />)}
           </div>
         </div>
