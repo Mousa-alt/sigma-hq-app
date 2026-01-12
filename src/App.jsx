@@ -23,6 +23,13 @@ import OrgChart from './components/OrgChart';
 // Add Settings tab
 const ALL_TABS = [...TABS, { id: 'settings', label: 'Settings', icon: 'settings' }];
 
+// Helper to get GCS folder name - uses gcsFolderName field if set, otherwise project.name
+const getGcsFolderName = (project) => {
+  if (!project) return '';
+  const folderName = project.gcsFolderName || project.name || '';
+  return folderName.replace(/\s+/g, '_');
+};
+
 export default function App() {
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -102,12 +109,13 @@ export default function App() {
       
       // Trigger sync (fire and forget) - only if driveLink provided
       if (formData.driveLink) {
+        const gcsFolderName = getGcsFolderName(formData);
         fetch(SYNC_WORKER_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             driveUrl: formData.driveLink, 
-            projectName: formData.name.replace(/\s+/g, '_') 
+            projectName: gcsFolderName
           })
         });
       }
@@ -125,13 +133,16 @@ export default function App() {
     setSyncing(true);
     setSyncError(null);
     
+    // Use gcsFolderName if set, otherwise use project name
+    const gcsFolderName = getGcsFolderName(selectedProject);
+    
     try {
       const res = await fetch(SYNC_WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           driveUrl: selectedProject.driveLink, 
-          projectName: selectedProject.name.replace(/\s+/g, '_') 
+          projectName: gcsFolderName
         })
       });
       const result = await res.json();
