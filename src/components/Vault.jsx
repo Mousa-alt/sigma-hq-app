@@ -4,7 +4,21 @@ import { SYNC_WORKER_URL } from '../config';
 import FolderPopup from './FolderPopup';
 import FileViewer from './FileViewer';
 
+// Folder icon mappings - supports both OLD and NEW folder structures
 const FOLDER_ICONS = {
+  // === NEW FOLDER STRUCTURE (01.Correspondence, 04.Shop-Drawings, etc.) ===
+  'correspondence': { icon: 'mail', color: 'sky' },
+  'project-info': { icon: 'info', color: 'blue' },
+  'design-drawings': { icon: 'compass', color: 'indigo' },
+  'shop-drawings': { icon: 'ruler', color: 'purple' },
+  'contract-boq': { icon: 'file-text', color: 'blue' },
+  'qs-procurement': { icon: 'calculator', color: 'emerald' },
+  'submittals': { icon: 'package', color: 'amber' },
+  'reports-mom': { icon: 'clipboard-list', color: 'teal' },
+  'invoices-variations': { icon: 'receipt', color: 'orange' },
+  'handover': { icon: 'check-circle', color: 'green' },
+  
+  // === OLD FOLDER STRUCTURE (legacy support) ===
   'contract': { icon: 'file-text', color: 'blue' },
   'design': { icon: 'compass', color: 'indigo' },
   'drawing': { icon: 'ruler', color: 'purple' },
@@ -15,14 +29,12 @@ const FOLDER_ICONS = {
   'qs': { icon: 'calculator', color: 'emerald' },
   'site': { icon: 'clipboard-list', color: 'amber' },
   'report': { icon: 'clipboard-list', color: 'amber' },
-  'correspondence': { icon: 'mail', color: 'sky' },
   'letter': { icon: 'mail', color: 'sky' },
   'quality': { icon: 'shield-check', color: 'green' },
   'qc': { icon: 'shield-check', color: 'green' },
   'health': { icon: 'hard-hat', color: 'red' },
   'safety': { icon: 'hard-hat', color: 'red' },
   'hse': { icon: 'hard-hat', color: 'red' },
-  'handover': { icon: 'package', color: 'teal' },
   'photo': { icon: 'camera', color: 'pink' },
   'image': { icon: 'camera', color: 'pink' },
   'archive': { icon: 'archive', color: 'slate' },
@@ -33,6 +45,20 @@ const FOLDER_ICONS = {
   'mom': { icon: 'users', color: 'purple' },
   'sample': { icon: 'box', color: 'amber' },
   'material': { icon: 'box', color: 'amber' },
+  'variation': { icon: 'file-signature', color: 'orange' },
+  'tender': { icon: 'file-search', color: 'blue' },
+  'manuals': { icon: 'book', color: 'violet' },
+  'schedule': { icon: 'calendar', color: 'teal' },
+  'contacts': { icon: 'users', color: 'sky' },
+  'architectural': { icon: 'building', color: 'indigo' },
+  'mep': { icon: 'zap', color: 'amber' },
+  'pending': { icon: 'clock', color: 'amber' },
+  'approved': { icon: 'check-circle', color: 'green' },
+  'as-built': { icon: 'check-square', color: 'green' },
+  'warranties': { icon: 'shield', color: 'emerald' },
+  'work-plan': { icon: 'list-checks', color: 'teal' },
+  'snag': { icon: 'alert-circle', color: 'orange' },
+  'wms': { icon: 'bar-chart-2', color: 'blue' },
 };
 
 const DOC_TYPE_CONFIG = {
@@ -49,6 +75,7 @@ const DOC_TYPE_CONFIG = {
   drawing: { icon: 'compass', color: 'indigo', label: 'Drawing' },
   contract: { icon: 'file-text', color: 'blue', label: 'Contract' },
   boq: { icon: 'calculator', color: 'emerald', label: 'BOQ' },
+  procurement: { icon: 'shopping-cart', color: 'emerald', label: 'Procurement' },
   other: { icon: 'file', color: 'slate', label: 'Document' },
 };
 
