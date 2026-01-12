@@ -1,34 +1,22 @@
 import { useState, useEffect } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 
 const MESSAGES_PATH = ['artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_messages'];
 const GROUPS_PATH = ['artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_groups'];
 
-// Groups that should never be shown in project feeds
-const EXCLUDED_GROUPS = [
-  'command center',
-  'technical office',
-  'ai assistant',
-  'testing'
-];
-
-const isExcludedGroup = (groupName) => {
-  if (!groupName) return false;
-  const lower = groupName.toLowerCase();
-  return EXCLUDED_GROUPS.some(excluded => lower.includes(excluded));
-};
-
 /**
  * Hook to fetch WhatsApp messages for a project
- * Uses the project's linked WhatsApp group for accurate matching
+ * 
+ * SIMPLE RULE: Only show messages from groups that are MAPPED to this project
+ * The Group → Project Mapping is the ONLY source of truth
  */
 export function useProjectMessages(project) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [linkedGroupIds, setLinkedGroupIds] = useState([]);
 
-  // First, get the linked WhatsApp groups for this project
+  // Step 1: Get the group IDs that are mapped to this project
   useEffect(() => {
     if (!project?.name) {
       setLinkedGroupIds([]);
@@ -40,30 +28,35 @@ export function useProjectMessages(project) {
     const unsubscribe = onSnapshot(groupsRef, (snapshot) => {
       const groups = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Find groups linked to this project
+      // Find groups where the "project" field matches this project's name
+      const projectNameLower = project.name.toLowerCase();
+      
       const linked = groups
         .filter(g => {
-          const linkedProject = g.project?.toLowerCase() || '';
-          const projectName = project.name?.toLowerCase() || '';
-          const projectCode = project.code?.toLowerCase() || '';
-          
-          return linkedProject === projectName || 
-                 linkedProject === projectCode ||
-                 linkedProject.includes(projectName) ||
-                 (projectCode && linkedProject.includes(projectCode));
+          const mappedProject = (g.project || '').toLowerCase();
+          // Exact match only - the mapping is the source of truth
+          return mappedProject === projectNameLower;
         })
         .map(g => g.group_id)
         .filter(Boolean);
       
+      console.log(`[useProjectMessages] ${project.name}: Found ${linked.length} linked groups`, linked);
       setLinkedGroupIds(linked);
     });
 
     return () => unsubscribe();
-  }, [project?.name, project?.code]);
+  }, [project?.name]);
 
-  // Then, fetch messages from those groups
+  // Step 2: Get messages ONLY from those linked groups
   useEffect(() => {
     if (!project?.name) {
+      setMessages([]);
+      setLoading(false);
+      return;
+    }
+
+    // If no groups are linked, show nothing
+    if (linkedGroupIds.length === 0) {
       setMessages([]);
       setLoading(false);
       return;
@@ -75,29 +68,9 @@ export function useProjectMessages(project) {
     const unsubscribe = onSnapshot(messagesRef, (snapshot) => {
       const allMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // Filter messages that belong to this project
+      // ONLY show messages from linked groups - nothing else
       const projectMessages = allMessages
-        .filter(msg => {
-          // Exclude command center and general groups
-          if (isExcludedGroup(msg.group_name)) {
-            return false;
-          }
-          
-          // If we have linked groups, filter by group_id
-          if (linkedGroupIds.length > 0) {
-            return linkedGroupIds.includes(msg.group_id);
-          }
-          
-          // Fallback: match by project_name field
-          const msgProject = msg.project_name?.toLowerCase() || '';
-          const projectName = project.name?.toLowerCase() || '';
-          const projectCode = project.code?.toLowerCase() || '';
-          
-          if (projectCode && msgProject.includes(projectCode)) return true;
-          if (projectName && msgProject.includes(projectName)) return true;
-          
-          return false;
-        })
+        .filter(msg => linkedGroupIds.includes(msg.group_id))
         .sort((a, b) => {
           const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
           const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
@@ -113,7 +86,7 @@ export function useProjectMessages(project) {
     });
 
     return () => unsubscribe();
-  }, [project?.id, project?.name, project?.code, linkedGroupIds]);
+  }, [project?.name, linkedGroupIds]);
 
   // Computed values
   const actionableMessages = messages.filter(m => m.is_actionable && m.status !== 'done');
