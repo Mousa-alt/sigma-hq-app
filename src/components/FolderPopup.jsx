@@ -4,15 +4,11 @@ import { SYNC_WORKER_URL } from '../config';
 import { parseFilename, getFileIcon, detectDocumentType, getDocTypeInfo } from '../utils/documentUtils';
 import FileViewer from './FileViewer';
 
-// Helper to get GCS folder name - combines name + venue to match original sync format
+// Helper to get GCS folder name - uses gcsFolderName field if set, otherwise project.name
 const getGcsFolderName = (project) => {
   if (!project) return '';
-  const name = project.name || '';
-  const venue = project.venue || '';
-  if (venue) {
-    return `${name}-${venue}`.replace(/\s+/g, '_');
-  }
-  return name.replace(/\s+/g, '_');
+  const folderName = project.gcsFolderName || project.name || '';
+  return folderName.replace(/\s+/g, '_');
 };
 
 export default function FolderPopup({ project, folder, title, gcsFolderName: passedGcsFolderName, onClose }) {
