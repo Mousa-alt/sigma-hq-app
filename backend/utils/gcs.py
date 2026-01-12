@@ -1,16 +1,6 @@
 # GCS Operations
-from google.cloud import storage
-from google.auth import default
+from clients import get_bucket, storage_client
 from config import GCS_BUCKET
-
-# Initialize client
-credentials, _ = default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
-storage_client = storage.Client(credentials=credentials)
-
-
-def get_bucket():
-    """Get GCS bucket"""
-    return storage_client.bucket(GCS_BUCKET)
 
 
 def list_blobs(prefix, max_results=None):

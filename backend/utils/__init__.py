@@ -1,5 +1,5 @@
 # Utils package
-from .document import (
+from utils.document import (
     detect_document_type,
     detect_email_type,
     get_document_priority,
@@ -11,8 +11,7 @@ from .document import (
     DOCUMENT_HIERARCHY
 )
 
-from .gcs import (
-    get_bucket,
+from utils.gcs import (
     list_blobs,
     upload_blob,
     download_blob,
@@ -26,7 +25,7 @@ from .gcs import (
 
 __all__ = [
     'detect_document_type',
-    'detect_email_type', 
+    'detect_email_type',
     'get_document_priority',
     'extract_revision',
     'extract_subject',
@@ -34,7 +33,6 @@ __all__ = [
     'is_approved_folder',
     'is_email_folder',
     'DOCUMENT_HIERARCHY',
-    'get_bucket',
     'list_blobs',
     'upload_blob',
     'download_blob',

@@ -1,19 +1,26 @@
 # HTTP Routes
 from flask import jsonify, request, Response
+
+# Absolute imports from root
+from config import GCS_BUCKET
+from clients import get_bucket
 from services.sync import sync_folder, get_project_stats, get_drive_folder_id
 from services.search import search_documents, search_with_ai
-from services.email import classify_email, get_project_emails
-from utils.document import detect_document_type, get_document_priority, is_approved_folder, DOCUMENT_HIERARCHY
-from utils.gcs import get_bucket, list_blobs, list_folders, get_folder_stats, detect_folder_structure
-from config import GCS_BUCKET, SUPPORTED_EXTENSIONS, ARCHIVE_EXTENSIONS, SKIP_EXTENSIONS, MAX_FILE_SIZE_MB
-import json
+from services.email import get_project_emails
+from utils.document import detect_document_type, get_document_priority, is_approved_folder
+from utils.gcs import list_blobs, list_folders
+
 
 def register_routes(app):
     """Register all HTTP routes"""
     
     @app.route('/', methods=['GET'])
     def health():
-        return jsonify({'status': 'ok', 'service': 'sigma-sync-worker', 'version': '7.0-modular'})
+        return jsonify({
+            'status': 'ok',
+            'service': 'sigma-sync-worker',
+            'version': '7.0-modular'
+        })
     
     @app.route('/sync', methods=['POST', 'OPTIONS'])
     def sync():
@@ -32,15 +39,7 @@ def register_routes(app):
             if not folder_id:
                 return _json_response({'error': f'Folder not found: {project_name}'}, 404)
         
-        bucket = get_bucket()
-        config = {
-            'SUPPORTED_EXTENSIONS': SUPPORTED_EXTENSIONS,
-            'ARCHIVE_EXTENSIONS': ARCHIVE_EXTENSIONS,
-            'SKIP_EXTENSIONS': SKIP_EXTENSIONS,
-            'MAX_FILE_SIZE_MB': MAX_FILE_SIZE_MB
-        }
-        
-        result = sync_folder(project_name, folder_id, bucket, config)
+        result = sync_folder(project_name, folder_id)
         return _json_response(result)
     
     @app.route('/stats', methods=['GET', 'OPTIONS'])
@@ -52,8 +51,7 @@ def register_routes(app):
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
-        bucket = get_bucket()
-        result = get_project_stats(project, bucket)
+        result = get_project_stats(project)
         return _json_response(result)
     
     @app.route('/folders', methods=['GET', 'OPTIONS'])
@@ -87,7 +85,8 @@ def register_routes(app):
         
         files = []
         for blob in blobs:
-            if blob.name.endswith('/'): continue
+            if blob.name.endswith('/'):
+                continue
             name = blob.name.split('/')[-1]
             doc_type = detect_document_type(name, blob.name)
             priority, _ = get_document_priority(name, blob.name)
@@ -150,8 +149,7 @@ def register_routes(app):
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
-        bucket = get_bucket()
-        result = get_project_emails(project, bucket)
+        result = get_project_emails(project)
         return _json_response({'emails': result})
     
     @app.route('/latest', methods=['GET', 'OPTIONS'])
@@ -170,7 +168,8 @@ def register_routes(app):
         files = []
         
         for blob in blobs:
-            if blob.name.endswith('/'): continue
+            if blob.name.endswith('/'):
+                continue
             name = blob.name.split('/')[-1]
             detected_type = detect_document_type(name, blob.name)
             
@@ -188,9 +187,8 @@ def register_routes(app):
                 'updated': blob.updated.isoformat() if blob.updated else None
             })
         
-        # Sort by priority then date
-        files.sort(key=lambda x: (-x['priority'], x.get('updated', '') or ''), reverse=False)
-        files.sort(key=lambda x: x.get('updated', '') or '', reverse=True)
+        # Sort by date descending
+        files.sort(key=lambda x: x.get('updated') or '', reverse=True)
         
         return _json_response({'files': files[:limit]})
 
