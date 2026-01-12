@@ -4,7 +4,18 @@ import { SYNC_WORKER_URL } from '../config';
 import { parseFilename, getFileIcon, detectDocumentType, getDocTypeInfo } from '../utils/documentUtils';
 import FileViewer from './FileViewer';
 
-export default function FolderPopup({ project, folder, title, onClose }) {
+// Helper to get GCS folder name - combines name + venue to match original sync format
+const getGcsFolderName = (project) => {
+  if (!project) return '';
+  const name = project.name || '';
+  const venue = project.venue || '';
+  if (venue) {
+    return `${name}-${venue}`.replace(/\s+/g, '_');
+  }
+  return name.replace(/\s+/g, '_');
+};
+
+export default function FolderPopup({ project, folder, title, gcsFolderName: passedGcsFolderName, onClose }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -13,7 +24,8 @@ export default function FolderPopup({ project, folder, title, onClose }) {
   const [currentPath, setCurrentPath] = useState(folder);
   const [pathHistory, setPathHistory] = useState([{ path: folder, title: title }]);
 
-  const projectNameClean = project?.name?.replace(/\s+/g, '_') || '';
+  // Use passed gcsFolderName or calculate it
+  const gcsFolderName = passedGcsFolderName || getGcsFolderName(project);
 
   useEffect(() => {
     loadFiles(currentPath);
@@ -28,7 +40,7 @@ export default function FolderPopup({ project, folder, title, onClose }) {
       const res = await fetch(`${SYNC_WORKER_URL}/files`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: projectNameClean, folderPath })
+        body: JSON.stringify({ projectName: gcsFolderName, folderPath })
       });
       if (!res.ok) throw new Error('Failed to load files');
       const data = await res.json();
@@ -58,7 +70,7 @@ export default function FolderPopup({ project, folder, title, onClose }) {
   const getRelativePath = (fullPath) => {
     if (!fullPath) return '';
     let path = fullPath.replace(/\/$/, '');
-    if (path.startsWith(projectNameClean + '/')) path = path.substring(projectNameClean.length + 1);
+    if (path.startsWith(gcsFolderName + '/')) path = path.substring(gcsFolderName.length + 1);
     return path;
   };
 
