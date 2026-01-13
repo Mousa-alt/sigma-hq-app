@@ -37,7 +37,7 @@ export function useProjectMessages(project) {
           // Exact match only - the mapping is the source of truth
           return mappedProject === projectNameLower;
         })
-        .map(g => g.group_id)
+        .map(g => g.wahaId || g.id)  // Use wahaId (the WAHA chat ID) - this matches message.group_id
         .filter(Boolean);
       
       console.log(`[useProjectMessages] ${project.name}: Found ${linked.length} linked groups`, linked);
