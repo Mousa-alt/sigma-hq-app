@@ -19,7 +19,7 @@ def register_routes(app):
         return jsonify({
             'status': 'ok',
             'service': 'sigma-sync-worker',
-            'version': '7.2-admin',
+            'version': '7.3-stats-fix',
             'firestore': FIRESTORE_ENABLED
         })
     
@@ -43,12 +43,18 @@ def register_routes(app):
         result = sync_folder(project_name, folder_id)
         return _json_response(result)
     
-    @app.route('/stats', methods=['GET', 'OPTIONS'])
+    @app.route('/stats', methods=['GET', 'POST', 'OPTIONS'])
     def stats():
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        project = request.args.get('project')
+        # Support both GET query params and POST JSON body
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            project = data.get('project') or data.get('projectName')
+        else:
+            project = request.args.get('project')
+        
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
@@ -174,12 +180,18 @@ def register_routes(app):
         result = search_with_ai(query, docs)
         return _json_response(result)
     
-    @app.route('/emails', methods=['GET', 'OPTIONS'])
+    @app.route('/emails', methods=['GET', 'POST', 'OPTIONS'])
     def emails():
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        project = request.args.get('project')
+        # Support both GET query params and POST JSON body
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            project = data.get('project') or data.get('projectName')
+        else:
+            project = request.args.get('project')
+        
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
