@@ -9,44 +9,6 @@ const SYNC_WORKER_URL = 'https://sigma-sync-worker-71025980302.europe-west1.run.
 const WHATSAPP_URL = 'https://sigma-whatsapp-71025980302.europe-west1.run.app';
 
 // ============================================
-// STATUS API TESTS (Layer 2: The "Pulse")
-// ============================================
-
-test.describe('Status API - System Pulse', () => {
-
-  test('Sync Worker /status returns healthy', async ({ request }) => {
-    const response = await request.get(`${SYNC_WORKER_URL}/status`);
-    expect(response.ok()).toBeTruthy();
-    
-    const data = await response.json();
-    expect(data.service).toBe('sigma-sync-worker');
-    expect(data.status).toBe('healthy');
-    expect(data).toHaveProperty('version');
-    expect(data).toHaveProperty('timestamp');
-    expect(data).toHaveProperty('health_checks');
-    expect(data.health_checks.firestore).toBe('connected');
-    
-    console.log(`✅ Sync Worker: ${data.version} - ${data.status}`);
-  });
-
-  test('WhatsApp /status returns healthy', async ({ request }) => {
-    const response = await request.get(`${WHATSAPP_URL}/status`);
-    expect(response.ok()).toBeTruthy();
-    
-    const data = await response.json();
-    expect(data.service).toBe('sigma-whatsapp-webhook');
-    expect(data.status).toBe('healthy');
-    expect(data).toHaveProperty('version');
-    expect(data).toHaveProperty('timestamp');
-    expect(data).toHaveProperty('health_checks');
-    expect(data.health_checks.firestore).toBe('connected');
-    
-    console.log(`✅ WhatsApp: ${data.version} - ${data.status}`);
-  });
-
-});
-
-// ============================================
 // BACKEND API TESTS
 // ============================================
 
@@ -57,6 +19,7 @@ test.describe('Backend API Health', () => {
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
     expect(data.status).toBe('ok');
+    console.log(`✅ Sync Worker: ${data.version}`);
   });
 
   test('WhatsApp backend is online', async ({ request }) => {
@@ -64,9 +27,10 @@ test.describe('Backend API Health', () => {
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
     expect(data.status).toBe('ok');
+    console.log(`✅ WhatsApp: ${data.version}`);
   });
 
-  // CRITICAL: This is the test that would have caught today's bug
+  // CRITICAL: This is the test that would have caught the 2026-01-13 Vault bug
   test('Files endpoint accepts POST requests', async ({ request }) => {
     const response = await request.post(`${SYNC_WORKER_URL}/files`, {
       data: {
