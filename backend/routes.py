@@ -1,5 +1,6 @@
 # HTTP Routes
 from flask import jsonify, request, Response
+from datetime import datetime
 
 # Absolute imports from root
 from config import GCS_BUCKET, APP_ID
@@ -10,6 +11,9 @@ from services.email import get_project_emails
 from utils.document import detect_document_type, get_document_priority, is_approved_folder
 from utils.gcs import list_blobs, list_folders
 
+# Version - UPDATE THIS ON EVERY CHANGE
+SERVICE_VERSION = '7.4-status-api'
+
 
 def register_routes(app):
     """Register all HTTP routes"""
@@ -19,8 +23,49 @@ def register_routes(app):
         return jsonify({
             'status': 'ok',
             'service': 'sigma-sync-worker',
-            'version': '7.3-stats-fix',
+            'version': SERVICE_VERSION,
             'firestore': FIRESTORE_ENABLED
+        })
+    
+    @app.route('/status', methods=['GET'])
+    def status():
+        """Standardized status endpoint for AI agents and monitoring"""
+        health_checks = {}
+        
+        # Check Firestore
+        try:
+            if FIRESTORE_ENABLED and firestore_client:
+                # Light check - just verify connection
+                firestore_client.collection('artifacts').document(APP_ID).get()
+                health_checks['firestore'] = 'connected'
+            else:
+                health_checks['firestore'] = 'disabled'
+        except Exception as e:
+            health_checks['firestore'] = f'error: {str(e)[:50]}'
+        
+        # Check GCS
+        try:
+            bucket = get_bucket()
+            if bucket:
+                # Light check - just verify bucket exists
+                bucket.exists()
+                health_checks['gcs'] = 'connected'
+            else:
+                health_checks['gcs'] = 'not configured'
+        except Exception as e:
+            health_checks['gcs'] = f'error: {str(e)[:50]}'
+        
+        # Determine overall status
+        all_healthy = all(v in ['connected', 'disabled'] for v in health_checks.values())
+        
+        return jsonify({
+            'service': 'sigma-sync-worker',
+            'version': SERVICE_VERSION,
+            'status': 'healthy' if all_healthy else 'degraded',
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'environment': 'production',
+            'capabilities': ['sync', 'files', 'search', 'ai-search', 'emails'],
+            'health_checks': health_checks
         })
     
     @app.route('/sync', methods=['POST', 'OPTIONS'])
