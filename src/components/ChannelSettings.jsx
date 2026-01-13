@@ -45,6 +45,11 @@ const generateGroupId = (name) => {
   return normalizeGroupName(name).replace(/[^a-z0-9]/g, '_');
 };
 
+// Helper to get the WAHA chat ID from a group (checks both field names)
+const getWahaChatId = (group) => {
+  return group.wahaId || group.group_id || null;
+};
+
 export default function ChannelSettings({ projects }) {
   const [activeTab, setActiveTab] = useState('whatsapp');
   const [groups, setGroups] = useState([]);
@@ -283,32 +288,39 @@ export default function ChannelSettings({ projects }) {
     }
   };
 
-  // Check if a group already exists by name or wahaId
-  const groupExists = (groupName, wahaId = null) => {
+  // Check if a group already exists by name or WAHA chat ID
+  const groupExists = (groupName, wahaChatId = null) => {
     const normalizedName = normalizeGroupName(groupName);
     return groups.some(g => {
       // Check by normalized name
       if (normalizeGroupName(g.name) === normalizedName) return true;
-      // Check by wahaId if provided
-      if (wahaId && g.wahaId === wahaId) return true;
-      // Check by generated ID
+      // Check by WAHA chat ID if provided (check both field names)
+      if (wahaChatId) {
+        const existingWahaChatId = getWahaChatId(g);
+        if (existingWahaChatId === wahaChatId) return true;
+      }
+      // Check by generated document ID
       if (g.id === generateGroupId(groupName)) return true;
       return false;
     });
   };
 
-  const addGroup = async (groupName, wahaId = null) => {
+  const addGroup = async (groupName, wahaChatId = null) => {
     // Check for duplicates before adding
-    if (groupExists(groupName, wahaId)) {
+    if (groupExists(groupName, wahaChatId)) {
       console.log(`Group "${groupName}" already exists, skipping...`);
       return; // Silently skip - group already exists
     }
     
-    const groupId = generateGroupId(groupName);
+    const groupDocId = generateGroupId(groupName);
     const newGroup = {
-      id: groupId,
+      id: groupDocId,
       name: groupName,
-      wahaId: wahaId,
+      // Store WAHA chat ID in BOTH fields for compatibility:
+      // - group_id: used by backend (auto_add_group in firestore_ops.py)
+      // - wahaId: used by older frontend code
+      group_id: wahaChatId,
+      wahaId: wahaChatId,
       project: null,
       type: 'internal',
       priority: 'medium',
@@ -317,7 +329,7 @@ export default function ChannelSettings({ projects }) {
     };
     
     try {
-      const groupRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_groups', groupId);
+      const groupRef = doc(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'whatsapp_groups', groupDocId);
       await setDoc(groupRef, newGroup);
     } catch (err) {
       console.error('Error adding group:', err);
@@ -379,8 +391,9 @@ export default function ChannelSettings({ projects }) {
     return !groups.some(g => {
       // Check by normalized name
       if (normalizeGroupName(g.name) === normalizedWahaName) return true;
-      // Check by wahaId
-      if (g.wahaId === wg.id) return true;
+      // Check by WAHA chat ID (check both field names)
+      const existingWahaChatId = getWahaChatId(g);
+      if (existingWahaChatId === wg.id) return true;
       return false;
     });
   });
