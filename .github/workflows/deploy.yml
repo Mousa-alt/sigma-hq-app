@@ -1,0 +1,52 @@
+name: Test and Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run Tests
+        run: npm test
+        env:
+          CI: true
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Deploy Sync Worker
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: sigma-sync-worker
+          source: ./backend
+          region: europe-west1
+      
+      - name: Deploy WhatsApp
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: sigma-whatsapp
+          source: ./backend-whatsapp-webhook
+          region: europe-west1
+      
+      - name: Deploy Email
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: sigma-email-sync
+          source: ./backend-email
+          region: europe-west1
