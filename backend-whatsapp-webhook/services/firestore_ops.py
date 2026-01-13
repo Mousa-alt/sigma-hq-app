@@ -21,6 +21,13 @@ def get_data_collection(collection_name):
 # GROUP OPERATIONS
 # =============================================================================
 
+def normalize_group_name(name):
+    """Normalize group name for consistent comparison"""
+    if not name:
+        return ''
+    return name.strip().lower().replace('  ', ' ')
+
+
 def get_cached_group_name(group_id):
     """Get cached group name from Firestore"""
     try:
@@ -45,6 +52,7 @@ def get_group_mappings():
             data = doc.to_dict()
             group_name = data.get('name', '')
             group_id = data.get('group_id', '')
+            waha_id = data.get('wahaId', '')
             
             mapping_data = {
                 'project': data.get('project'),
@@ -57,14 +65,40 @@ def get_group_mappings():
                 mappings[group_name.lower()] = mapping_data
             if group_id:
                 mappings[group_id.lower()] = {**mapping_data, 'name': group_name}
+            if waha_id:
+                mappings[waha_id.lower()] = {**mapping_data, 'name': group_name}
     except Exception as e:
         print(f"Error loading group mappings: {e}")
     return mappings
 
 
 def auto_add_group(group_name, group_id):
-    """Auto-add new group to mappings"""
+    """Auto-add new group to mappings with deduplication check"""
     try:
+        # Check for existing group by normalized name or group_id
+        normalized_name = normalize_group_name(group_name)
+        
+        existing_docs = get_data_collection('whatsapp_groups').stream()
+        for doc in existing_docs:
+            data = doc.to_dict()
+            # Check by normalized name
+            if normalize_group_name(data.get('name', '')) == normalized_name:
+                print(f"Group already exists (by name): {group_name}")
+                # Update group_id/wahaId if not set
+                updates = {}
+                if group_id and not data.get('group_id'):
+                    updates['group_id'] = group_id
+                if group_id and not data.get('wahaId'):
+                    updates['wahaId'] = group_id
+                if updates:
+                    doc.reference.update(updates)
+                return
+            # Check by group_id
+            if data.get('group_id') == group_id or data.get('wahaId') == group_id:
+                print(f"Group already exists (by ID): {group_id}")
+                return
+        
+        # Create new group document
         group_doc_id = re.sub(r'[^a-zA-Z0-9]', '_', group_id)[:50]
         group_ref = get_data_collection('whatsapp_groups').document(group_doc_id)
         
@@ -73,6 +107,7 @@ def auto_add_group(group_name, group_id):
             group_ref.set({
                 'name': group_name,
                 'group_id': group_id,
+                'wahaId': group_id,  # Store in both fields for compatibility
                 'project': None,
                 'type': 'internal',
                 'priority': 'medium',
@@ -84,11 +119,131 @@ def auto_add_group(group_name, group_id):
             # Update name if current name is just numbers
             existing_data = existing.to_dict()
             existing_name = existing_data.get('name', '')
+            updates = {}
             if group_name and not group_name.replace('@g.us', '').isdigit() \
                and existing_name.replace('@g.us', '').isdigit():
-                group_ref.update({'name': group_name})
+                updates['name'] = group_name
+            # Ensure both ID fields are set
+            if not existing_data.get('wahaId'):
+                updates['wahaId'] = group_id
+            if not existing_data.get('group_id'):
+                updates['group_id'] = group_id
+            if updates:
+                group_ref.update(updates)
     except Exception as e:
         print(f"Error auto-adding group: {e}")
+
+
+def cleanup_duplicate_groups():
+    """Find and remove duplicate WhatsApp groups, keeping ones with project mappings"""
+    results = {
+        'total_groups': 0,
+        'duplicates_found': 0,
+        'duplicates_removed': 0,
+        'kept': [],
+        'removed': []
+    }
+    
+    try:
+        # Get all groups
+        docs = list(get_data_collection('whatsapp_groups').stream())
+        results['total_groups'] = len(docs)
+        
+        # Group by normalized name
+        groups_by_name = {}
+        for doc in docs:
+            data = doc.to_dict()
+            data['_doc_id'] = doc.id
+            data['_doc_ref'] = doc.reference
+            
+            norm_name = normalize_group_name(data.get('name', ''))
+            if norm_name:
+                if norm_name not in groups_by_name:
+                    groups_by_name[norm_name] = []
+                groups_by_name[norm_name].append(data)
+        
+        # Find duplicates and decide which to keep
+        for norm_name, group_list in groups_by_name.items():
+            if len(group_list) > 1:
+                results['duplicates_found'] += len(group_list) - 1
+                
+                # Sort to keep: 1) has project mapping, 2) oldest createdAt
+                def sort_key(g):
+                    has_project = 1 if g.get('project') else 0
+                    created = g.get('createdAt', '9999')
+                    return (-has_project, created)
+                
+                group_list.sort(key=sort_key)
+                
+                # Keep the first one (best candidate)
+                keeper = group_list[0]
+                results['kept'].append({
+                    'name': keeper.get('name'),
+                    'doc_id': keeper['_doc_id'],
+                    'project': keeper.get('project'),
+                    'reason': 'has project mapping' if keeper.get('project') else 'oldest'
+                })
+                
+                # Delete the rest
+                for dup in group_list[1:]:
+                    dup['_doc_ref'].delete()
+                    results['duplicates_removed'] += 1
+                    results['removed'].append({
+                        'name': dup.get('name'),
+                        'doc_id': dup['_doc_id'],
+                        'project': dup.get('project')
+                    })
+                    print(f"Deleted duplicate: {dup.get('name')} (doc_id: {dup['_doc_id']})")
+        
+        print(f"Cleanup complete: {results['duplicates_removed']} duplicates removed")
+        
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+        results['error'] = str(e)
+    
+    return results
+
+
+def sync_group_id_fields():
+    """Ensure all groups have both group_id and wahaId fields populated"""
+    results = {
+        'total_groups': 0,
+        'updated': 0,
+        'already_synced': 0
+    }
+    
+    try:
+        docs = get_data_collection('whatsapp_groups').stream()
+        
+        for doc in docs:
+            results['total_groups'] += 1
+            data = doc.to_dict()
+            
+            group_id = data.get('group_id')
+            waha_id = data.get('wahaId')
+            
+            updates = {}
+            
+            # If one exists but not the other, sync them
+            if group_id and not waha_id:
+                updates['wahaId'] = group_id
+            elif waha_id and not group_id:
+                updates['group_id'] = waha_id
+            
+            if updates:
+                doc.reference.update(updates)
+                results['updated'] += 1
+                print(f"Synced IDs for: {data.get('name')}")
+            else:
+                results['already_synced'] += 1
+        
+        print(f"ID sync complete: {results['updated']} groups updated")
+        
+    except Exception as e:
+        print(f"Error syncing IDs: {e}")
+        results['error'] = str(e)
+    
+    return results
 
 
 # =============================================================================
