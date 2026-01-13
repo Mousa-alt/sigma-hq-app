@@ -1,5 +1,6 @@
 # Email Backend HTTP Routes
 from flask import jsonify, request, Response
+from datetime import datetime
 
 # Absolute imports
 from config import GCS_BUCKET, APP_ID, IMAP_SERVER, IMAP_PORT, EMAIL_USER, EMAIL_PASS, PROJECT_ALIASES
@@ -7,6 +8,9 @@ from clients import db, ai_model, VERTEX_AI_ENABLED
 from utils.imap import connect_imap, fetch_emails
 from utils.gcs import save_email_to_gcs
 from services.classifier import classify_email_to_project, get_projects_from_firestore
+
+# Version - UPDATE THIS ON EVERY CHANGE
+SERVICE_VERSION = '4.1-status-api'
 
 
 def register_routes(app):
@@ -17,8 +21,52 @@ def register_routes(app):
         return jsonify({
             'status': 'ok',
             'service': 'sigma-email-sync',
-            'version': '4.0-modular',
+            'version': SERVICE_VERSION,
             'ai_enabled': VERTEX_AI_ENABLED
+        })
+    
+    @app.route('/status', methods=['GET'])
+    def status():
+        """Standardized status endpoint for AI agents and monitoring"""
+        health_checks = {}
+        
+        # Check Firestore
+        try:
+            if db:
+                db.collection('artifacts').document(APP_ID).get()
+                health_checks['firestore'] = 'connected'
+            else:
+                health_checks['firestore'] = 'not configured'
+        except Exception as e:
+            health_checks['firestore'] = f'error: {str(e)[:50]}'
+        
+        # Check IMAP configuration
+        if EMAIL_USER and EMAIL_PASS and IMAP_SERVER:
+            try:
+                # Light check - just verify we can connect
+                mail = connect_imap(IMAP_SERVER, IMAP_PORT, EMAIL_USER, EMAIL_PASS)
+                mail.logout()
+                health_checks['imap'] = 'connected'
+            except Exception as e:
+                health_checks['imap'] = f'error: {str(e)[:50]}'
+        else:
+            health_checks['imap'] = 'not configured'
+        
+        # Check Vertex AI
+        health_checks['vertex_ai'] = 'ready' if VERTEX_AI_ENABLED else 'disabled'
+        
+        # Determine overall status
+        firestore_ok = health_checks.get('firestore') == 'connected'
+        imap_ok = health_checks.get('imap') in ['connected', 'not configured']
+        
+        return jsonify({
+            'service': 'sigma-email-sync',
+            'version': SERVICE_VERSION,
+            'status': 'healthy' if firestore_ok and imap_ok else 'degraded',
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'environment': 'production',
+            'capabilities': ['email-fetch', 'email-classify', 'gcs-storage'],
+            'health_checks': health_checks
         })
     
     @app.route('/fetch', methods=['POST', 'OPTIONS'])
