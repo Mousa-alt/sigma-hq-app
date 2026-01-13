@@ -1,6 +1,7 @@
 steps:
-  # Build and deploy from backend folder
+  # Step 1: Deploy backend
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-backend'
     entrypoint: 'bash'
     args:
       - '-c'
@@ -14,5 +15,32 @@ steps:
           --timeout 540 \
           --set-env-vars="GCS_BUCKET=sigma-docs-repository"
 
+  # Step 2: Wait for deployment to stabilize
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'wait-for-deploy'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Waiting 30 seconds for deployment to stabilize..."
+        sleep 30
+
+  # Step 3: Run smoke tests - BUILD FAILS if tests fail
+  - name: 'python:3.11-slim'
+    id: 'smoke-tests'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install requests --quiet
+        python tests/smoke_test.py
+        if [ $? -ne 0 ]; then
+          echo "❌ SMOKE TESTS FAILED - Backend may be broken!"
+          exit 1
+        fi
+        echo "✅ All smoke tests passed"
+
 options:
   logging: CLOUD_LOGGING_ONLY
+
+timeout: '1200s'
