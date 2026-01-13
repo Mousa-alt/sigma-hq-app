@@ -9,8 +9,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Pending
-- Backend refactoring: Split main.py into modules (in progress)
 - New 10-folder project structure implementation
+
+---
+
+## [2.1.1] - 2026-01-13
+
+### Fixed
+- **CRITICAL:** Vault showing 0 documents - backend modularization broke `/files`, `/folders`, `/latest` endpoints
+  - Root cause: Routes were changed to GET-only but frontend sends POST requests
+  - Fix: Backend now accepts both GET and POST methods
+  - Added support for both `project`/`projectName` and `path`/`folderPath` parameter names
+
+### Added
+- Smoke test script (`tests/smoke_test.py`) to catch breaking changes before deployment
+- Admin endpoints for WhatsApp group maintenance:
+  - `POST /admin/cleanup-groups` - Remove duplicate groups
+  - `POST /admin/sync-group-ids` - Sync group_id and wahaId fields
+
+### Lessons Learned
+- Backend refactoring MUST be tested with frontend before deployment
+- Parameter names must be consistent between frontend and backend
+- Need automated integration tests, not just documentation
 
 ---
 
@@ -105,15 +125,29 @@ If you have existing groups that were created before this update, run this Fires
 
 ---
 
+## Known Issues Log
+
+### Pattern: Backend changes break frontend
+- **2026-01-13:** Backend modularization changed `/files` to GET-only, but frontend sends POST
+- **Prevention:** Always test frontend after backend changes. Run `python tests/smoke_test.py`
+
+### Pattern: Field name mismatches
+- **2026-01-13:** `group_id` vs `wahaId` caused duplicate WhatsApp groups
+- **Prevention:** Document all field names. Check both frontend and backend use same names.
+
+---
+
 ## Development Guidelines
 
 ### Before Making Changes
-1. Review TESTING_CHECKLIST.md
-2. Create feature branch if change is significant
-3. Test locally before pushing to main
-4. Document any database schema changes here
+1. Run `python tests/smoke_test.py` to verify current state
+2. Review TESTING_CHECKLIST.md
+3. Create feature branch if change is significant
+4. Test locally before pushing to main
+5. Document any database schema changes here
 
 ### After Deployment
-1. Verify all checklist items pass
-2. Update this changelog
-3. Monitor for errors in Cloud Run logs
+1. Run `python tests/smoke_test.py` again to verify deployment
+2. Verify all checklist items pass manually
+3. Update this changelog
+4. Monitor for errors in Cloud Run logs
