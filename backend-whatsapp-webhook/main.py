@@ -1,4 +1,4 @@
-# WhatsApp Webhook - v4.14 Modular Architecture
+# WhatsApp Webhook - v4.15 with Admin Endpoints
 # 
 # This is the main entry point. All logic is in separate modules:
 # - config.py: Environment variables and constants
@@ -24,7 +24,7 @@ from config import (
 from services.waha_api import get_group_name_from_waha, check_waha_session
 from services.firestore_ops import (
     get_cached_group_name, get_group_mappings, get_registered_projects,
-    auto_add_group, save_message
+    auto_add_group, save_message, cleanup_duplicate_groups, sync_group_id_fields
 )
 from services.file_delivery import get_short_url_redirect
 
@@ -42,6 +42,8 @@ def whatsapp_webhook(request):
     - GET /waha/groups: List WhatsApp groups (proxy)
     - POST /waha/groups/create: Create WhatsApp group (proxy)
     - GET /waha/session: Check WAHA session status
+    - POST /admin/cleanup-groups: Remove duplicate groups
+    - POST /admin/sync-group-ids: Sync group_id and wahaId fields
     - POST /: Process incoming webhook
     """
     
@@ -66,6 +68,36 @@ def whatsapp_webhook(request):
             return redirect(signed_url, code=302)
         else:
             return (jsonify({'error': err or 'Link not found'}), 404, headers)
+    
+    # =========================================================================
+    # ADMIN: /admin/cleanup-groups - Remove duplicate groups
+    # =========================================================================
+    if path == '/admin/cleanup-groups' and request.method == 'POST':
+        try:
+            results = cleanup_duplicate_groups()
+            return (jsonify({
+                'success': True,
+                'message': f"Cleaned up {results['duplicates_removed']} duplicate groups",
+                **results
+            }), 200, headers)
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+            return (jsonify({'error': str(e)}), 500, headers)
+    
+    # =========================================================================
+    # ADMIN: /admin/sync-group-ids - Sync group_id and wahaId fields
+    # =========================================================================
+    if path == '/admin/sync-group-ids' and request.method == 'POST':
+        try:
+            results = sync_group_id_fields()
+            return (jsonify({
+                'success': True,
+                'message': f"Synced {results['updated']} groups",
+                **results
+            }), 200, headers)
+        except Exception as e:
+            print(f"Sync error: {e}")
+            return (jsonify({'error': str(e)}), 500, headers)
     
     # =========================================================================
     # WAHA PROXY: /waha/groups - List all WhatsApp groups
@@ -160,13 +192,19 @@ def whatsapp_webhook(request):
     # =========================================================================
     if request.method == 'GET':
         return (jsonify({
-            'status': 'WhatsApp Webhook v4.14 - Modular',
+            'status': 'WhatsApp Webhook v4.15 - With Admin',
             'waha_plus': WAHA_PLUS_ENABLED,
             'features': [
                 'modular_architecture',
+                'admin_cleanup',
+                'admin_sync_ids',
                 'done', 'assign', 'escalate', 'defer',
                 'shortcuts', 'digest', 'vertex_search',
                 'inline_view', 'revision_sort', 'short_urls', 'waha_proxy'
+            ],
+            'admin_endpoints': [
+                'POST /admin/cleanup-groups',
+                'POST /admin/sync-group-ids'
             ],
             'waha_url': WAHA_API_URL,
             'vertex_ai': VERTEX_AI_ENABLED,
