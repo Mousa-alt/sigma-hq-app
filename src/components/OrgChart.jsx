@@ -5,48 +5,48 @@ import { APP_ID, COLORS, BRANDING } from '../config';
 import Icon from './Icon';
 import * as d3 from 'd3-hierarchy';
 
-// Position hierarchy - Sigma navy gradient (dark to light)
+// Position hierarchy - Professional color scheme
 const POSITIONS = [
   // Management
-  { id: 'executive', label: 'Executive Manager', level: 0, color: '#0a1628', bgColor: '#f1f5f9', department: 'Management' },
+  { id: 'executive', label: 'Executive Manager', level: 0, color: '#000000', bgColor: '#f1f5f9', department: 'Management' },
   
-  // Technical Office - Navy gradient
-  { id: 'head', label: 'Head of Technical Office', level: 1, color: '#0f2744', bgColor: '#f1f5f9', department: 'Technical Office' },
-  { id: 'team_leader', label: 'Team Leader', level: 2, color: '#164e8a', bgColor: '#f1f5f9', department: 'Technical Office' },
-  { id: 'senior', label: 'Senior TOE', level: 3, color: '#1d6fc2', bgColor: '#f8fafc', department: 'Technical Office' },
-  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#3490dc', bgColor: '#f8fafc', department: 'Technical Office' },
-  { id: 'junior', label: 'Junior TOE', level: 5, color: '#64b5f6', bgColor: '#f8fafc', department: 'Technical Office' },
-  { id: 'trainee', label: 'Trainee', level: 6, color: '#90caf9', bgColor: '#f8fafc', department: 'Technical Office' },
+  // Technical Office
+  { id: 'head', label: 'Head of Technical Office', level: 1, color: '#000000', bgColor: '#f1f5f9', department: 'Technical Office' },
+  { id: 'team_leader', label: 'Team Leader', level: 2, color: '#1e3a8a', bgColor: '#f1f5f9', department: 'Technical Office' },
+  { id: 'senior', label: 'Senior TOE', level: 3, color: '#2563eb', bgColor: '#f8fafc', department: 'Technical Office' },
+  { id: 'toe', label: 'Technical Office Engineer', level: 4, color: '#60a5fa', bgColor: '#f8fafc', department: 'Technical Office' },
+  { id: 'junior', label: 'Junior TOE', level: 5, color: '#166534', bgColor: '#f8fafc', department: 'Technical Office' },
+  { id: 'trainee', label: 'Trainee', level: 6, color: '#15803d', bgColor: '#f8fafc', department: 'Technical Office' },
   
-  // Planning - Slate
-  { id: 'planning_head', label: 'Head of Planning', level: 2, color: '#334155', bgColor: '#f8fafc', department: 'Technical Office' },
-  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 3, color: '#475569', bgColor: '#f8fafc', department: 'Technical Office' },
-  { id: 'planning_engineer', label: 'Planning Engineer', level: 4, color: '#64748b', bgColor: '#f8fafc', department: 'Technical Office' },
+  // Planning
+  { id: 'planning_head', label: 'Head of Planning', level: 2, color: '#1e3a8a', bgColor: '#f8fafc', department: 'Technical Office' },
+  { id: 'planning_senior', label: 'Senior Planning Engineer', level: 3, color: '#1e3a8a', bgColor: '#f8fafc', department: 'Technical Office' },
+  { id: 'planning_engineer', label: 'Planning Engineer', level: 4, color: '#3b82f6', bgColor: '#f8fafc', department: 'Technical Office' },
   
-  // Project Management - Indigo
-  { id: 'senior_pm', label: 'Senior Project Manager', level: 1, color: '#3730a3', bgColor: '#f8fafc', department: 'Project Management' },
-  { id: 'pm', label: 'Project Manager', level: 2, color: '#4f46e5', bgColor: '#f8fafc', department: 'Project Management' },
+  // Project Management
+  { id: 'senior_pm', label: 'Senior Project Manager', level: 1, color: '#312e81', bgColor: '#f8fafc', department: 'Project Management' },
+  { id: 'pm', label: 'Project Manager', level: 2, color: '#4338ca', bgColor: '#f8fafc', department: 'Project Management' },
   
-  // Site - Emerald
-  { id: 'site_manager', label: 'Site Manager', level: 2, color: '#047857', bgColor: '#f8fafc', department: 'Site' },
-  { id: 'site_engineer', label: 'Site Engineer', level: 3, color: '#059669', bgColor: '#f8fafc', department: 'Site' },
-  { id: 'supervisor', label: 'Supervisor', level: 4, color: '#10b981', bgColor: '#f8fafc', department: 'Site' },
+  // Site
+  { id: 'site_manager', label: 'Site Manager', level: 2, color: '#14532d', bgColor: '#f8fafc', department: 'Site' },
+  { id: 'site_engineer', label: 'Site Engineer', level: 3, color: '#166534', bgColor: '#f8fafc', department: 'Site' },
+  { id: 'supervisor', label: 'Supervisor', level: 4, color: '#15803d', bgColor: '#f8fafc', department: 'Site' },
   
-  // MEP - Rose
-  { id: 'mep_team_leader', label: 'MEP Team Leader', level: 2, color: '#9f1239', bgColor: '#f8fafc', department: 'MEP' },
-  { id: 'mep_senior', label: 'Senior MEP Engineer', level: 3, color: '#be123c', bgColor: '#f8fafc', department: 'MEP' },
-  { id: 'mep_toe', label: 'MEP Technical Office Engineer', level: 4, color: '#e11d48', bgColor: '#f8fafc', department: 'MEP' },
-  { id: 'mep_junior', label: 'Junior MEP Engineer', level: 5, color: '#fb7185', bgColor: '#f8fafc', department: 'MEP' },
+  // MEP
+  { id: 'mep_team_leader', label: 'MEP Team Leader', level: 2, color: '#7f1d1d', bgColor: '#f8fafc', department: 'MEP' },
+  { id: 'mep_senior', label: 'Senior MEP Engineer', level: 3, color: '#991b1b', bgColor: '#f8fafc', department: 'MEP' },
+  { id: 'mep_toe', label: 'MEP Technical Office Engineer', level: 4, color: '#b91c1c', bgColor: '#f8fafc', department: 'MEP' },
+  { id: 'mep_junior', label: 'Junior MEP Engineer', level: 5, color: '#dc2626', bgColor: '#f8fafc', department: 'MEP' },
 ];
 
 const DEPARTMENTS = ['Management', 'Technical Office', 'Project Management', 'Site', 'MEP'];
 
 const DEPARTMENT_COLORS = {
-  'Management': '#0a1628',
-  'Technical Office': '#0f2744',
-  'Project Management': '#3730a3',
-  'Site': '#047857',
-  'MEP': '#9f1239'
+  'Management': '#000000',
+  'Technical Office': '#000000',
+  'Project Management': '#312e81',
+  'Site': '#14532d',
+  'MEP': '#7f1d1d'
 };
 
 export default function OrgChart({ projects }) {
