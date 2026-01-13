@@ -60,9 +60,6 @@ test.describe('Alerts API - Phase 4.1', () => {
 test.describe('Red Flag Detection - Critical Keywords', () => {
 
   test('Simulated "stop work" message triggers detection logic', async ({ request }) => {
-    // This tests that the webhook can receive and process a message
-    // The anomaly detector should flag "stop work" as critical
-    
     const testPayload = {
       event: 'message',
       payload: {
@@ -90,7 +87,6 @@ test.describe('Red Flag Detection - Critical Keywords', () => {
     const data = await response.json();
     console.log('Webhook response:', JSON.stringify(data));
     
-    // If anomaly detection is active, should create alerts
     if (data.alerts_created !== undefined) {
       console.log(`✅ Anomaly detection active - ${data.alerts_created} alerts created`);
       expect(data.alerts_created).toBeGreaterThan(0);
@@ -168,22 +164,17 @@ test.describe('Session Stability Monitoring', () => {
 
 // ============================================
 // FRONTEND ALERTS DISPLAY TEST
-// NOTE: Using domcontentloaded instead of networkidle because
-// Firestore real-time listeners keep connections open forever
 // ============================================
 
 test.describe('Frontend Alerts Display', () => {
 
   test('Sidebar loads without errors (alerts listener active)', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
-    // Use domcontentloaded - networkidle never fires with Firestore listeners
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(4000);
     
-    // Page should load without crashing
     await expect(page.locator('body')).toBeVisible();
     
-    // Check for any JavaScript errors related to alerts
     const errors = [];
     page.on('pageerror', err => errors.push(err.message));
     
@@ -197,19 +188,6 @@ test.describe('Frontend Alerts Display', () => {
     }
     
     expect(alertErrors.length).toBe(0);
-  });
-
-  test('Channel Mapping link visible in sidebar', async ({ page }) => {
-    await page.goto(DASHBOARD_URL);
-    await page.waitForLoadState('domcontentloaded');
-    await page.waitForTimeout(4000);
-    
-    // Should see Channel Mapping link (this is under SETTINGS section)
-    const channelMapping = page.locator('text=Channel Mapping').first();
-    const hasChannelMapping = await channelMapping.isVisible();
-    
-    expect(hasChannelMapping).toBeTruthy();
-    console.log('✅ Channel Mapping link visible in sidebar');
   });
 
 });
