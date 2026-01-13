@@ -1,4 +1,4 @@
-# WhatsApp Webhook - v4.17 with Red Flag Alerts (Phase 4.1)
+# WhatsApp Webhook - v4.18 (Spam Detection Removed)
 # 
 # This is the main entry point. All logic is in separate modules:
 # - config.py: Environment variables and constants
@@ -8,7 +8,7 @@
 # - services/waha_api.py: WhatsApp API calls
 # - services/vertex_search.py: Document search
 # - services/file_delivery.py: File sending with signed URLs
-# - services/anomaly_detector.py: Red flag & safety monitoring
+# - services/anomaly_detector.py: Red flag & safety monitoring (NO SPAM DETECTION)
 # - utils/revision_parser.py: Revision sorting
 
 import functions_framework
@@ -50,8 +50,8 @@ def whatsapp_webhook(request):
     - GET /waha/session: Check WAHA session status
     - POST /admin/cleanup-groups: Remove duplicate groups
     - POST /admin/sync-group-ids: Sync group_id and wahaId fields
-    - GET /alerts: Get active alerts (Phase 4.1)
-    - POST /alerts/{id}/acknowledge: Acknowledge an alert (Phase 4.1)
+    - GET /alerts: Get active alerts
+    - POST /alerts/{id}/acknowledge: Acknowledge an alert
     - POST /: Process incoming webhook
     """
     
@@ -78,7 +78,7 @@ def whatsapp_webhook(request):
             return (jsonify({'error': err or 'Link not found'}), 404, headers)
     
     # =========================================================================
-    # ALERTS API: GET /alerts - Get active alerts (Phase 4.1)
+    # ALERTS API: GET /alerts - Get active alerts
     # =========================================================================
     if path == '/alerts' and request.method == 'GET':
         try:
@@ -93,7 +93,7 @@ def whatsapp_webhook(request):
             return (jsonify({'error': str(e)}), 500, headers)
     
     # =========================================================================
-    # ALERTS API: POST /alerts/{id}/acknowledge - Acknowledge alert (Phase 4.1)
+    # ALERTS API: POST /alerts/{id}/acknowledge - Acknowledge alert
     # =========================================================================
     if path.startswith('/alerts/') and path.endswith('/acknowledge') and request.method == 'POST':
         try:
@@ -235,12 +235,11 @@ def whatsapp_webhook(request):
         return (jsonify({
             'status': 'ok',
             'service': 'WhatsApp Webhook',
-            'version': '4.17-red-flag-alerts',
+            'version': '4.18-no-spam-detection',
             'waha_plus': WAHA_PLUS_ENABLED,
             'features': [
                 'modular_architecture',
-                'red_flag_alerts',
-                'critical_keyword_detection',
+                'critical_keyword_alerts',
                 'session_monitoring',
                 'delivery_tracking',
                 'admin_cleanup',
@@ -270,9 +269,7 @@ def whatsapp_webhook(request):
             event = data.get('event', '')
             payload = data.get('payload', {})
             
-            # =====================================================
-            # PHASE 4.1: Process ALL events through anomaly detector
-            # =====================================================
+            # Process events through anomaly detector (critical keywords & session only)
             alert_ids = process_webhook_for_anomalies(event, payload)
             if alert_ids:
                 print(f"🚨 Created {len(alert_ids)} alerts for event: {event}")
@@ -301,7 +298,6 @@ def whatsapp_webhook(request):
             # Get group name
             group_name = ''
             if is_group:
-                # Try cached first, then Waha API
                 group_name = get_cached_group_name(chat_id)
                 if not group_name or group_name.replace('@g.us', '').isdigit():
                     waha_name = get_group_name_from_waha(chat_id)
