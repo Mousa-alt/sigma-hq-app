@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { COLORS, BRANDING, WHATSAPP_WEBHOOK_URL } from '../config';
 import { db } from '../firebase';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 
 export default function Sidebar({ 
   projects, 
@@ -18,8 +18,6 @@ export default function Sidebar({
   onLogout
 }) {
   const [projectBadges, setProjectBadges] = useState({});
-  const [activeAlerts, setActiveAlerts] = useState([]);
-  const [criticalAlert, setCriticalAlert] = useState(null);
 
   // Real-time badges from both WhatsApp AND Email
   useEffect(() => {
@@ -74,75 +72,15 @@ export default function Sidebar({
     };
   }, []);
 
-  // =========================================================================
-  // PHASE 4.1: Real-time alerts listener
-  // =========================================================================
-  useEffect(() => {
-    const alertsRef = collection(db, 'artifacts', 'sigma-hq-production', 'public', 'data', 'alerts');
-    const activeQuery = query(alertsRef, where('status', '==', 'active'));
-    
-    const unsubAlerts = onSnapshot(activeQuery, (snapshot) => {
-      const alerts = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      setActiveAlerts(alerts);
-      
-      // Find most severe active alert for notification
-      const critical = alerts.find(a => a.severity === 'critical');
-      const high = alerts.find(a => a.severity === 'high');
-      setCriticalAlert(critical || high || null);
-    }, (error) => {
-      console.error('Alerts listener error:', error);
-    });
-    
-    return () => unsubAlerts();
-  }, []);
-
-  // Count alerts by severity
-  const criticalCount = activeAlerts.filter(a => a.severity === 'critical').length;
-  const highCount = activeAlerts.filter(a => a.severity === 'high').length;
-  const totalAlertCount = activeAlerts.length;
-
   return (
     <aside 
       className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} flex flex-col text-white shadow-2xl`} 
       style={{ backgroundColor: COLORS.navy }}
     >
-      {/* Logo - aligned left */}
+      {/* Logo */}
       <div className="px-5 py-5 border-b border-white/5 flex justify-start">
         <img src={BRANDING.logoWhite} alt="Sigma" className="h-12 w-auto" />
       </div>
-
-      {/* ================================================================= */}
-      {/* CRITICAL ALERT BANNER - Phase 4.1 */}
-      {/* ================================================================= */}
-      {criticalAlert && (
-        <div className={`mx-4 mt-4 p-3 rounded-lg border ${
-          criticalAlert.severity === 'critical' 
-            ? 'bg-red-500/20 border-red-500/50' 
-            : 'bg-amber-500/20 border-amber-500/50'
-        }`}>
-          <div className="flex items-start gap-2">
-            <Icon 
-              name="alert-triangle" 
-              size={16} 
-              className={criticalAlert.severity === 'critical' ? 'text-red-400 animate-pulse' : 'text-amber-400'} 
-            />
-            <div className="flex-1 min-w-0">
-              <p className={`text-[10px] font-bold uppercase ${
-                criticalAlert.severity === 'critical' ? 'text-red-400' : 'text-amber-400'
-              }`}>
-                {criticalAlert.severity === 'critical' ? '🚨 CRITICAL ALERT' : '⚠️ HIGH ALERT'}
-              </p>
-              <p className="text-[10px] text-white/80 mt-1 line-clamp-2">
-                {criticalAlert.reason}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Navigation */}
       <nav className="flex-1 p-4 overflow-y-auto no-scrollbar">
@@ -231,33 +169,6 @@ export default function Sidebar({
             <Icon name="sliders" size={16} /> 
             <span className="text-xs font-medium">Channel Mapping</span>
           </button>
-
-          {/* ================================================================= */}
-          {/* SYSTEM ALERTS - Phase 4.1 */}
-          {/* ================================================================= */}
-          {totalAlertCount > 0 && (
-            <div className="mt-2 px-4 py-2.5 rounded-lg bg-white/5 border border-white/10">
-              <div className="flex items-center gap-2">
-                <Icon name="bell" size={16} className={criticalCount > 0 ? 'text-red-400' : 'text-amber-400'} />
-                <span className="text-xs font-medium text-white">System Alerts</span>
-                <span className={`ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                  criticalCount > 0 
-                    ? 'bg-red-500/20 text-red-400' 
-                    : 'bg-amber-500/20 text-amber-400'
-                }`}>
-                  {totalAlertCount}
-                </span>
-              </div>
-              <div className="mt-2 flex gap-2 text-[9px]">
-                {criticalCount > 0 && (
-                  <span className="text-red-400">{criticalCount} critical</span>
-                )}
-                {highCount > 0 && (
-                  <span className="text-amber-400">{highCount} high</span>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </nav>
 
