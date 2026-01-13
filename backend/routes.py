@@ -19,7 +19,7 @@ def register_routes(app):
         return jsonify({
             'status': 'ok',
             'service': 'sigma-sync-worker',
-            'version': '7.0-modular'
+            'version': '7.1-fixed'
         })
     
     @app.route('/sync', methods=['POST', 'OPTIONS'])
@@ -28,7 +28,7 @@ def register_routes(app):
             return _cors_response()
         
         data = request.get_json() or {}
-        project_name = data.get('project')
+        project_name = data.get('project') or data.get('projectName')
         folder_id = data.get('folderId')
         
         if not project_name:
@@ -54,13 +54,19 @@ def register_routes(app):
         result = get_project_stats(project)
         return _json_response(result)
     
-    @app.route('/folders', methods=['GET', 'OPTIONS'])
+    @app.route('/folders', methods=['GET', 'POST', 'OPTIONS'])
     def folders():
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        project = request.args.get('project')
-        path = request.args.get('path', '')
+        # Support both GET query params and POST JSON body
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            project = data.get('project') or data.get('projectName')
+            path = data.get('path') or data.get('folderPath', '')
+        else:
+            project = request.args.get('project')
+            path = request.args.get('path', '')
         
         if not project:
             return _json_response({'error': 'Project required'}, 400)
@@ -69,13 +75,19 @@ def register_routes(app):
         result = list_folders(prefix)
         return _json_response({'folders': result})
     
-    @app.route('/files', methods=['GET', 'OPTIONS'])
+    @app.route('/files', methods=['GET', 'POST', 'OPTIONS'])
     def files():
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        project = request.args.get('project')
-        path = request.args.get('path', '')
+        # Support both GET query params and POST JSON body
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            project = data.get('project') or data.get('projectName')
+            path = data.get('path') or data.get('folderPath', '')
+        else:
+            project = request.args.get('project')
+            path = request.args.get('path', '')
         
         if not project:
             return _json_response({'error': 'Project required'}, 400)
@@ -83,25 +95,46 @@ def register_routes(app):
         prefix = f"{project}/{path}" if path else f"{project}/"
         blobs = list_blobs(prefix)
         
+        # Separate folders and files
+        folders = []
         files = []
-        for blob in blobs:
-            if blob.name.endswith('/'):
-                continue
-            name = blob.name.split('/')[-1]
-            doc_type = detect_document_type(name, blob.name)
-            priority, _ = get_document_priority(name, blob.name)
-            files.append({
-                'name': name,
-                'path': blob.name,
-                'size': blob.size,
-                'type': doc_type,
-                'priority': priority,
-                'approved': is_approved_folder(blob.name),
-                'updated': blob.updated.isoformat() if blob.updated else None
-            })
+        seen_folders = set()
         
-        files.sort(key=lambda x: (-x['priority'], x['name']))
-        return _json_response({'files': files})
+        for blob in blobs:
+            # Get the relative path after the prefix
+            rel_path = blob.name[len(prefix):] if blob.name.startswith(prefix) else blob.name
+            
+            # Check if this is a subfolder
+            if '/' in rel_path:
+                folder_name = rel_path.split('/')[0]
+                if folder_name and folder_name not in seen_folders:
+                    seen_folders.add(folder_name)
+                    folders.append({
+                        'name': folder_name,
+                        'path': f"{prefix}{folder_name}/",
+                        'type': 'folder'
+                    })
+            elif rel_path and not blob.name.endswith('/'):
+                # It's a file in the current directory
+                name = rel_path
+                doc_type = detect_document_type(name, blob.name)
+                priority, _ = get_document_priority(name, blob.name)
+                files.append({
+                    'name': name,
+                    'path': blob.name,
+                    'size': blob.size,
+                    'type': doc_type,
+                    'priority': priority,
+                    'approved': is_approved_folder(blob.name),
+                    'updated': blob.updated.isoformat() if blob.updated else None
+                })
+        
+        # Sort folders alphabetically, files by priority then name
+        folders.sort(key=lambda x: x['name'].lower())
+        files.sort(key=lambda x: (-x.get('priority', 0), x['name'].lower()))
+        
+        # Return combined list with folders first
+        return _json_response({'files': folders + files})
     
     @app.route('/search', methods=['GET', 'POST', 'OPTIONS'])
     def search():
@@ -111,7 +144,7 @@ def register_routes(app):
         if request.method == 'POST':
             data = request.get_json() or {}
             query = data.get('query', '')
-            project = data.get('project')
+            project = data.get('project') or data.get('projectName')
             doc_type = data.get('type')
         else:
             query = request.args.get('q', '')
@@ -152,20 +185,29 @@ def register_routes(app):
         result = get_project_emails(project)
         return _json_response({'emails': result})
     
-    @app.route('/latest', methods=['GET', 'OPTIONS'])
+    @app.route('/latest', methods=['GET', 'POST', 'OPTIONS'])
     def latest():
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        project = request.args.get('project')
-        doc_type = request.args.get('type')
-        limit = int(request.args.get('limit', 10))
+        # Support both GET query params and POST JSON body
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            project = data.get('project') or data.get('projectName')
+            doc_type = data.get('type')
+            limit = int(data.get('limit', 10))
+        else:
+            project = request.args.get('project')
+            doc_type = request.args.get('type')
+            limit = int(request.args.get('limit', 10))
         
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
         blobs = list_blobs(f"{project}/")
-        files = []
+        
+        approved = []
+        recent = []
         
         for blob in blobs:
             if blob.name.endswith('/'):
@@ -177,20 +219,124 @@ def register_routes(app):
                 continue
             
             priority, _ = get_document_priority(name, blob.name)
-            files.append({
+            
+            # Extract subject and revision from filename
+            subject = 'general'
+            revision_str = ''
+            name_lower = name.lower()
+            
+            # Try to detect subject
+            subjects = ['flooring', 'kitchen', 'bathroom', 'ceiling', 'wall', 'door', 
+                       'window', 'electrical', 'mechanical', 'plumbing', 'fire', 
+                       'furniture', 'signage', 'landscape', 'structure', 'architectural',
+                       'mep', 'interior', 'lighting']
+            for s in subjects:
+                if s in name_lower:
+                    subject = s
+                    break
+            
+            # Try to extract revision
+            import re
+            rev_match = re.search(r'[_\-\s]?[Rr](?:ev)?\.?\s*(\d+)', name)
+            if rev_match:
+                revision_str = f"R{rev_match.group(1)}"
+            
+            file_data = {
                 'name': name,
-                'path': blob.name,
+                'path': blob.name.replace(f"{project}/", ''),
                 'size': blob.size,
                 'type': detected_type,
+                'subject': subject,
+                'revisionStr': revision_str,
                 'priority': priority,
                 'approved': is_approved_folder(blob.name),
                 'updated': blob.updated.isoformat() if blob.updated else None
-            })
+            }
+            
+            if is_approved_folder(blob.name):
+                approved.append(file_data)
+            else:
+                recent.append(file_data)
         
         # Sort by date descending
-        files.sort(key=lambda x: x.get('updated') or '', reverse=True)
+        approved.sort(key=lambda x: x.get('updated') or '', reverse=True)
+        recent.sort(key=lambda x: x.get('updated') or '', reverse=True)
         
-        return _json_response({'files': files[:limit]})
+        return _json_response({
+            'approved': approved[:limit],
+            'recent': recent[:limit]
+        })
+    
+    @app.route('/unclassified', methods=['GET', 'OPTIONS'])
+    def unclassified():
+        """Get unclassified emails from GCS"""
+        if request.method == 'OPTIONS':
+            return _cors_response()
+        
+        try:
+            blobs = list_blobs("_unclassified/")
+            emails = []
+            
+            for blob in blobs:
+                if blob.name.endswith('/'):
+                    continue
+                name = blob.name.split('/')[-1]
+                
+                # Parse email metadata from filename or content
+                emails.append({
+                    'id': blob.name.replace('/', '_'),
+                    'name': name,
+                    'path': blob.name,
+                    'subject': name.replace('.eml', '').replace('_', ' ')[:50],
+                    'from': 'Unknown',
+                    'date': blob.updated.isoformat() if blob.updated else None,
+                    'type': 'correspondence',
+                    'typeLabel': 'General',
+                    'hasAttachments': False
+                })
+            
+            emails.sort(key=lambda x: x.get('date') or '', reverse=True)
+            return _json_response({'emails': emails})
+        except Exception as e:
+            print(f"Error getting unclassified: {e}")
+            return _json_response({'emails': [], 'error': str(e)})
+    
+    @app.route('/classify', methods=['POST', 'OPTIONS'])
+    def classify():
+        """Classify/move an email to a project folder"""
+        if request.method == 'OPTIONS':
+            return _cors_response()
+        
+        data = request.get_json() or {}
+        path = data.get('path')
+        project = data.get('project')
+        doc_type = data.get('type', 'correspondence')
+        
+        if not path or not project:
+            return _json_response({'error': 'Path and project required'}, 400)
+        
+        try:
+            bucket = get_bucket()
+            source_blob = bucket.blob(path)
+            
+            if not source_blob.exists():
+                return _json_response({'error': 'File not found'}, 404)
+            
+            # Determine destination path
+            filename = path.split('/')[-1]
+            dest_path = f"{project}/09-Correspondence/{filename}"
+            
+            # Copy to new location
+            dest_blob = bucket.blob(dest_path)
+            dest_blob.rewrite(source_blob)
+            
+            # Delete original
+            source_blob.delete()
+            
+            return _json_response({'success': True, 'newPath': dest_path})
+        except Exception as e:
+            print(f"Error classifying: {e}")
+            return _json_response({'error': str(e)}, 500)
 
 
 def _cors_response():
