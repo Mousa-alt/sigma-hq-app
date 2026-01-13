@@ -10,6 +10,11 @@ const GROUPS_PATH = ['artifacts', 'sigma-hq-production', 'public', 'data', 'what
  * 
  * SIMPLE RULE: Only show messages from groups that are MAPPED to this project
  * The Group → Project Mapping is the ONLY source of truth
+ * 
+ * NOTE: There's a field name inconsistency between frontend and backend:
+ * - Frontend (ChannelSettings.jsx) stores WAHA ID as "wahaId"  
+ * - Backend (auto_add_group) stores WAHA ID as "group_id"
+ * So we check BOTH fields to find the correct WAHA chat ID
  */
 export function useProjectMessages(project) {
   const [messages, setMessages] = useState([]);
@@ -37,7 +42,14 @@ export function useProjectMessages(project) {
           // Exact match only - the mapping is the source of truth
           return mappedProject === projectNameLower;
         })
-        .map(g => g.wahaId || g.id)  // Use wahaId (the WAHA chat ID) - this matches message.group_id
+        .map(g => {
+          // Check multiple possible field names for the WAHA chat ID:
+          // - wahaId: set by frontend ChannelSettings when scanning/creating groups
+          // - group_id: set by backend auto_add_group when messages arrive
+          const wahaGroupId = g.wahaId || g.group_id;
+          console.log(`[useProjectMessages] Group "${g.name}" -> wahaId: ${g.wahaId}, group_id: ${g.group_id}, using: ${wahaGroupId}`);
+          return wahaGroupId;
+        })
         .filter(Boolean);
       
       console.log(`[useProjectMessages] ${project.name}: Found ${linked.length} linked groups`, linked);
@@ -78,6 +90,7 @@ export function useProjectMessages(project) {
         })
         .slice(0, 20);
 
+      console.log(`[useProjectMessages] ${project.name}: ${projectMessages.length} messages found from ${allMessages.length} total`);
       setMessages(projectMessages);
       setLoading(false);
     }, (error) => {
