@@ -32,6 +32,19 @@ const EMAIL_TYPES = [
   { value: 'report', label: 'Report' },
 ];
 
+// Helper to normalize group name for consistent ID generation and comparison
+const normalizeGroupName = (name) => {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' '); // Normalize multiple spaces to single space
+};
+
+// Helper to generate consistent group ID from name
+const generateGroupId = (name) => {
+  return normalizeGroupName(name).replace(/[^a-z0-9]/g, '_');
+};
+
 export default function ChannelSettings({ projects }) {
   const [activeTab, setActiveTab] = useState('whatsapp');
   const [groups, setGroups] = useState([]);
@@ -270,8 +283,28 @@ export default function ChannelSettings({ projects }) {
     }
   };
 
+  // Check if a group already exists by name or wahaId
+  const groupExists = (groupName, wahaId = null) => {
+    const normalizedName = normalizeGroupName(groupName);
+    return groups.some(g => {
+      // Check by normalized name
+      if (normalizeGroupName(g.name) === normalizedName) return true;
+      // Check by wahaId if provided
+      if (wahaId && g.wahaId === wahaId) return true;
+      // Check by generated ID
+      if (g.id === generateGroupId(groupName)) return true;
+      return false;
+    });
+  };
+
   const addGroup = async (groupName, wahaId = null) => {
-    const groupId = groupName.replace(/[^a-zA-Z0-9]/g, '_');
+    // Check for duplicates before adding
+    if (groupExists(groupName, wahaId)) {
+      console.log(`Group "${groupName}" already exists, skipping...`);
+      return; // Silently skip - group already exists
+    }
+    
+    const groupId = generateGroupId(groupName);
     const newGroup = {
       id: groupId,
       name: groupName,
@@ -340,10 +373,17 @@ export default function ChannelSettings({ projects }) {
     }
   };
 
-  // Get unmapped groups (in WAHA but not in our DB)
-  const unmappedWahaGroups = wahaGroups.filter(
-    wg => !groups.some(g => g.name === wg.name || g.wahaId === wg.id)
-  );
+  // Get unmapped groups (in WAHA but not in our DB) - with better deduplication
+  const unmappedWahaGroups = wahaGroups.filter(wg => {
+    const normalizedWahaName = normalizeGroupName(wg.name);
+    return !groups.some(g => {
+      // Check by normalized name
+      if (normalizeGroupName(g.name) === normalizedWahaName) return true;
+      // Check by wahaId
+      if (g.wahaId === wg.id) return true;
+      return false;
+    });
+  });
 
   // Filter org members by office
   const filteredMembers = ORG_MEMBERS.filter(m => 
