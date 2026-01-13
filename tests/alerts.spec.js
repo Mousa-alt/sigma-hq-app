@@ -7,7 +7,7 @@
  * Run: npx playwright test tests/alerts.spec.js
  */
 
-const { test, expect } = require('@playwright/test');
+import { test, expect } from '@playwright/test';
 
 const WHATSAPP_URL = 'https://sigma-whatsapp-71025980302.europe-west1.run.app';
 const DASHBOARD_URL = 'https://sigma-hq-app.vercel.app';
