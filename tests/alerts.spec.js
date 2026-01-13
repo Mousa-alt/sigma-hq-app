@@ -1,72 +1,64 @@
 /**
- * Sigma HQ Alerts Tests - Phase 4.1
+ * Sigma HQ Backend Tests
  * 
- * Tests for Red Flag & Anomaly Detection system.
- * DO NOT DEPLOY if these tests fail.
- * 
+ * Tests for core backend functionality.
  * Run: npx playwright test tests/alerts.spec.js
  */
 
 import { test, expect } from '@playwright/test';
 
 const WHATSAPP_URL = 'https://sigma-whatsapp-71025980302.europe-west1.run.app';
+const SYNC_URL = 'https://sigma-sync-worker-71025980302.europe-west1.run.app';
 const DASHBOARD_URL = 'https://sigma-hq-app.vercel.app';
 
 // ============================================
-// ALERTS API TESTS
+// STATUS API TESTS
 // ============================================
 
-test.describe('Alerts API - Phase 4.1', () => {
+test.describe('Status API - System Health', () => {
 
-  test('GET /alerts returns alerts array', async ({ request }) => {
-    const response = await request.get(`${WHATSAPP_URL}/alerts`);
-    
-    // Should return 200 OK (even if empty)
+  test('Sync Worker /status returns healthy with all checks', async ({ request }) => {
+    const response = await request.get(`${SYNC_URL}/status`);
     expect(response.ok()).toBeTruthy();
     
     const data = await response.json();
-    expect(data).toHaveProperty('alerts');
-    expect(data).toHaveProperty('count');
-    expect(Array.isArray(data.alerts)).toBeTruthy();
+    expect(data.service).toBe('sigma-sync-worker');
+    expect(data.status).toBe('healthy');
+    expect(data.health_checks.firestore).toBe('connected');
+    expect(data.health_checks.gcs).toBe('connected');
     
-    console.log(`✅ Alerts endpoint returned ${data.count} active alerts`);
+    console.log(`✅ Sync Worker v${data.version}: Firestore=${data.health_checks.firestore}, GCS=${data.health_checks.gcs}`);
   });
 
-  test('Health check shows anomaly_detection feature', async ({ request }) => {
-    const response = await request.get(`${WHATSAPP_URL}/`);
+  test('WhatsApp /status returns healthy with all checks', async ({ request }) => {
+    const response = await request.get(`${WHATSAPP_URL}/status`);
     expect(response.ok()).toBeTruthy();
     
     const data = await response.json();
+    expect(data.service).toBe('sigma-whatsapp-webhook');
+    expect(data.status).toBe('healthy');
+    expect(data.health_checks.firestore).toBe('connected');
+    expect(data.health_checks.waha_api).toBe('online');
     
-    // v4.16+ should have anomaly_detection in features
-    const hasAnomalyDetection = data.features?.includes('anomaly_detection') || 
-                                data.features?.includes('red_flag_alerts') ||
-                                data.version?.includes('anomaly') ||
-                                data.version?.includes('red-flag');
-    
-    if (hasAnomalyDetection) {
-      console.log('✅ Anomaly detection feature is active');
-    } else {
-      console.log('⚠️ Anomaly detection not yet deployed (version: ' + data.version + ')');
-    }
+    console.log(`✅ WhatsApp v${data.version}: Firestore=${data.health_checks.firestore}, WAHA=${data.health_checks.waha_api}`);
   });
 
 });
 
 // ============================================
-// CRITICAL KEYWORD DETECTION TEST
+// WEBHOOK TESTS
 // ============================================
 
-test.describe('Red Flag Detection - Critical Keywords', () => {
+test.describe('WhatsApp Webhook', () => {
 
-  test('Simulated "stop work" message triggers detection logic', async ({ request }) => {
+  test('Webhook processes message events', async ({ request }) => {
     const testPayload = {
       event: 'message',
       payload: {
         id: { id: 'test-' + Date.now() },
         from: '201234567890@c.us',
         chatId: '201234567890-test@g.us',
-        body: 'URGENT: stop work immediately on level 3 - safety issue',
+        body: 'Test message from Playwright',
         timestamp: Math.floor(Date.now() / 1000),
         fromMe: false,
         _data: {
@@ -85,62 +77,15 @@ test.describe('Red Flag Detection - Critical Keywords', () => {
     expect(response.ok()).toBeTruthy();
     
     const data = await response.json();
-    console.log('Webhook response:', JSON.stringify(data));
-    
-    if (data.alerts_created !== undefined) {
-      console.log(`✅ Anomaly detection active - ${data.alerts_created} alerts created`);
-      expect(data.alerts_created).toBeGreaterThan(0);
-    } else {
-      console.log('⚠️ Anomaly detection not yet deployed');
-    }
+    expect(data.status).toBe('processed');
+    console.log(`✅ Webhook processed message for group: ${data.group}`);
   });
 
-  test('Simulated "accident" message triggers high severity', async ({ request }) => {
-    const testPayload = {
-      event: 'message',
-      payload: {
-        id: { id: 'test-accident-' + Date.now() },
-        from: '201234567890@c.us',
-        chatId: '201234567890-test@g.us',
-        body: 'There was an accident on site, worker injured',
-        timestamp: Math.floor(Date.now() / 1000),
-        fromMe: false,
-        _data: {
-          notifyName: 'Site Manager'
-        }
-      }
-    };
-
-    const response = await request.post(`${WHATSAPP_URL}/`, {
-      data: testPayload,
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-
-    expect(response.ok()).toBeTruthy();
-    
-    const data = await response.json();
-    
-    if (data.alerts_created !== undefined && data.alerts_created > 0) {
-      console.log(`✅ Critical keyword "accident" detected - ${data.alerts_created} alerts`);
-    }
-  });
-
-});
-
-// ============================================
-// SESSION STATUS MONITORING TEST
-// ============================================
-
-test.describe('Session Stability Monitoring', () => {
-
-  test('Session status event triggers alert on disconnect', async ({ request }) => {
+  test('Webhook skips non-message events', async ({ request }) => {
     const testPayload = {
       event: 'session.status',
       payload: {
-        status: 'DISCONNECTED',
-        reason: 'Network error'
+        status: 'CONNECTED'
       }
     };
 
@@ -154,21 +99,19 @@ test.describe('Session Stability Monitoring', () => {
     expect(response.ok()).toBeTruthy();
     
     const data = await response.json();
-    
-    if (data.alerts_created !== undefined) {
-      console.log(`✅ Session disconnect alert created: ${data.alerts_created} alerts`);
-    }
+    expect(data.status).toBe('processed');
+    expect(data.event).toBe('session.status');
   });
 
 });
 
 // ============================================
-// FRONTEND ALERTS DISPLAY TEST
+// FRONTEND TESTS
 // ============================================
 
-test.describe('Frontend Alerts Display', () => {
+test.describe('Frontend Sidebar', () => {
 
-  test('Sidebar loads without errors (alerts listener active)', async ({ page }) => {
+  test('Sidebar loads without JavaScript errors', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(4000);
@@ -180,14 +123,13 @@ test.describe('Frontend Alerts Display', () => {
     
     await page.waitForTimeout(2000);
     
-    const alertErrors = errors.filter(e => e.toLowerCase().includes('alert'));
-    if (alertErrors.length > 0) {
-      console.error('❌ Alert-related errors:', alertErrors);
+    if (errors.length > 0) {
+      console.error('❌ JavaScript errors:', errors);
     } else {
-      console.log('✅ No alert-related JavaScript errors');
+      console.log('✅ No JavaScript errors detected');
     }
     
-    expect(alertErrors.length).toBe(0);
+    expect(errors.length).toBe(0);
   });
 
 });
