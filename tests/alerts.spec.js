@@ -38,9 +38,11 @@ test.describe('Alerts API - Phase 4.1', () => {
     
     const data = await response.json();
     
-    // v4.16 should have anomaly_detection in features
+    // v4.16+ should have anomaly_detection in features
     const hasAnomalyDetection = data.features?.includes('anomaly_detection') || 
-                                data.version?.includes('anomaly');
+                                data.features?.includes('red_flag_alerts') ||
+                                data.version?.includes('anomaly') ||
+                                data.version?.includes('red-flag');
     
     if (hasAnomalyDetection) {
       console.log('✅ Anomaly detection feature is active');
@@ -166,14 +168,17 @@ test.describe('Session Stability Monitoring', () => {
 
 // ============================================
 // FRONTEND ALERTS DISPLAY TEST
+// NOTE: Using domcontentloaded instead of networkidle because
+// Firestore real-time listeners keep connections open forever
 // ============================================
 
 test.describe('Frontend Alerts Display', () => {
 
   test('Sidebar loads without errors (alerts listener active)', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(3000);
+    // Use domcontentloaded - networkidle never fires with Firestore listeners
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(4000);
     
     // Page should load without crashing
     await expect(page.locator('body')).toBeVisible();
@@ -194,16 +199,17 @@ test.describe('Frontend Alerts Display', () => {
     expect(alertErrors.length).toBe(0);
   });
 
-  test('Settings section visible in sidebar', async ({ page }) => {
+  test('Channel Mapping link visible in sidebar', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
-    await page.waitForTimeout(3000);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(4000);
     
-    // Should see Settings section
-    const settingsSection = page.locator('text=SETTINGS').first();
-    const hasSettings = await settingsSection.isVisible();
+    // Should see Channel Mapping link (this is under SETTINGS section)
+    const channelMapping = page.locator('text=Channel Mapping').first();
+    const hasChannelMapping = await channelMapping.isVisible();
     
-    expect(hasSettings).toBeTruthy();
-    console.log('✅ Settings section visible in sidebar');
+    expect(hasChannelMapping).toBeTruthy();
+    console.log('✅ Channel Mapping link visible in sidebar');
   });
 
 });
