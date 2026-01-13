@@ -1,4 +1,4 @@
-# WhatsApp Webhook - v4.16 with Anomaly Detection (Phase 4.1)
+# WhatsApp Webhook - v4.17 with Red Flag Alerts (Phase 4.1)
 # 
 # This is the main entry point. All logic is in separate modules:
 # - config.py: Environment variables and constants
@@ -8,7 +8,7 @@
 # - services/waha_api.py: WhatsApp API calls
 # - services/vertex_search.py: Document search
 # - services/file_delivery.py: File sending with signed URLs
-# - services/anomaly_detector.py: Red flag & security monitoring (NEW)
+# - services/anomaly_detector.py: Red flag & safety monitoring
 # - utils/revision_parser.py: Revision sorting
 
 import functions_framework
@@ -235,14 +235,14 @@ def whatsapp_webhook(request):
         return (jsonify({
             'status': 'ok',
             'service': 'WhatsApp Webhook',
-            'version': '4.16-anomaly-detection',
+            'version': '4.17-red-flag-alerts',
             'waha_plus': WAHA_PLUS_ENABLED,
             'features': [
                 'modular_architecture',
-                'anomaly_detection',
                 'red_flag_alerts',
-                'spam_detection',
+                'critical_keyword_detection',
                 'session_monitoring',
+                'delivery_tracking',
                 'admin_cleanup',
                 'admin_sync_ids',
                 'done', 'assign', 'escalate', 'defer',
