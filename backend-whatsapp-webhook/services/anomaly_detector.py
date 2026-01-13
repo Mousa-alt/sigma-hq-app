@@ -2,13 +2,12 @@
 # Phase 4.1: Red Flag & Security Monitoring
 #
 # Monitors for:
-# - Spam/flood attacks (>10 msgs/60s from same sender)
-# - Unknown/unauthorized senders
-# - Session instability
+# - Session instability (WhatsApp disconnects)
 # - Delivery failures
 # - Critical operational keywords (construction emergencies)
+#
+# NOTE: Spam/flood detection REMOVED - internal groups often forward many messages at once
 
-import time
 from datetime import datetime
 from google.cloud import firestore
 
@@ -22,12 +21,6 @@ except Exception as e:
     print(f"Firestore init error in anomaly_detector: {e}")
     db = None
     FIRESTORE_ENABLED = False
-
-# In-memory rate limiting cache (resets on cold start)
-# Structure: {sender_id: [(timestamp1, timestamp2, ...)]}
-MESSAGE_RATE_CACHE = {}
-RATE_LIMIT_WINDOW = 60  # seconds
-RATE_LIMIT_MAX = 10  # max messages per window
 
 # Critical keywords for construction safety
 RED_FLAG_KEYWORDS = [
@@ -44,96 +37,9 @@ SEVERITY_MEDIUM = 'medium'
 SEVERITY_LOW = 'low'
 
 
-class AnomalyContext:
-    """Context for checking if sender is registered"""
-    
-    def __init__(self):
-        self.team_numbers = set()
-        self.group_participants = set()
-        self._loaded = False
-    
-    def load_registered_users(self):
-        """Load registered team members and group participants"""
-        if self._loaded or not FIRESTORE_ENABLED:
-            return
-        
-        try:
-            # Load team members
-            team_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('team')
-            for doc in team_ref.stream():
-                data = doc.to_dict()
-                phone = data.get('phone', '').replace('+', '').replace(' ', '').replace('-', '')
-                if phone:
-                    self.team_numbers.add(phone)
-            
-            # Load WhatsApp group participants (if stored)
-            groups_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('whatsapp_groups')
-            for doc in groups_ref.stream():
-                data = doc.to_dict()
-                participants = data.get('participants', [])
-                for p in participants:
-                    phone = str(p).replace('+', '').replace(' ', '').replace('-', '').split('@')[0]
-                    if phone:
-                        self.group_participants.add(phone)
-            
-            self._loaded = True
-            print(f"Loaded {len(self.team_numbers)} team numbers, {len(self.group_participants)} group participants")
-        except Exception as e:
-            print(f"Error loading registered users: {e}")
-    
-    def is_registered_user(self, sender):
-        """Check if sender is a registered user"""
-        if not self._loaded:
-            self.load_registered_users()
-        
-        # Normalize sender number
-        phone = str(sender).replace('+', '').replace(' ', '').replace('-', '').split('@')[0]
-        
-        # Check if in team or known group participants
-        return phone in self.team_numbers or phone in self.group_participants
-
-
-# Global context instance
-_context = None
-
-def get_context():
-    """Get or create anomaly context"""
-    global _context
-    if _context is None:
-        _context = AnomalyContext()
-    return _context
-
-
-def check_rate_limit(sender_id):
-    """
-    Check if sender is flooding messages.
-    Returns (is_spam, message_count)
-    """
-    now = time.time()
-    
-    # Initialize sender's history if not exists
-    if sender_id not in MESSAGE_RATE_CACHE:
-        MESSAGE_RATE_CACHE[sender_id] = []
-    
-    # Clean old timestamps
-    MESSAGE_RATE_CACHE[sender_id] = [
-        ts for ts in MESSAGE_RATE_CACHE[sender_id]
-        if now - ts < RATE_LIMIT_WINDOW
-    ]
-    
-    # Add current timestamp
-    MESSAGE_RATE_CACHE[sender_id].append(now)
-    
-    # Check if over limit
-    count = len(MESSAGE_RATE_CACHE[sender_id])
-    is_spam = count > RATE_LIMIT_MAX
-    
-    return is_spam, count
-
-
 def analyze_message_vitals(message_data, event_type='message'):
     """
-    Analyze incoming message for anomalies and red flags.
+    Analyze incoming message for red flags.
     
     Args:
         message_data: Dict with 'sender', 'text', 'group_name', 'group_id', etc.
@@ -143,7 +49,6 @@ def analyze_message_vitals(message_data, event_type='message'):
         List of alert dicts to be saved
     """
     alerts = []
-    context = get_context()
     
     sender = message_data.get('sender', '')
     text = message_data.get('text', '') or message_data.get('body', '')
@@ -151,53 +56,20 @@ def analyze_message_vitals(message_data, event_type='message'):
     chat_id = message_data.get('group_id', '') or message_data.get('chatId', '')
     
     # =========================================================================
-    # 1. SPAM/FLOOD DETECTION
-    # =========================================================================
-    if sender:
-        is_spam, msg_count = check_rate_limit(sender)
-        if is_spam:
-            alerts.append({
-                'type': 'SECURITY',
-                'category': 'spam_flood',
-                'severity': SEVERITY_HIGH,
-                'reason': f"Potential spam: {msg_count} messages in {RATE_LIMIT_WINDOW}s from {sender}",
-                'metadata': {
-                    'sender': sender,
-                    'message_count': msg_count,
-                    'window_seconds': RATE_LIMIT_WINDOW,
-                    'chatId': chat_id
-                }
-            })
-    
-    # =========================================================================
-    # 2. UNKNOWN SENDER CHECK
-    # =========================================================================
-    if sender and not context.is_registered_user(sender):
-        # Only flag if it's a direct message or first message in group
-        alerts.append({
-            'type': 'SECURITY',
-            'category': 'unauthorized_access',
-            'severity': SEVERITY_MEDIUM,
-            'reason': f"Message from unregistered number: {sender}",
-            'metadata': {
-                'sender': sender,
-                'group_name': group_name,
-                'chatId': chat_id
-            }
-        })
-    
-    # =========================================================================
-    # 3. CRITICAL KEYWORD DETECTION (Construction Safety)
+    # CRITICAL KEYWORD DETECTION (Construction Safety)
     # =========================================================================
     if text:
         text_lower = text.lower()
         detected_keywords = [kw for kw in RED_FLAG_KEYWORDS if kw in text_lower]
         
         if detected_keywords:
+            # Determine severity based on keyword
+            is_critical = any(kw in ['accident', 'injury', 'collapse', 'death', 'emergency', 'fire'] for kw in detected_keywords)
+            
             alerts.append({
                 'type': 'OPERATIONAL_RISK',
                 'category': 'critical_keyword',
-                'severity': SEVERITY_CRITICAL if any(kw in ['accident', 'injury', 'collapse', 'death', 'emergency'] for kw in detected_keywords) else SEVERITY_HIGH,
+                'severity': SEVERITY_CRITICAL if is_critical else SEVERITY_HIGH,
                 'reason': f"Critical keyword detected: {', '.join(detected_keywords)}",
                 'metadata': {
                     'keywords': detected_keywords,
