@@ -2,8 +2,8 @@
 from flask import jsonify, request, Response
 
 # Absolute imports from root
-from config import GCS_BUCKET
-from clients import get_bucket
+from config import GCS_BUCKET, APP_ID
+from clients import get_bucket, firestore_client, FIRESTORE_ENABLED
 from services.sync import sync_folder, get_project_stats, get_drive_folder_id
 from services.search import search_documents, search_with_ai
 from services.email import get_project_emails
@@ -19,7 +19,8 @@ def register_routes(app):
         return jsonify({
             'status': 'ok',
             'service': 'sigma-sync-worker',
-            'version': '7.1-fixed'
+            'version': '7.2-admin',
+            'firestore': FIRESTORE_ENABLED
         })
     
     @app.route('/sync', methods=['POST', 'OPTIONS'])
@@ -336,6 +337,112 @@ def register_routes(app):
             return _json_response({'success': True, 'newPath': dest_path})
         except Exception as e:
             print(f"Error classifying: {e}")
+            return _json_response({'error': str(e)}, 500)
+    
+    # ============ ADMIN ENDPOINTS ============
+    
+    @app.route('/admin/fix-gcs-mapping', methods=['POST', 'OPTIONS'])
+    def fix_gcs_mapping():
+        """Fix gcsFolderName mapping for all projects"""
+        if request.method == 'OPTIONS':
+            return _cors_response()
+        
+        if not FIRESTORE_ENABLED:
+            return _json_response({'error': 'Firestore not available'}, 500)
+        
+        # Mapping: Dashboard project name -> GCS folder name
+        mapping = {
+            'Agora': 'Agora-GEM',
+            'Amin Fattouh': 'AFV-LV',
+            'Ecolab': 'Ecolab',
+            'Springfield': 'Springfield',
+            'Eichholtz': 'Eichholtz',
+            'Bahra': 'Bahra'
+        }
+        
+        try:
+            # Get all projects from Firestore
+            projects_ref = firestore_client.collection('artifacts').document(APP_ID).collection('public').document('data').collection('projects')
+            docs = projects_ref.stream()
+            
+            updated = []
+            for doc in docs:
+                data = doc.to_dict()
+                project_name = data.get('name', '')
+                
+                # Check if we have a mapping for this project
+                if project_name in mapping:
+                    gcs_folder = mapping[project_name]
+                    current_gcs = data.get('gcsFolderName', '')
+                    
+                    # Update if different
+                    if current_gcs != gcs_folder:
+                        doc.reference.update({'gcsFolderName': gcs_folder})
+                        updated.append({
+                            'id': doc.id,
+                            'name': project_name,
+                            'old': current_gcs,
+                            'new': gcs_folder
+                        })
+            
+            return _json_response({
+                'success': True,
+                'updated': len(updated),
+                'projects': updated
+            })
+        except Exception as e:
+            print(f"Error fixing GCS mapping: {e}")
+            return _json_response({'error': str(e)}, 500)
+    
+    @app.route('/admin/list-gcs-folders', methods=['GET', 'OPTIONS'])
+    def list_gcs_folders():
+        """List all root folders in GCS bucket"""
+        if request.method == 'OPTIONS':
+            return _cors_response()
+        
+        try:
+            bucket = get_bucket()
+            blobs = bucket.list_blobs(delimiter='/')
+            
+            # Get prefixes (folders)
+            folders = []
+            # Need to iterate to trigger the prefixes
+            list(blobs)
+            for prefix in blobs.prefixes:
+                folder_name = prefix.rstrip('/')
+                folders.append(folder_name)
+            
+            return _json_response({'folders': sorted(folders)})
+        except Exception as e:
+            print(f"Error listing GCS folders: {e}")
+            return _json_response({'error': str(e)}, 500)
+    
+    @app.route('/admin/list-projects', methods=['GET', 'OPTIONS'])
+    def list_projects():
+        """List all projects from Firestore with their gcsFolderName"""
+        if request.method == 'OPTIONS':
+            return _cors_response()
+        
+        if not FIRESTORE_ENABLED:
+            return _json_response({'error': 'Firestore not available'}, 500)
+        
+        try:
+            projects_ref = firestore_client.collection('artifacts').document(APP_ID).collection('public').document('data').collection('projects')
+            docs = projects_ref.stream()
+            
+            projects = []
+            for doc in docs:
+                data = doc.to_dict()
+                projects.append({
+                    'id': doc.id,
+                    'name': data.get('name', ''),
+                    'gcsFolderName': data.get('gcsFolderName', ''),
+                    'status': data.get('status', '')
+                })
+            
+            return _json_response({'projects': projects})
+        except Exception as e:
+            print(f"Error listing projects: {e}")
             return _json_response({'error': str(e)}, 500)
 
 
