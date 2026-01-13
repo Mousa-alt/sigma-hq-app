@@ -1,4 +1,4 @@
-# WhatsApp Webhook - v4.19 (Anomaly Detection Removed)
+# WhatsApp Webhook - v4.20-status-api
 # 
 # This is the main entry point. All logic is in separate modules:
 # - config.py: Environment variables and constants
@@ -13,6 +13,7 @@
 import functions_framework
 from flask import jsonify, redirect
 import requests
+from datetime import datetime
 
 # Import configuration
 from config import (
@@ -24,12 +25,16 @@ from config import (
 from services.waha_api import get_group_name_from_waha, check_waha_session
 from services.firestore_ops import (
     get_cached_group_name, get_group_mappings, get_registered_projects,
-    auto_add_group, save_message, cleanup_duplicate_groups, sync_group_id_fields
+    auto_add_group, save_message, cleanup_duplicate_groups, sync_group_id_fields,
+    firestore_client, APP_ID
 )
 from services.file_delivery import get_short_url_redirect
 
 # Import handlers
 from handlers.classifier import classify_message, VERTEX_AI_ENABLED
+
+# Version - UPDATE THIS ON EVERY CHANGE
+SERVICE_VERSION = '4.20-status-api'
 
 
 @functions_framework.http
@@ -38,6 +43,7 @@ def whatsapp_webhook(request):
     
     Endpoints:
     - GET /: Health check
+    - GET /status: Standardized status for AI agents
     - GET /v/{code}: Short URL redirect
     - GET /waha/groups: List WhatsApp groups (proxy)
     - POST /waha/groups/create: Create WhatsApp group (proxy)
@@ -57,6 +63,45 @@ def whatsapp_webhook(request):
     
     headers = {'Access-Control-Allow-Origin': '*'}
     path = request.path
+    
+    # =========================================================================
+    # STATUS API: GET /status - Standardized status for AI agents
+    # =========================================================================
+    if path == '/status' and request.method == 'GET':
+        health_checks = {}
+        
+        # Check Firestore
+        try:
+            if firestore_client:
+                firestore_client.collection('artifacts').document(APP_ID).get()
+                health_checks['firestore'] = 'connected'
+            else:
+                health_checks['firestore'] = 'not configured'
+        except Exception as e:
+            health_checks['firestore'] = f'error: {str(e)[:50]}'
+        
+        # Check WAHA
+        try:
+            waha_connected = check_waha_session()
+            health_checks['waha_api'] = 'online' if waha_connected else 'disconnected'
+        except Exception as e:
+            health_checks['waha_api'] = f'error: {str(e)[:50]}'
+        
+        # Check Vertex AI
+        health_checks['vertex_ai'] = 'ready' if VERTEX_AI_ENABLED else 'disabled'
+        
+        # Determine overall status
+        critical_healthy = health_checks.get('firestore') == 'connected' and health_checks.get('waha_api') == 'online'
+        
+        return (jsonify({
+            'service': 'sigma-whatsapp-webhook',
+            'version': SERVICE_VERSION,
+            'status': 'healthy' if critical_healthy else 'degraded',
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'environment': 'production',
+            'capabilities': ['webhook', 'message-classification', 'vertex-search', 'waha-proxy'],
+            'health_checks': health_checks
+        }), 200, headers)
     
     # =========================================================================
     # SHORT URL REDIRECT: /v/{code}
@@ -193,8 +238,8 @@ def whatsapp_webhook(request):
     if request.method == 'GET':
         return (jsonify({
             'status': 'ok',
-            'service': 'WhatsApp Webhook',
-            'version': '4.19-clean',
+            'service': 'sigma-whatsapp-webhook',
+            'version': SERVICE_VERSION,
             'waha_plus': WAHA_PLUS_ENABLED,
             'features': [
                 'modular_architecture',
@@ -205,6 +250,7 @@ def whatsapp_webhook(request):
                 'inline_view', 'revision_sort', 'short_urls', 'waha_proxy'
             ],
             'endpoints': {
+                'status': 'GET /status',
                 'admin_cleanup': 'POST /admin/cleanup-groups',
                 'admin_sync': 'POST /admin/sync-group-ids'
             },
