@@ -1,11 +1,12 @@
 steps:
-  # Step 1: Deploy backend
+  # Step 1: Deploy backend WITHOUT routing traffic (safe deployment)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'deploy-backend'
+    id: 'deploy-no-traffic'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
+        echo "Deploying new revision (no traffic yet)..."
         cd backend && gcloud run deploy sigma-sync-worker \
           --source . \
           --region europe-west1 \
@@ -13,19 +14,13 @@ steps:
           --memory 4Gi \
           --cpu 2 \
           --timeout 540 \
+          --no-traffic \
+          --tag test \
           --set-env-vars="GCS_BUCKET=sigma-docs-repository"
+        
+        echo "New revision deployed with tag 'test'"
 
-  # Step 2: Wait for deployment to stabilize
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'wait-for-deploy'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        echo "Waiting 30 seconds for deployment to stabilize..."
-        sleep 30
-
-  # Step 3: Run smoke tests - BUILD FAILS if tests fail
+  # Step 2: Get the test URL and run smoke tests against NEW revision
   - name: 'python:3.11-slim'
     id: 'smoke-tests'
     entrypoint: 'bash'
@@ -33,12 +28,39 @@ steps:
       - '-c'
       - |
         pip install requests --quiet
-        python tests/smoke_test.py
+        
+        # Test against the tagged revision (not production traffic)
+        export TEST_URL="https://test---sigma-sync-worker-71025980302.europe-west1.run.app"
+        echo "Testing new revision at: $TEST_URL"
+        
+        python tests/smoke_test_staged.py "$TEST_URL"
+        
         if [ $? -ne 0 ]; then
-          echo "❌ SMOKE TESTS FAILED - Backend may be broken!"
+          echo ""
+          echo "❌ SMOKE TESTS FAILED!"
+          echo "❌ New revision will NOT receive traffic."
+          echo "❌ Production is still running the old version."
+          echo ""
           exit 1
         fi
+        
         echo "✅ All smoke tests passed"
+
+  # Step 3: Only if tests pass - route 100% traffic to new revision
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'route-traffic'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Tests passed! Routing traffic to new revision..."
+        gcloud run services update-traffic sigma-sync-worker \
+          --region europe-west1 \
+          --to-latest
+        
+        echo ""
+        echo "✅ DEPLOYMENT COMPLETE"
+        echo "✅ New revision is now live"
 
 options:
   logging: CLOUD_LOGGING_ONLY
