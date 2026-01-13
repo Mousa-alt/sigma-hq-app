@@ -1,4 +1,4 @@
-# WhatsApp Webhook - v4.18 (Spam Detection Removed)
+# WhatsApp Webhook - v4.19 (Anomaly Detection Removed)
 # 
 # This is the main entry point. All logic is in separate modules:
 # - config.py: Environment variables and constants
@@ -8,7 +8,6 @@
 # - services/waha_api.py: WhatsApp API calls
 # - services/vertex_search.py: Document search
 # - services/file_delivery.py: File sending with signed URLs
-# - services/anomaly_detector.py: Red flag & safety monitoring (NO SPAM DETECTION)
 # - utils/revision_parser.py: Revision sorting
 
 import functions_framework
@@ -28,11 +27,6 @@ from services.firestore_ops import (
     auto_add_group, save_message, cleanup_duplicate_groups, sync_group_id_fields
 )
 from services.file_delivery import get_short_url_redirect
-from services.anomaly_detector import (
-    process_webhook_for_anomalies,
-    get_active_alerts,
-    acknowledge_alert
-)
 
 # Import handlers
 from handlers.classifier import classify_message, VERTEX_AI_ENABLED
@@ -50,8 +44,6 @@ def whatsapp_webhook(request):
     - GET /waha/session: Check WAHA session status
     - POST /admin/cleanup-groups: Remove duplicate groups
     - POST /admin/sync-group-ids: Sync group_id and wahaId fields
-    - GET /alerts: Get active alerts
-    - POST /alerts/{id}/acknowledge: Acknowledge an alert
     - POST /: Process incoming webhook
     """
     
@@ -76,39 +68,6 @@ def whatsapp_webhook(request):
             return redirect(signed_url, code=302)
         else:
             return (jsonify({'error': err or 'Link not found'}), 404, headers)
-    
-    # =========================================================================
-    # ALERTS API: GET /alerts - Get active alerts
-    # =========================================================================
-    if path == '/alerts' and request.method == 'GET':
-        try:
-            limit = int(request.args.get('limit', 50))
-            alerts = get_active_alerts(limit)
-            return (jsonify({
-                'alerts': alerts,
-                'count': len(alerts)
-            }), 200, headers)
-        except Exception as e:
-            print(f"Get alerts error: {e}")
-            return (jsonify({'error': str(e)}), 500, headers)
-    
-    # =========================================================================
-    # ALERTS API: POST /alerts/{id}/acknowledge - Acknowledge alert
-    # =========================================================================
-    if path.startswith('/alerts/') and path.endswith('/acknowledge') and request.method == 'POST':
-        try:
-            alert_id = path.split('/')[2]
-            data = request.get_json(silent=True) or {}
-            acknowledged_by = data.get('acknowledgedBy', 'user')
-            
-            success = acknowledge_alert(alert_id, acknowledged_by)
-            if success:
-                return (jsonify({'success': True, 'alertId': alert_id}), 200, headers)
-            else:
-                return (jsonify({'error': 'Failed to acknowledge alert'}), 500, headers)
-        except Exception as e:
-            print(f"Acknowledge alert error: {e}")
-            return (jsonify({'error': str(e)}), 500, headers)
     
     # =========================================================================
     # ADMIN: /admin/cleanup-groups - Remove duplicate groups
@@ -235,13 +194,10 @@ def whatsapp_webhook(request):
         return (jsonify({
             'status': 'ok',
             'service': 'WhatsApp Webhook',
-            'version': '4.18-no-spam-detection',
+            'version': '4.19-clean',
             'waha_plus': WAHA_PLUS_ENABLED,
             'features': [
                 'modular_architecture',
-                'critical_keyword_alerts',
-                'session_monitoring',
-                'delivery_tracking',
                 'admin_cleanup',
                 'admin_sync_ids',
                 'done', 'assign', 'escalate', 'defer',
@@ -249,8 +205,6 @@ def whatsapp_webhook(request):
                 'inline_view', 'revision_sort', 'short_urls', 'waha_proxy'
             ],
             'endpoints': {
-                'alerts': 'GET /alerts',
-                'acknowledge': 'POST /alerts/{id}/acknowledge',
                 'admin_cleanup': 'POST /admin/cleanup-groups',
                 'admin_sync': 'POST /admin/sync-group-ids'
             },
@@ -269,17 +223,11 @@ def whatsapp_webhook(request):
             event = data.get('event', '')
             payload = data.get('payload', {})
             
-            # Process events through anomaly detector (critical keywords & session only)
-            alert_ids = process_webhook_for_anomalies(event, payload)
-            if alert_ids:
-                print(f"🚨 Created {len(alert_ids)} alerts for event: {event}")
-            
             # Only fully process message events
             if event != 'message':
                 return (jsonify({
                     'status': 'processed',
-                    'event': event,
-                    'alerts_created': len(alert_ids)
+                    'event': event
                 }), 200, headers)
             
             # Extract chat info
@@ -358,8 +306,7 @@ def whatsapp_webhook(request):
                 'project': classification.get('project_name'),
                 'actionable': classification.get('is_actionable'),
                 'command': classification.get('command_type'),
-                'summary': classification.get('summary', '')[:50],
-                'alerts_created': len(alert_ids)
+                'summary': classification.get('summary', '')[:50]
             }), 200, headers)
             
         except Exception as e:
