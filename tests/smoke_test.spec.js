@@ -90,13 +90,17 @@ test.describe('Backend API - Critical', () => {
 // ============================================
 // FRONTEND UI TESTS
 // Verify core components render correctly
+// NOTE: Using domcontentloaded instead of networkidle because
+// Firestore real-time listeners keep connections open forever
 // ============================================
 
 test.describe('Dashboard UI - Core', () => {
 
   test('Dashboard loads successfully', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
-    await page.waitForLoadState('networkidle');
+    // Use domcontentloaded - networkidle never fires with Firestore listeners
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
     
     // Page should load without crashing
     await expect(page.locator('body')).toBeVisible();
@@ -112,7 +116,7 @@ test.describe('Dashboard UI - Core', () => {
 
   test('Vault: Project Documents shows folders (not empty)', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
     
     // Try to click on Amin Fattouh project
     const project = page.locator('text=Amin Fattouh').first();
@@ -146,7 +150,7 @@ test.describe('Dashboard UI - Core', () => {
 
   test('OrgChart: Renders SVG paths for reporting lines', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
     
     // Click Organization link
     const orgLink = page.locator('text=Organization').first();
@@ -183,7 +187,7 @@ test.describe('WhatsApp Integration', () => {
 
   test('Channel Mapping page loads without crash', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
     
     const channelLink = page.locator('text=Channel Mapping').first();
     if (await channelLink.isVisible()) {
