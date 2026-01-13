@@ -8,7 +8,7 @@
  * Run with UI: npm run test:ui
  */
 
-const { test, expect } = require('@playwright/test');
+import { test, expect } from '@playwright/test';
 
 const DASHBOARD_URL = 'https://sigma-hq-app.vercel.app';
 const SYNC_WORKER_URL = 'https://sigma-sync-worker-71025980302.europe-west1.run.app';
