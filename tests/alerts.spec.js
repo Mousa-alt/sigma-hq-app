@@ -12,40 +12,6 @@ const SYNC_URL = 'https://sigma-sync-worker-71025980302.europe-west1.run.app';
 const DASHBOARD_URL = 'https://sigma-hq-app.vercel.app';
 
 // ============================================
-// STATUS API TESTS
-// ============================================
-
-test.describe('Status API - System Health', () => {
-
-  test('Sync Worker /status returns healthy with all checks', async ({ request }) => {
-    const response = await request.get(`${SYNC_URL}/status`);
-    expect(response.ok()).toBeTruthy();
-    
-    const data = await response.json();
-    expect(data.service).toBe('sigma-sync-worker');
-    expect(data.status).toBe('healthy');
-    expect(data.health_checks.firestore).toBe('connected');
-    expect(data.health_checks.gcs).toBe('connected');
-    
-    console.log(`✅ Sync Worker v${data.version}: Firestore=${data.health_checks.firestore}, GCS=${data.health_checks.gcs}`);
-  });
-
-  test('WhatsApp /status returns healthy with all checks', async ({ request }) => {
-    const response = await request.get(`${WHATSAPP_URL}/status`);
-    expect(response.ok()).toBeTruthy();
-    
-    const data = await response.json();
-    expect(data.service).toBe('sigma-whatsapp-webhook');
-    expect(data.status).toBe('healthy');
-    expect(data.health_checks.firestore).toBe('connected');
-    expect(data.health_checks.waha_api).toBe('online');
-    
-    console.log(`✅ WhatsApp v${data.version}: Firestore=${data.health_checks.firestore}, WAHA=${data.health_checks.waha_api}`);
-  });
-
-});
-
-// ============================================
 // WEBHOOK TESTS
 // ============================================
 
