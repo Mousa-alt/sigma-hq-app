@@ -1,30 +1,43 @@
+# Cloud Build configuration for WhatsApp Webhook
+# Triggered on changes to backend-whatsapp-webhook/**
+
 steps:
+  # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '--no-cache', '-t', 'gcr.io/$PROJECT_ID/sigma-whatsapp-webhook:$BUILD_ID', '.']
+    args:
+      - 'build'
+      - '-t'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/sigma-whatsapp'
+      - '.'
+    dir: 'backend-whatsapp-webhook'
 
+  # Push to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/sigma-whatsapp-webhook:$BUILD_ID']
+    args:
+      - 'push'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/sigma-whatsapp'
 
+  # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       - 'run'
       - 'deploy'
-      - 'sigma-whatsapp-webhook'
+      - 'sigma-whatsapp'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/sigma-whatsapp-webhook:$BUILD_ID'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/sigma-whatsapp'
       - '--region'
       - 'europe-west1'
-      - '--memory'
-      - '512Mi'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'GCP_PROJECT=sigma-hq-technical-office,GCP_LOCATION=us-central1,FIREBASE_PROJECT=sigma-hq-38843,APP_ID=sigma-hq-production'
-      - '--quiet'
+      - '--memory'
+      - '512Mi'
+      - '--timeout'
+      - '300'
+
+images:
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/sigma-whatsapp'
 
 options:
   logging: CLOUD_LOGGING_ONLY
-
-timeout: '600s'
