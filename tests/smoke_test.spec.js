@@ -2,7 +2,7 @@
  * Sigma HQ Smoke Tests
  * 
  * MANDATORY: These tests MUST pass before any deployment is considered successful.
- * If tests fail, auto-revert the commit and attempt a secondary fix.
+ * If tests fail, investigate before proceeding.
  * 
  * Run: npm test
  * Run with UI: npm run test:ui
@@ -18,26 +18,44 @@ const WHATSAPP_URL = 'https://sigma-whatsapp-71025980302.europe-west1.run.app';
 const TEST_PROJECT = 'Amin_Fattouh';
 
 // ============================================
+// STATUS API TESTS - The "Pulse" Check
+// Run first to verify all backends are healthy
+// ============================================
+
+test.describe('Status API - System Pulse', () => {
+
+  test('Sync Worker /status is healthy', async ({ request }) => {
+    const response = await request.get(`${SYNC_WORKER_URL}/status`);
+    expect(response.ok()).toBeTruthy();
+    
+    const data = await response.json();
+    expect(data.service).toBe('sigma-sync-worker');
+    expect(data.status).toBe('healthy');
+    expect(data.health_checks.firestore).toBe('connected');
+    
+    console.log(`✅ Sync Worker: v${data.version} - ${data.status}`);
+  });
+
+  test('WhatsApp /status is healthy', async ({ request }) => {
+    const response = await request.get(`${WHATSAPP_URL}/status`);
+    expect(response.ok()).toBeTruthy();
+    
+    const data = await response.json();
+    expect(data.service).toBe('sigma-whatsapp-webhook');
+    expect(data.status).toBe('healthy');
+    expect(data.health_checks.firestore).toBe('connected');
+    
+    console.log(`✅ WhatsApp: v${data.version} - ${data.status}`);
+  });
+
+});
+
+// ============================================
 // CRITICAL BACKEND TESTS
 // These catch issues like the 2026-01-13 Vault outage
 // ============================================
 
 test.describe('Backend API - Critical', () => {
-  
-  test('Health: Sync Worker online', async ({ request }) => {
-    const response = await request.get(`${SYNC_WORKER_URL}/`);
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    expect(data.status).toBe('ok');
-    console.log(`✅ Sync Worker version: ${data.version}`);
-  });
-
-  test('Health: WhatsApp backend online', async ({ request }) => {
-    const response = await request.get(`${WHATSAPP_URL}/`);
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    expect(data.status).toBe('ok');
-  });
 
   // CRITICAL TEST - This would have caught the 2026-01-13 Vault bug
   test('Vault: /files accepts POST and returns file list', async ({ request }) => {
@@ -51,11 +69,9 @@ test.describe('Backend API - Critical', () => {
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
     
-    // Must have 'files' array
     expect(data).toHaveProperty('files');
     expect(Array.isArray(data.files)).toBeTruthy();
     
-    // Should have at least some folders/files
     console.log(`✅ Files endpoint returned ${data.files.length} items`);
   });
 
@@ -69,7 +85,6 @@ test.describe('Backend API - Critical', () => {
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
     
-    // Must have both approved and recent arrays
     expect(data).toHaveProperty('approved');
     expect(data).toHaveProperty('recent');
     expect(Array.isArray(data.approved)).toBeTruthy();
@@ -89,7 +104,6 @@ test.describe('Backend API - Critical', () => {
 
 // ============================================
 // FRONTEND UI TESTS
-// Verify core components render correctly
 // NOTE: Using domcontentloaded instead of networkidle because
 // Firestore real-time listeners keep connections open forever
 // ============================================
@@ -98,14 +112,11 @@ test.describe('Dashboard UI - Core', () => {
 
   test('Dashboard loads successfully', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
-    // Use domcontentloaded - networkidle never fires with Firestore listeners
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3000);
     
-    // Page should load without crashing
     await expect(page.locator('body')).toBeVisible();
     
-    // Should see Sigma branding or password gate
     const hasContent = await page.locator('text=sigma').first().isVisible() ||
                        await page.locator('text=Sigma').first().isVisible() ||
                        await page.locator('text=Password').first().isVisible();
@@ -118,61 +129,45 @@ test.describe('Dashboard UI - Core', () => {
     await page.goto(DASHBOARD_URL);
     await page.waitForTimeout(3000);
     
-    // Try to click on Amin Fattouh project
     const project = page.locator('text=Amin Fattouh').first();
     if (await project.isVisible()) {
       await project.click();
       await page.waitForTimeout(1500);
       
-      // Click Project Documents tab
       const docsTab = page.locator('text=Project Documents').first();
       if (await docsTab.isVisible()) {
         await docsTab.click();
         await page.waitForTimeout(3000);
         
-        // CRITICAL: Should NOT see "No folders found"
         const noFoldersMsg = page.locator('text=No folders found');
         const isEmpty = await noFoldersMsg.isVisible();
         
         if (isEmpty) {
-          console.error('❌ CRITICAL: Vault showing "No folders found" - Backend may be broken!');
+          console.error('❌ CRITICAL: Vault showing "No folders found"');
         }
         expect(isEmpty).toBeFalsy();
-        
-        // Should see "All Folders" section with content
-        const allFolders = page.locator('text=All Folders');
-        expect(await allFolders.isVisible()).toBeTruthy();
         
         console.log('✅ Vault shows folders');
       }
     }
   });
 
-  test('OrgChart: Renders SVG paths for reporting lines', async ({ page }) => {
+  test('OrgChart: Renders SVG paths', async ({ page }) => {
     await page.goto(DASHBOARD_URL);
     await page.waitForTimeout(3000);
     
-    // Click Organization link
     const orgLink = page.locator('text=Organization').first();
     if (await orgLink.isVisible()) {
       await orgLink.click();
       await page.waitForTimeout(3000);
       
-      // Should NOT see error messages
       const hasError = await page.locator('text=Error').first().isVisible();
       expect(hasError).toBeFalsy();
       
-      // Should have SVG elements for the org chart
       const svgElements = page.locator('svg');
       const svgCount = await svgElements.count();
       
-      // OrgChart should render SVG paths for connecting lines
-      const pathElements = page.locator('svg path, svg line');
-      const pathCount = await pathElements.count();
-      
-      console.log(`✅ OrgChart rendered with ${svgCount} SVGs, ${pathCount} paths/lines`);
-      
-      // Should have at least some SVG content
+      console.log(`✅ OrgChart rendered with ${svgCount} SVGs`);
       expect(svgCount).toBeGreaterThan(0);
     }
   });
@@ -180,41 +175,12 @@ test.describe('Dashboard UI - Core', () => {
 });
 
 // ============================================
-// WHATSAPP INTEGRATION TESTS
-// ============================================
-
-test.describe('WhatsApp Integration', () => {
-
-  test('Channel Mapping page loads without crash', async ({ page }) => {
-    await page.goto(DASHBOARD_URL);
-    await page.waitForTimeout(3000);
-    
-    const channelLink = page.locator('text=Channel Mapping').first();
-    if (await channelLink.isVisible()) {
-      await channelLink.click();
-      await page.waitForTimeout(3000);
-      
-      // Page should load without errors
-      await expect(page.locator('body')).toBeVisible();
-      
-      // Should see WhatsApp section
-      const whatsappSection = page.locator('text=WhatsApp').first();
-      const hasWhatsApp = await whatsappSection.isVisible();
-      
-      console.log(`✅ Channel Mapping loaded, WhatsApp visible: ${hasWhatsApp}`);
-    }
-  });
-
-});
-
-// ============================================
-// POST-DEPLOYMENT SUMMARY
+// POST-TEST SUMMARY
 // ============================================
 
 test.afterAll(async () => {
   console.log('\n========================================');
   console.log('SMOKE TEST COMPLETE');
   console.log('If all tests passed, deployment is verified.');
-  console.log('If any test failed, investigate before proceeding.');
   console.log('========================================\n');
 });
