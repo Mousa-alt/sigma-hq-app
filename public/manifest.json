@@ -9,6 +9,18 @@
   "orientation": "portrait-primary",
   "icons": [
     {
+      "src": "https://raw.githubusercontent.com/Mousa-alt/Sigma-logo-PORTRAIT/main/Sigma%20landscape.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/Mousa-alt/Sigma-logo-PORTRAIT/main/Sigma%20landscape.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/icons/icon-72x72.png",
       "sizes": "72x72",
       "type": "image/png",
@@ -58,7 +70,6 @@
     }
   ],
   "categories": ["business", "productivity"],
-  "screenshots": [],
   "shortcuts": [
     {
       "name": "Dashboard",
