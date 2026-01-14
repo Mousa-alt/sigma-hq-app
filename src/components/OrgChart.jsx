@@ -49,14 +49,48 @@ const DEPARTMENT_COLORS = {
   'MEP': '#7f1d1d'
 };
 
+// =============================================================================
+// WORKLOAD INDICATOR HELPER
+// =============================================================================
+function getWorkloadInfo(projectCount) {
+  if (projectCount === 0) {
+    return { color: '#94a3b8', bgColor: '#f1f5f9', label: 'Available', emoji: '⚪' };
+  } else if (projectCount <= 2) {
+    return { color: '#16a34a', bgColor: '#dcfce7', label: 'Light', emoji: '🟢' };
+  } else if (projectCount <= 4) {
+    return { color: '#ca8a04', bgColor: '#fef9c3', label: 'Busy', emoji: '🟡' };
+  } else {
+    return { color: '#dc2626', bgColor: '#fee2e2', label: 'Overloaded', emoji: '🔴' };
+  }
+}
+
+function WorkloadBadge({ count, showLabel = false, size = 'sm' }) {
+  const info = getWorkloadInfo(count);
+  const sizeClasses = size === 'sm' ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1';
+  
+  return (
+    <span 
+      className={`inline-flex items-center gap-1 rounded-full font-medium ${sizeClasses}`}
+      style={{ backgroundColor: info.bgColor, color: info.color }}
+      title={`${count} project${count !== 1 ? 's' : ''} - ${info.label}`}
+    >
+      <span>{info.emoji}</span>
+      <span>{count}</span>
+      {showLabel && <span className="hidden sm:inline">({info.label})</span>}
+    </span>
+  );
+}
+
 export default function OrgChart({ projects }) {
   const [engineers, setEngineers] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [planningProjects, setPlanningProjects] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPlanningModalOpen, setIsPlanningModalOpen] = useState(false);
+  const [isPromoteModalOpen, setIsPromoteModalOpen] = useState(false);
   const [editingEngineer, setEditingEngineer] = useState(null);
   const [editingPlanningProject, setEditingPlanningProject] = useState(null);
+  const [promotingProject, setPromotingProject] = useState(null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('chart');
   const [selectedDepartment, setSelectedDepartment] = useState('Technical Office');
@@ -116,7 +150,7 @@ export default function OrgChart({ projects }) {
       await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'assignments'), {
         engineerId,
         projectId,
-        isPlanning, // Track if this is a planning project assignment
+        isPlanning,
         assignedAt: serverTimestamp()
       });
     }
@@ -147,7 +181,6 @@ export default function OrgChart({ projects }) {
   const handleDeletePlanningProject = async (id) => {
     if (!confirm('Delete this planning project? All assignments to it will be removed.')) return;
     
-    // Delete all assignments to this planning project
     const relatedAssignments = assignments.filter(a => a.projectId === id);
     for (const a of relatedAssignments) {
       await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'assignments', a.id));
@@ -156,18 +189,63 @@ export default function OrgChart({ projects }) {
     await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'planningProjects', id));
   };
 
+  // Promote planning project to active
+  const handlePromoteProject = async (formData) => {
+    if (!promotingProject) return;
+    setLoading(true);
+    
+    try {
+      // 1. Create new active project
+      const newProjectRef = await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'projects'), {
+        name: formData.name,
+        gcsFolderName: formData.gcsFolderName || formData.name.replace(/\s+/g, '-'),
+        status: formData.status || 'active',
+        venue: formData.venue || '',
+        notes: promotingProject.notes || '',
+        promotedFrom: promotingProject.id,
+        createdAt: serverTimestamp()
+      });
+
+      // 2. Update all assignments to point to new project
+      const relatedAssignments = assignments.filter(a => a.projectId === promotingProject.id);
+      for (const a of relatedAssignments) {
+        await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'assignments', a.id), {
+          projectId: newProjectRef.id,
+          isPlanning: false
+        });
+      }
+
+      // 3. Delete planning project if requested
+      if (formData.deletePlanning) {
+        await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'planningProjects', promotingProject.id));
+      }
+
+      setIsPromoteModalOpen(false);
+      setPromotingProject(null);
+      alert(`✅ Project "${formData.name}" created successfully!`);
+    } catch (err) {
+      alert('Error promoting project');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const getEngineerProjects = (engineerId) => {
     return assignments
       .filter(a => a.engineerId === engineerId)
       .map(a => {
-        // Check active projects first
         const activeProject = projects.find(p => p.id === a.projectId);
         if (activeProject) return activeProject;
-        // Check planning projects
         const planningProject = planningProjects.find(p => p.id === a.projectId);
         return planningProject;
       })
       .filter(Boolean);
+  };
+
+  // Get project count for workload indicator
+  const getEngineerProjectCount = (engineerId) => {
+    return assignments.filter(a => a.engineerId === engineerId).length;
   };
 
   const getEngineersByDepartment = (dept) => {
@@ -185,7 +263,6 @@ export default function OrgChart({ projects }) {
     return acc;
   }, {});
 
-  // Combine all projects for the matrix
   const allProjects = [...projects, ...planningProjects];
 
   return (
@@ -285,6 +362,7 @@ export default function OrgChart({ projects }) {
               engineers={getEngineersByDepartment(selectedDepartment)}
               allEngineers={engineers}
               getEngineerProjects={getEngineerProjects}
+              getEngineerProjectCount={getEngineerProjectCount}
               onEdit={(eng) => { setEditingEngineer(eng); setIsModalOpen(true); }}
               onDelete={handleDeleteEngineer}
               department={selectedDepartment}
@@ -306,21 +384,28 @@ export default function OrgChart({ projects }) {
           engineers={engineers} 
           allEngineers={engineers}
           getEngineerProjects={getEngineerProjects}
+          getEngineerProjectCount={getEngineerProjectCount}
           onEdit={(eng) => { setEditingEngineer(eng); setIsModalOpen(true); }}
           onDelete={handleDeleteEngineer}
         />
       ) : (
         <div className="space-y-4">
-          {/* Assignment Matrix Header with Add Planning Project */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+          {/* Assignment Matrix Header */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-2 text-sm text-slate-500">
                 <span className="w-3 h-3 rounded bg-slate-200"></span>
-                <span>Active Projects</span>
+                <span>Active</span>
               </div>
               <div className="flex items-center gap-2 text-sm text-purple-500">
                 <span className="w-3 h-3 rounded bg-purple-100 border-2 border-dashed border-purple-300"></span>
-                <span>Planning Projects</span>
+                <span>Planning</span>
+              </div>
+              <div className="border-l border-slate-200 pl-4 flex items-center gap-2 text-xs text-slate-400">
+                <span>Workload:</span>
+                <span className="text-green-600">🟢 1-2</span>
+                <span className="text-yellow-600">🟡 3-4</span>
+                <span className="text-red-600">🔴 5+</span>
               </div>
             </div>
             <button
@@ -340,6 +425,8 @@ export default function OrgChart({ projects }) {
             onAssign={handleAssign}
             onEditPlanningProject={(p) => { setEditingPlanningProject(p); setIsPlanningModalOpen(true); }}
             onDeletePlanningProject={handleDeletePlanningProject}
+            onPromotePlanningProject={(p) => { setPromotingProject(p); setIsPromoteModalOpen(true); }}
+            getEngineerProjectCount={getEngineerProjectCount}
           />
         </div>
       )}
@@ -362,25 +449,33 @@ export default function OrgChart({ projects }) {
           loading={loading}
         />
       )}
+
+      {isPromoteModalOpen && promotingProject && (
+        <PromoteProjectModal
+          planningProject={promotingProject}
+          assignmentCount={assignments.filter(a => a.projectId === promotingProject.id).length}
+          onClose={() => { setIsPromoteModalOpen(false); setPromotingProject(null); }}
+          onPromote={handlePromoteProject}
+          loading={loading}
+        />
+      )}
     </div>
   );
 }
 
 // =============================================================================
-// D3 HIERARCHY ORG CHART - Pure SVG for reliable export
+// D3 HIERARCHY ORG CHART
 // =============================================================================
 
-function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete, department }) {
+function D3OrgChart({ engineers, allEngineers, getEngineerProjects, getEngineerProjectCount, onEdit, onDelete, department }) {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
   
-  // Card dimensions
   const CARD_WIDTH = 200;
   const CARD_HEIGHT = 140;
   const HORIZONTAL_SPACING = 60;
   const VERTICAL_SPACING = 80;
   
-  // Build the tree using d3-hierarchy
   const { root, nodes, links, dimensions } = useMemo(() => {
     if (!engineers || engineers.length === 0) {
       return { root: null, nodes: [], links: [], dimensions: { width: 0, height: 0 } };
@@ -500,7 +595,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
     }
   }, [engineers, department]);
 
-  // Export using save-svg-as-png for reliable output
   const handleDownload = async () => {
     if (!svgRef.current) return;
     try {
@@ -520,7 +614,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
     }
   };
 
-  // Generate SVG path for connector lines
   const generatePath = (link) => {
     const sourceX = link.source.x;
     const sourceY = link.source.y + CARD_HEIGHT;
@@ -552,7 +645,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-      {/* Header */}
       <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between bg-gradient-to-r from-slate-50 to-white">
         <div>
           <h2 className="font-bold text-slate-900 text-lg">{department}</h2>
@@ -568,23 +660,19 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
         </button>
       </div>
       
-      {/* Chart Container */}
       <div 
         ref={containerRef}
         className="overflow-auto bg-gradient-to-br from-white via-slate-50/50 to-white"
         style={{ maxHeight: '70vh' }}
       >
-        {/* Pure SVG Chart - Everything in one SVG for reliable export */}
         <svg 
           ref={svgRef}
           width={dimensions.width}
           height={dimensions.height}
           style={{ minWidth: '100%', minHeight: '400px', fontFamily: 'system-ui, -apple-system, sans-serif' }}
         >
-          {/* Background */}
           <rect width={dimensions.width} height={dimensions.height} fill="#ffffff" />
           
-          {/* Connection Lines */}
           <g className="links">
             {links.map((link, i) => (
               <path
@@ -598,19 +686,19 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
             ))}
           </g>
           
-          {/* Person Cards using foreignObject for HTML rendering */}
           {nodes.map(node => {
             const person = node.data;
             if (person.isVirtual) return null;
             
             const pos = POSITIONS.find(p => p.id === person.position);
             const projects = getEngineerProjects(person.id);
+            const projectCount = getEngineerProjectCount(person.id);
+            const workload = getWorkloadInfo(projectCount);
             const cardX = node.x - CARD_WIDTH / 2;
             const cardY = node.y;
             
             return (
               <g key={person.id} className="node">
-                {/* Card Background */}
                 <rect
                   x={cardX}
                   y={cardY}
@@ -623,7 +711,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
                   strokeWidth="2"
                 />
                 
-                {/* Color accent bar */}
                 <rect
                   x={cardX}
                   y={cardY}
@@ -641,7 +728,30 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
                   fill={pos?.color || '#64748B'}
                 />
                 
-                {/* Avatar Circle */}
+                {/* Workload indicator in top right */}
+                {!['executive', 'head'].includes(person.position) && (
+                  <>
+                    <circle
+                      cx={cardX + CARD_WIDTH - 20}
+                      cy={cardY + 25}
+                      r="12"
+                      fill={workload.bgColor}
+                      stroke={workload.color}
+                      strokeWidth="2"
+                    />
+                    <text
+                      x={cardX + CARD_WIDTH - 20}
+                      y={cardY + 29}
+                      textAnchor="middle"
+                      fill={workload.color}
+                      fontSize="10"
+                      fontWeight="bold"
+                    >
+                      {projectCount}
+                    </text>
+                  </>
+                )}
+                
                 <circle
                   cx={node.x}
                   cy={cardY + 40}
@@ -659,7 +769,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
                   {person.name?.charAt(0) || '?'}
                 </text>
                 
-                {/* Name */}
                 <text
                   x={node.x}
                   y={cardY + 80}
@@ -671,7 +780,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
                   {person.name?.length > 18 ? person.name.substring(0, 18) + '...' : person.name}
                 </text>
                 
-                {/* Position Badge */}
                 <rect
                   x={node.x - 60}
                   y={cardY + 90}
@@ -691,7 +799,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
                   {pos?.label || 'Team Member'}
                 </text>
                 
-                {/* Projects */}
                 {projects.length > 0 && !['executive', 'head'].includes(person.position) && (
                   <>
                     {projects.slice(0, 2).map((p, idx) => (
@@ -736,7 +843,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
             );
           })}
           
-          {/* Legend */}
           <g transform="translate(20, 20)">
             <rect x="0" y="0" width="160" height={legendPositions.length * 18 + 30} rx="12" fill="white" fillOpacity="0.95" stroke="#e2e8f0" />
             <text x="12" y="20" fill="#64748b" fontSize="10" fontWeight="600">POSITIONS</text>
@@ -748,7 +854,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
             ))}
           </g>
           
-          {/* Logo Watermark - Just the logo on white background, no frame */}
           <image 
             href={BRANDING?.logo || "https://raw.githubusercontent.com/Mousa-alt/Sigma-logo-PORTRAIT/main/Sigma%20landscape.png"}
             x={dimensions.width - 180}
@@ -760,7 +865,6 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
         </svg>
       </div>
       
-      {/* Hover Actions - Rendered outside SVG */}
       <div className="absolute inset-0 pointer-events-none">
         {nodes.map(node => {
           const person = node.data;
@@ -801,7 +905,7 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
 // TEAM LIST VIEW
 // =============================================================================
 
-function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, onDelete }) {
+function TeamListView({ engineers, allEngineers, getEngineerProjects, getEngineerProjectCount, onEdit, onDelete }) {
   const getManagerName = (reportsTo) => {
     if (!reportsTo) return '—';
     const manager = allEngineers.find(e => e.id === reportsTo);
@@ -822,6 +926,7 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
           <tr className="bg-slate-50 border-b border-slate-200">
             <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3">Name</th>
             <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3">Position</th>
+            <th className="text-center text-xs font-semibold text-slate-600 px-4 py-3">Workload</th>
             <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3 hidden sm:table-cell">Reports To</th>
             <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3 hidden md:table-cell">Projects</th>
             <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3 hidden lg:table-cell">Contact</th>
@@ -832,6 +937,9 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
           {sortedEngineers.map(eng => {
             const pos = POSITIONS.find(p => p.id === eng.position);
             const engProjects = getEngineerProjects(eng.id);
+            const projectCount = getEngineerProjectCount(eng.id);
+            const skipWorkload = ['executive', 'head'].includes(eng.position);
+            
             return (
               <tr key={eng.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-4 py-3">
@@ -852,6 +960,13 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
                   >
                     {pos?.label || 'Unknown'}
                   </span>
+                </td>
+                <td className="px-4 py-3 text-center">
+                  {skipWorkload ? (
+                    <span className="text-xs text-slate-300">—</span>
+                  ) : (
+                    <WorkloadBadge count={projectCount} showLabel={true} size="md" />
+                  )}
                 </td>
                 <td className="px-4 py-3 hidden sm:table-cell">
                   <span className="text-xs text-slate-500">{getManagerName(eng.reportsTo)}</span>
@@ -894,17 +1009,16 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
 }
 
 // =============================================================================
-// ASSIGNMENT MATRIX - Now includes Planning Projects
+// ASSIGNMENT MATRIX
 // =============================================================================
 
-function AssignmentMatrix({ engineers, projects, planningProjects, assignments, onAssign, onEditPlanningProject, onDeletePlanningProject }) {
+function AssignmentMatrix({ engineers, projects, planningProjects, assignments, onAssign, onEditPlanningProject, onDeletePlanningProject, onPromotePlanningProject, getEngineerProjectCount }) {
   const sortedEngineers = [...engineers].sort((a, b) => {
     const posA = POSITIONS.find(p => p.id === a.position)?.level || 99;
     const posB = POSITIONS.find(p => p.id === b.position)?.level || 99;
     return posA - posB;
   });
 
-  // Combine active and planning projects
   const allProjects = [
     ...projects.map(p => ({ ...p, isPlanning: false })),
     ...planningProjects.map(p => ({ ...p, isPlanning: true }))
@@ -916,7 +1030,12 @@ function AssignmentMatrix({ engineers, projects, planningProjects, assignments, 
         <table className="w-full">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
-              <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3 sticky left-0 bg-slate-50 min-w-[200px]">Team Member</th>
+              <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3 sticky left-0 bg-slate-50 min-w-[200px]">
+                <div className="flex items-center gap-2">
+                  <span>Team Member</span>
+                  <span className="text-[10px] text-slate-400 font-normal">(Workload)</span>
+                </div>
+              </th>
               {allProjects.map(p => (
                 <th 
                   key={p.id} 
@@ -934,6 +1053,13 @@ function AssignmentMatrix({ engineers, projects, planningProjects, assignments, 
                     </div>
                     {p.isPlanning && (
                       <div className="flex gap-1">
+                        <button 
+                          onClick={() => onPromotePlanningProject(p)}
+                          className="p-1 hover:bg-green-100 rounded text-green-500 hover:text-green-600"
+                          title="Promote to Active"
+                        >
+                          <Icon name="arrow-up-circle" size={12} />
+                        </button>
                         <button 
                           onClick={() => onEditPlanningProject(p)}
                           className="p-1 hover:bg-purple-100 rounded text-purple-400 hover:text-purple-600"
@@ -959,16 +1085,20 @@ function AssignmentMatrix({ engineers, projects, planningProjects, assignments, 
             {sortedEngineers.map(eng => {
               const pos = POSITIONS.find(p => p.id === eng.position);
               const skipAssignment = ['executive', 'head'].includes(eng.position);
+              const projectCount = getEngineerProjectCount(eng.id);
               
               return (
                 <tr key={eng.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3 sticky left-0 bg-white">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full" style={{ backgroundColor: pos?.color || '#94A3B8' }}></div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-slate-900 truncate">{eng.name}</p>
                         <p className="text-[10px] text-slate-400 truncate">{pos?.label || 'Unknown'}</p>
                       </div>
+                      {!skipAssignment && (
+                        <WorkloadBadge count={projectCount} />
+                      )}
                     </div>
                   </td>
                   {allProjects.map(p => {
@@ -1016,6 +1146,145 @@ function AssignmentMatrix({ engineers, projects, planningProjects, assignments, 
             No projects yet. Add a planning project to start resource planning.
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// PROMOTE PROJECT MODAL
+// =============================================================================
+
+function PromoteProjectModal({ planningProject, assignmentCount, onClose, onPromote, loading }) {
+  const [formData, setFormData] = useState({
+    name: planningProject?.name || '',
+    gcsFolderName: planningProject?.name?.replace(/\s+/g, '-') || '',
+    venue: '',
+    status: 'active',
+    deletePlanning: true
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!formData.name) return alert('Project name is required');
+    if (!formData.gcsFolderName) return alert('GCS folder name is required');
+    onPromote(formData);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="p-6 border-b border-green-100 bg-gradient-to-r from-green-50 to-white">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                <Icon name="arrow-up-circle" size={24} className="text-green-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Promote to Active</h2>
+                <p className="text-xs text-slate-500">Convert planning project to active project</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
+              <Icon name="x" size={20} className="text-slate-400" />
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          {/* Info banner */}
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
+            <div className="flex items-start gap-3">
+              <Icon name="info" size={18} className="text-blue-500 mt-0.5" />
+              <div className="text-sm text-blue-700">
+                <p className="font-medium">What will happen:</p>
+                <ul className="mt-1 space-y-1 text-xs">
+                  <li>• New active project will be created</li>
+                  <li>• {assignmentCount} team assignment{assignmentCount !== 1 ? 's' : ''} will be transferred</li>
+                  <li>• Project will appear in main dashboard</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Project Name *</label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., Mall of Arabia Phase 2"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-green-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">GCS Folder Name *</label>
+            <input
+              type="text"
+              value={formData.gcsFolderName}
+              onChange={(e) => setFormData({ ...formData, gcsFolderName: e.target.value })}
+              placeholder="e.g., Mall-of-Arabia-P2"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-green-400"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">Used for Google Cloud Storage folder mapping</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Venue / Location</label>
+            <input
+              type="text"
+              value={formData.venue}
+              onChange={(e) => setFormData({ ...formData, venue: e.target.value })}
+              placeholder="e.g., Cairo, Egypt"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-green-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Initial Status</label>
+            <select
+              value={formData.status}
+              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-green-400"
+            >
+              <option value="active">🟢 Active</option>
+              <option value="on-hold">🟡 On Hold</option>
+              <option value="completed">✅ Completed</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
+            <input
+              type="checkbox"
+              id="deletePlanning"
+              checked={formData.deletePlanning}
+              onChange={(e) => setFormData({ ...formData, deletePlanning: e.target.checked })}
+              className="w-4 h-4 rounded border-slate-300 text-green-600 focus:ring-green-500"
+            />
+            <label htmlFor="deletePlanning" className="text-sm text-slate-700">
+              Delete planning project after promotion
+            </label>
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              disabled={loading} 
+              className="flex-1 px-4 py-3 bg-green-600 text-white rounded-xl text-sm font-medium disabled:opacity-50 hover:bg-green-700 flex items-center justify-center gap-2"
+            >
+              <Icon name="arrow-up-circle" size={16} />
+              {loading ? 'Promoting...' : 'Promote to Active'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
