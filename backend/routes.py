@@ -1,18 +1,14 @@
 # HTTP Routes
 from flask import jsonify, request, Response
-from datetime import datetime
 
 # Absolute imports from root
 from config import GCS_BUCKET, APP_ID
 from clients import get_bucket, firestore_client, FIRESTORE_ENABLED
 from services.sync import sync_folder, get_project_stats, get_drive_folder_id
-from services.search import search_documents, search_with_ai, generate_summary
+from services.search import search_documents, search_with_ai
 from services.email import get_project_emails
 from utils.document import detect_document_type, get_document_priority, is_approved_folder
 from utils.gcs import list_blobs, list_folders
-
-# Version - UPDATE THIS ON EVERY CHANGE
-SERVICE_VERSION = '7.6-hybrid-search'
 
 
 def register_routes(app):
@@ -23,49 +19,8 @@ def register_routes(app):
         return jsonify({
             'status': 'ok',
             'service': 'sigma-sync-worker',
-            'version': SERVICE_VERSION,
+            'version': '7.3-restored',
             'firestore': FIRESTORE_ENABLED
-        })
-    
-    @app.route('/status', methods=['GET'])
-    def status():
-        """Standardized status endpoint for AI agents and monitoring"""
-        health_checks = {}
-        
-        # Check Firestore
-        try:
-            if FIRESTORE_ENABLED and firestore_client:
-                # Light check - just verify connection
-                firestore_client.collection('artifacts').document(APP_ID).get()
-                health_checks['firestore'] = 'connected'
-            else:
-                health_checks['firestore'] = 'disabled'
-        except Exception as e:
-            health_checks['firestore'] = f'error: {str(e)[:50]}'
-        
-        # Check GCS
-        try:
-            bucket = get_bucket()
-            if bucket:
-                # Light check - just verify bucket exists
-                bucket.exists()
-                health_checks['gcs'] = 'connected'
-            else:
-                health_checks['gcs'] = 'not configured'
-        except Exception as e:
-            health_checks['gcs'] = f'error: {str(e)[:50]}'
-        
-        # Determine overall status
-        all_healthy = all(v in ['connected', 'disabled'] for v in health_checks.values())
-        
-        return jsonify({
-            'service': 'sigma-sync-worker',
-            'version': SERVICE_VERSION,
-            'status': 'healthy' if all_healthy else 'degraded',
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
-            'environment': 'production',
-            'capabilities': ['sync', 'files', 'search', 'ai-search', 'emails'],
-            'health_checks': health_checks
         })
     
     @app.route('/sync', methods=['POST', 'OPTIONS'])
@@ -190,7 +145,6 @@ def register_routes(app):
     
     @app.route('/search', methods=['GET', 'POST', 'OPTIONS'])
     def search():
-        """Search documents with AI summary"""
         if request.method == 'OPTIONS':
             return _cors_response()
         
@@ -207,16 +161,8 @@ def register_routes(app):
         if not query:
             return _json_response({'error': 'Query required'}, 400)
         
-        # Get search results from Vertex AI
         results = search_documents(query, project, doc_type)
-        
-        # Generate AI summary using Gemini
-        summary = generate_summary(query, results)
-        
-        return _json_response({
-            'summary': summary or '',
-            'results': results
-        })
+        return _json_response({'results': results})
     
     @app.route('/ai-search', methods=['POST', 'OPTIONS'])
     def ai_search():
