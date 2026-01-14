@@ -11,7 +11,7 @@ from utils.document import detect_document_type, get_document_priority, is_appro
 from utils.gcs import list_blobs, list_folders
 
 # Version - UPDATE THIS ON EVERY CHANGE
-SERVICE_VERSION = '7.4-smart-rag'
+SERVICE_VERSION = '7.5-path-filter'
 
 
 def register_routes(app):
@@ -165,7 +165,7 @@ def register_routes(app):
         if not query:
             return _json_response({'error': 'Query required'}, 400)
         
-        # Get search results from Vertex AI
+        # Get search results from Vertex AI (with path-based filtering)
         results = search_documents(query, project, doc_type)
         
         # Generate intelligent AI summary using Gemini
