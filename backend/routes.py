@@ -12,7 +12,7 @@ from utils.document import detect_document_type, get_document_priority, is_appro
 from utils.gcs import list_blobs, list_folders
 
 # Version - UPDATE THIS ON EVERY CHANGE
-SERVICE_VERSION = '7.5-rag-fix'
+SERVICE_VERSION = '7.6-hybrid-search'
 
 
 def register_routes(app):
