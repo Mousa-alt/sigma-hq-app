@@ -52,8 +52,11 @@ const DEPARTMENT_COLORS = {
 export default function OrgChart({ projects }) {
   const [engineers, setEngineers] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [planningProjects, setPlanningProjects] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isPlanningModalOpen, setIsPlanningModalOpen] = useState(false);
   const [editingEngineer, setEditingEngineer] = useState(null);
+  const [editingPlanningProject, setEditingPlanningProject] = useState(null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('chart');
   const [selectedDepartment, setSelectedDepartment] = useState('Technical Office');
@@ -70,7 +73,13 @@ export default function OrgChart({ projects }) {
       setAssignments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    return () => { unsubEngineers(); unsubAssignments(); };
+    // Listen to planning projects
+    const planningRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'planningProjects');
+    const unsubPlanning = onSnapshot(planningRef, (snapshot) => {
+      setPlanningProjects(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPlanning: true })));
+    });
+
+    return () => { unsubEngineers(); unsubAssignments(); unsubPlanning(); };
   }, []);
 
   const handleSaveEngineer = async (formData) => {
@@ -99,7 +108,7 @@ export default function OrgChart({ projects }) {
     await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'engineers', id));
   };
 
-  const handleAssign = async (engineerId, projectId) => {
+  const handleAssign = async (engineerId, projectId, isPlanning = false) => {
     const existing = assignments.find(a => a.engineerId === engineerId && a.projectId === projectId);
     if (existing) {
       await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'assignments', existing.id));
@@ -107,15 +116,57 @@ export default function OrgChart({ projects }) {
       await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'assignments'), {
         engineerId,
         projectId,
+        isPlanning, // Track if this is a planning project assignment
         assignedAt: serverTimestamp()
       });
     }
   };
 
+  // Planning project handlers
+  const handleSavePlanningProject = async (formData) => {
+    setLoading(true);
+    try {
+      if (editingPlanningProject) {
+        await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'planningProjects', editingPlanningProject.id), formData);
+      } else {
+        await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'planningProjects'), {
+          ...formData,
+          createdAt: serverTimestamp()
+        });
+      }
+      setIsPlanningModalOpen(false);
+      setEditingPlanningProject(null);
+    } catch (err) {
+      alert('Error saving planning project');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeletePlanningProject = async (id) => {
+    if (!confirm('Delete this planning project? All assignments to it will be removed.')) return;
+    
+    // Delete all assignments to this planning project
+    const relatedAssignments = assignments.filter(a => a.projectId === id);
+    for (const a of relatedAssignments) {
+      await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'assignments', a.id));
+    }
+    
+    await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'planningProjects', id));
+  };
+
   const getEngineerProjects = (engineerId) => {
     return assignments
       .filter(a => a.engineerId === engineerId)
-      .map(a => projects.find(p => p.id === a.projectId))
+      .map(a => {
+        // Check active projects first
+        const activeProject = projects.find(p => p.id === a.projectId);
+        if (activeProject) return activeProject;
+        // Check planning projects
+        const planningProject = planningProjects.find(p => p.id === a.projectId);
+        return planningProject;
+      })
       .filter(Boolean);
   };
 
@@ -128,10 +179,14 @@ export default function OrgChart({ projects }) {
 
   const totalPeople = engineers.length;
   const totalProjects = projects.length;
+  const totalPlanningProjects = planningProjects.length;
   const departmentCounts = DEPARTMENTS.reduce((acc, dept) => {
     acc[dept] = getEngineersByDepartment(dept).length;
     return acc;
   }, {});
+
+  // Combine all projects for the matrix
+  const allProjects = [...projects, ...planningProjects];
 
   return (
     <div className="space-y-6">
@@ -151,8 +206,17 @@ export default function OrgChart({ projects }) {
             <div className="w-px h-8 bg-slate-200"></div>
             <div className="text-center">
               <p className="text-2xl font-bold text-slate-900">{totalProjects}</p>
-              <p className="text-[10px] text-slate-400 uppercase">Projects</p>
+              <p className="text-[10px] text-slate-400 uppercase">Active</p>
             </div>
+            {totalPlanningProjects > 0 && (
+              <>
+                <div className="w-px h-8 bg-slate-200"></div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-purple-600">{totalPlanningProjects}</p>
+                  <p className="text-[10px] text-purple-400 uppercase">Planning</p>
+                </div>
+              </>
+            )}
           </div>
           
           <button
@@ -246,12 +310,38 @@ export default function OrgChart({ projects }) {
           onDelete={handleDeleteEngineer}
         />
       ) : (
-        <AssignmentMatrix 
-          engineers={engineers}
-          projects={projects}
-          assignments={assignments}
-          onAssign={handleAssign}
-        />
+        <div className="space-y-4">
+          {/* Assignment Matrix Header with Add Planning Project */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <span className="w-3 h-3 rounded bg-slate-200"></span>
+                <span>Active Projects</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-purple-500">
+                <span className="w-3 h-3 rounded bg-purple-100 border-2 border-dashed border-purple-300"></span>
+                <span>Planning Projects</span>
+              </div>
+            </div>
+            <button
+              onClick={() => { setEditingPlanningProject(null); setIsPlanningModalOpen(true); }}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-sm font-medium hover:bg-purple-100 transition-all"
+            >
+              <span>🔮</span>
+              Add Planning Project
+            </button>
+          </div>
+          
+          <AssignmentMatrix 
+            engineers={engineers}
+            projects={projects}
+            planningProjects={planningProjects}
+            assignments={assignments}
+            onAssign={handleAssign}
+            onEditPlanningProject={(p) => { setEditingPlanningProject(p); setIsPlanningModalOpen(true); }}
+            onDeletePlanningProject={handleDeletePlanningProject}
+          />
+        </div>
       )}
 
       {isModalOpen && (
@@ -260,6 +350,15 @@ export default function OrgChart({ projects }) {
           engineers={engineers}
           onClose={() => { setIsModalOpen(false); setEditingEngineer(null); }}
           onSave={handleSaveEngineer}
+          loading={loading}
+        />
+      )}
+
+      {isPlanningModalOpen && (
+        <PlanningProjectModal
+          project={editingPlanningProject}
+          onClose={() => { setIsPlanningModalOpen(false); setEditingPlanningProject(null); }}
+          onSave={handleSavePlanningProject}
           loading={loading}
         />
       )}
@@ -603,15 +702,16 @@ function D3OrgChart({ engineers, allEngineers, getEngineerProjects, onEdit, onDe
                           width="50"
                           height="16"
                           rx="4"
-                          fill="white"
-                          stroke="#e2e8f0"
+                          fill={p.isPlanning ? '#f3e8ff' : 'white'}
+                          stroke={p.isPlanning ? '#c084fc' : '#e2e8f0'}
                           strokeWidth="1"
+                          strokeDasharray={p.isPlanning ? '3,2' : 'none'}
                         />
                         <text
                           x={cardX + 35 + idx * 55}
                           y={cardY + 126}
                           textAnchor="middle"
-                          fill="#475569"
+                          fill={p.isPlanning ? '#7c3aed' : '#475569'}
                           fontSize="8"
                           fontWeight="500"
                         >
@@ -759,7 +859,16 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
                 <td className="px-4 py-3 hidden md:table-cell">
                   <div className="flex flex-wrap gap-1">
                     {engProjects.slice(0, 2).map(p => (
-                      <span key={p.id} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">{p.name}</span>
+                      <span 
+                        key={p.id} 
+                        className={`text-[10px] px-2 py-0.5 rounded-full ${
+                          p.isPlanning 
+                            ? 'bg-purple-50 text-purple-600 border border-dashed border-purple-300' 
+                            : 'bg-blue-50 text-blue-600'
+                        }`}
+                      >
+                        {p.isPlanning && '🔮 '}{p.name}
+                      </span>
                     ))}
                     {engProjects.length > 2 && <span className="text-[10px] text-slate-400">+{engProjects.length - 2}</span>}
                     {engProjects.length === 0 && <span className="text-[10px] text-slate-300">None</span>}
@@ -785,15 +894,21 @@ function TeamListView({ engineers, allEngineers, getEngineerProjects, onEdit, on
 }
 
 // =============================================================================
-// ASSIGNMENT MATRIX
+// ASSIGNMENT MATRIX - Now includes Planning Projects
 // =============================================================================
 
-function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
+function AssignmentMatrix({ engineers, projects, planningProjects, assignments, onAssign, onEditPlanningProject, onDeletePlanningProject }) {
   const sortedEngineers = [...engineers].sort((a, b) => {
     const posA = POSITIONS.find(p => p.id === a.position)?.level || 99;
     const posB = POSITIONS.find(p => p.id === b.position)?.level || 99;
     return posA - posB;
   });
+
+  // Combine active and planning projects
+  const allProjects = [
+    ...projects.map(p => ({ ...p, isPlanning: false })),
+    ...planningProjects.map(p => ({ ...p, isPlanning: true }))
+  ];
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -802,9 +917,40 @@ function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
               <th className="text-left text-xs font-semibold text-slate-600 px-4 py-3 sticky left-0 bg-slate-50 min-w-[200px]">Team Member</th>
-              {projects.map(p => (
-                <th key={p.id} className="text-center text-xs font-semibold text-slate-600 px-3 py-3 min-w-[100px]">
-                  <div className="truncate max-w-[100px]" title={p.name}>{p.name}</div>
+              {allProjects.map(p => (
+                <th 
+                  key={p.id} 
+                  className={`text-center text-xs font-semibold px-3 py-3 min-w-[100px] ${
+                    p.isPlanning ? 'bg-purple-50' : ''
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-1">
+                    {p.isPlanning && <span className="text-base">🔮</span>}
+                    <div 
+                      className={`truncate max-w-[100px] ${p.isPlanning ? 'text-purple-700' : 'text-slate-600'}`} 
+                      title={p.name}
+                    >
+                      {p.name}
+                    </div>
+                    {p.isPlanning && (
+                      <div className="flex gap-1">
+                        <button 
+                          onClick={() => onEditPlanningProject(p)}
+                          className="p-1 hover:bg-purple-100 rounded text-purple-400 hover:text-purple-600"
+                          title="Edit"
+                        >
+                          <Icon name="pencil" size={10} />
+                        </button>
+                        <button 
+                          onClick={() => onDeletePlanningProject(p.id)}
+                          className="p-1 hover:bg-red-100 rounded text-purple-400 hover:text-red-500"
+                          title="Delete"
+                        >
+                          <Icon name="trash-2" size={10} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </th>
               ))}
             </tr>
@@ -825,16 +971,34 @@ function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
                       </div>
                     </div>
                   </td>
-                  {projects.map(p => {
+                  {allProjects.map(p => {
                     const isAssigned = assignments.some(a => a.engineerId === eng.id && a.projectId === p.id);
                     if (skipAssignment) {
-                      return <td key={p.id} className="text-center px-3 py-3"><span className="text-[10px] text-slate-300">—</span></td>;
+                      return (
+                        <td 
+                          key={p.id} 
+                          className={`text-center px-3 py-3 ${p.isPlanning ? 'bg-purple-50/50' : ''}`}
+                        >
+                          <span className="text-[10px] text-slate-300">—</span>
+                        </td>
+                      );
                     }
                     return (
-                      <td key={p.id} className="text-center px-3 py-3">
+                      <td 
+                        key={p.id} 
+                        className={`text-center px-3 py-3 ${p.isPlanning ? 'bg-purple-50/50' : ''}`}
+                      >
                         <button
-                          onClick={() => onAssign(eng.id, p.id)}
-                          className={`w-8 h-8 rounded-lg transition-all ${isAssigned ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-300 hover:bg-slate-200'}`}
+                          onClick={() => onAssign(eng.id, p.id, p.isPlanning)}
+                          className={`w-8 h-8 rounded-lg transition-all ${
+                            isAssigned 
+                              ? p.isPlanning 
+                                ? 'bg-purple-100 text-purple-600 border-2 border-dashed border-purple-300' 
+                                : 'bg-emerald-100 text-emerald-600'
+                              : p.isPlanning
+                                ? 'bg-purple-50 text-purple-300 hover:bg-purple-100 border border-dashed border-purple-200'
+                                : 'bg-slate-100 text-slate-300 hover:bg-slate-200'
+                          }`}
                         >
                           <Icon name={isAssigned ? 'check' : 'plus'} size={16} className="mx-auto" />
                         </button>
@@ -847,6 +1011,118 @@ function AssignmentMatrix({ engineers, projects, assignments, onAssign }) {
           </tbody>
         </table>
         {engineers.length === 0 && <div className="text-center py-12 text-slate-400">Add team members to start</div>}
+        {allProjects.length === 0 && engineers.length > 0 && (
+          <div className="text-center py-12 text-slate-400">
+            No projects yet. Add a planning project to start resource planning.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// PLANNING PROJECT MODAL
+// =============================================================================
+
+function PlanningProjectModal({ project, onClose, onSave, loading }) {
+  const [formData, setFormData] = useState({
+    name: project?.name || '',
+    notes: project?.notes || '',
+    expectedStart: project?.expectedStart || '',
+    status: project?.status || 'study'
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!formData.name) return alert('Project name is required');
+    onSave(formData);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="p-6 border-b border-purple-100 bg-gradient-to-r from-purple-50 to-white">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">🔮</span>
+              <h2 className="text-lg font-semibold text-slate-900">
+                {project ? 'Edit' : 'Add'} Planning Project
+              </h2>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
+              <Icon name="x" size={20} className="text-slate-400" />
+            </button>
+          </div>
+          <p className="text-xs text-slate-500 mt-2 ml-11">
+            Planning projects are for resource allocation only. They won't appear in the main dashboard.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Project Name *</label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., Mall of Arabia Phase 2"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-purple-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Status</label>
+            <select
+              value={formData.status}
+              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-purple-400"
+            >
+              <option value="study">📚 Study Phase</option>
+              <option value="tender">📋 Tender Phase</option>
+              <option value="negotiation">🤝 Negotiation</option>
+              <option value="confirmed">✅ Confirmed (Pending Start)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Expected Start Date</label>
+            <input
+              type="date"
+              value={formData.expectedStart}
+              onChange={(e) => setFormData({ ...formData, expectedStart: e.target.value })}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-purple-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Notes</label>
+            <textarea
+              value={formData.notes}
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              placeholder="Any additional details about this project..."
+              rows={3}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-purple-400 resize-none"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              disabled={loading} 
+              className="flex-1 px-4 py-3 bg-purple-600 text-white rounded-xl text-sm font-medium disabled:opacity-50 hover:bg-purple-700"
+            >
+              {loading ? 'Saving...' : (project ? 'Update' : 'Add Project')}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
