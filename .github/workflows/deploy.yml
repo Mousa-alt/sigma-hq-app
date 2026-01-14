@@ -30,23 +30,28 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       
+      - uses: google-github-actions/setup-gcloud@v2
+      
       - name: Deploy Sync Worker
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: sigma-sync-worker
-          source: ./backend
-          region: europe-west1
+        run: |
+          gcloud run deploy sigma-sync-worker \
+            --source ./backend \
+            --region europe-west1 \
+            --allow-unauthenticated \
+            --quiet
       
       - name: Deploy WhatsApp
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: sigma-whatsapp
-          source: ./backend-whatsapp-webhook
-          region: europe-west1
+        run: |
+          gcloud run deploy sigma-whatsapp \
+            --source ./backend-whatsapp-webhook \
+            --region europe-west1 \
+            --allow-unauthenticated \
+            --quiet
       
       - name: Deploy Email
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: sigma-email-sync
-          source: ./backend-email
-          region: europe-west1
+        run: |
+          gcloud run deploy sigma-email-sync \
+            --source ./backend-email \
+            --region europe-west1 \
+            --allow-unauthenticated \
+            --quiet
