@@ -5,10 +5,13 @@ from flask import jsonify, request, Response
 from config import GCS_BUCKET, APP_ID
 from clients import get_bucket, firestore_client, FIRESTORE_ENABLED
 from services.sync import sync_folder, get_project_stats, get_drive_folder_id
-from services.search import search_documents, search_with_ai
+from services.search import search_documents, search_with_ai, generate_summary
 from services.email import get_project_emails
 from utils.document import detect_document_type, get_document_priority, is_approved_folder
 from utils.gcs import list_blobs, list_folders
+
+# Version - UPDATE THIS ON EVERY CHANGE
+SERVICE_VERSION = '7.4-smart-rag'
 
 
 def register_routes(app):
@@ -19,7 +22,7 @@ def register_routes(app):
         return jsonify({
             'status': 'ok',
             'service': 'sigma-sync-worker',
-            'version': '7.3-restored',
+            'version': SERVICE_VERSION,
             'firestore': FIRESTORE_ENABLED
         })
     
@@ -145,6 +148,7 @@ def register_routes(app):
     
     @app.route('/search', methods=['GET', 'POST', 'OPTIONS'])
     def search():
+        """Smart RAG search - returns AI summary + source documents"""
         if request.method == 'OPTIONS':
             return _cors_response()
         
@@ -161,8 +165,16 @@ def register_routes(app):
         if not query:
             return _json_response({'error': 'Query required'}, 400)
         
+        # Get search results from Vertex AI
         results = search_documents(query, project, doc_type)
-        return _json_response({'results': results})
+        
+        # Generate intelligent AI summary using Gemini
+        summary = generate_summary(query, results)
+        
+        return _json_response({
+            'summary': summary or '',
+            'results': results
+        })
     
     @app.route('/ai-search', methods=['POST', 'OPTIONS'])
     def ai_search():
