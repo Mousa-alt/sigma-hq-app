@@ -51,7 +51,8 @@ export default function AIChat({ project }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           query: query.trim(), 
-          projectName: project.name.replace(/\s+/g, '_') 
+          // Use gcsFolderName for accurate GCS/Vertex AI path matching
+          projectName: project.gcsFolderName || project.name.replace(/\s+/g, '_') 
         })
       });
       const data = await res.json();
