@@ -16,7 +16,7 @@ steps:
           --timeout 540 \
           --no-traffic \
           --tag test \
-          --set-env-vars="GCS_BUCKET=sigma-docs-repository"
+          --set-env-vars="GCS_BUCKET=sigma-docs-repository,GEMINI_API_KEY=$$GEMINI_API_KEY"
         
         echo "New revision deployed with tag 'test'"
 
@@ -66,3 +66,6 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 timeout: '1200s'
+
+substitutions:
+  _GEMINI_API_KEY: ''
