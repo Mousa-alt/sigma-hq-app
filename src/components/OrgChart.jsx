@@ -49,7 +49,7 @@ const DEPARTMENT_COLORS = {
   'MEP': '#7f1d1d'
 };
 
-export default function OrgChart({ projects }) {
+export default function OrgChart({ projects, onOpenModal }) {
   const [engineers, setEngineers] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -155,6 +155,16 @@ export default function OrgChart({ projects }) {
             </div>
           </div>
           
+          {/* Create Project Button */}
+          <button
+            onClick={onOpenModal}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            <Icon name="folder-plus" size={16} />
+            New Project
+          </button>
+          
+          {/* Add Member Button */}
           <button
             onClick={() => { setEditingEngineer(null); setIsModalOpen(true); }}
             className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm font-medium"
