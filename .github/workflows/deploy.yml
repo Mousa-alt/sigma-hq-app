@@ -1,57 +1,21 @@
-name: Test and Deploy
+name: Test
 
 on:
-  push:
-    branches: [main]
+  pull_request:
+      branches: [main]
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm install
-      - run: npx playwright install --with-deps chromium
-      - name: Run Tests
-        run: npm test
-        env:
-          CI: true
-
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-      
-      - uses: google-github-actions/setup-gcloud@v2
-      
-      - name: Deploy Sync Worker
-        run: |
-          gcloud run deploy sigma-sync-worker \
-            --source ./backend \
-            --region europe-west1 \
-            --allow-unauthenticated \
-            --quiet
-      
-      - name: Deploy WhatsApp
-        run: |
-          gcloud run deploy sigma-whatsapp \
-            --source ./backend-whatsapp-webhook \
-            --region europe-west1 \
-            --allow-unauthenticated \
-            --quiet
-      
-      - name: Deploy Email
-        run: |
-          gcloud run deploy sigma-email-sync \
-            --source ./backend-email \
-            --region europe-west1 \
-            --allow-unauthenticated \
-            --quiet
+      jobs:
+        test:
+            runs-on: ubuntu-latest
+                steps:
+                      - uses: actions/checkout@v4
+                            - uses: actions/setup-node@v4
+                                    with:
+                                              node-version: '20'
+                                                        cache: 'npm'
+                                                              - run: npm install
+                                                                    - run: npx playwright install --with-deps chromium
+                                                                          - name: Run Tests
+                                                                                  run: npm test
+                                                                                          env:
+                                                                                                    CI: true
