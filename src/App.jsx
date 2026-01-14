@@ -262,13 +262,20 @@ export default function App() {
         {/* Scrollable content area - prevent horizontal scroll */}
         <div className="flex-1 overflow-x-hidden overflow-y-auto no-scrollbar p-4 sm:p-6 lg:p-10">
           {view === 'overview' ? (
-            <Overview projects={projects} onSelectProject={handleSelectProject} />
+            <Overview 
+              projects={projects} 
+              onSelectProject={handleSelectProject} 
+              onOpenModal={() => setIsModalOpen(true)}
+            />
           ) : view === 'settings' ? (
             <div className="bg-white rounded-xl border border-slate-200 min-h-[600px] overflow-hidden animate-in pb-20">
               <ChannelSettings projects={projects} />
             </div>
           ) : view === 'orgchart' ? (
-            <OrgChart projects={projects} />
+            <OrgChart 
+              projects={projects} 
+              onOpenModal={() => setIsModalOpen(true)}
+            />
           ) : (
             <div className="h-full flex flex-col animate-in">
               {/* Sync Error Banner */}
