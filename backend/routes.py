@@ -11,7 +11,7 @@ from utils.document import detect_document_type, get_document_priority, is_appro
 from utils.gcs import list_blobs, list_folders, get_gcs_folder_name
 
 # Version - UPDATE THIS ON EVERY CHANGE
-SERVICE_VERSION = '7.6-gcs-mapping'
+SERVICE_VERSION = '7.7-ecolab-fix'
 
 
 def register_routes(app):
@@ -51,7 +51,6 @@ def register_routes(app):
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        # Support both GET query params and POST JSON body
         if request.method == 'POST':
             data = request.get_json() or {}
             project = data.get('project') or data.get('projectName')
@@ -61,7 +60,6 @@ def register_routes(app):
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
-        # Map to GCS folder name
         gcs_project = get_gcs_folder_name(project)
         result = get_project_stats(gcs_project)
         return _json_response(result)
@@ -71,7 +69,6 @@ def register_routes(app):
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        # Support both GET query params and POST JSON body
         if request.method == 'POST':
             data = request.get_json() or {}
             project = data.get('project') or data.get('projectName')
@@ -83,7 +80,6 @@ def register_routes(app):
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
-        # Map to GCS folder name
         gcs_project = get_gcs_folder_name(project)
         prefix = f"{gcs_project}/{path}" if path else f"{gcs_project}/"
         result = list_folders(prefix)
@@ -94,7 +90,6 @@ def register_routes(app):
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        # Support both GET query params and POST JSON body
         if request.method == 'POST':
             data = request.get_json() or {}
             project = data.get('project') or data.get('projectName')
@@ -106,21 +101,17 @@ def register_routes(app):
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
-        # Map to GCS folder name
         gcs_project = get_gcs_folder_name(project)
         prefix = f"{gcs_project}/{path}" if path else f"{gcs_project}/"
         blobs = list_blobs(prefix)
         
-        # Separate folders and files
         folders = []
         files = []
         seen_folders = set()
         
         for blob in blobs:
-            # Get the relative path after the prefix
             rel_path = blob.name[len(prefix):] if blob.name.startswith(prefix) else blob.name
             
-            # Check if this is a subfolder
             if '/' in rel_path:
                 folder_name = rel_path.split('/')[0]
                 if folder_name and folder_name not in seen_folders:
@@ -131,7 +122,6 @@ def register_routes(app):
                         'type': 'folder'
                     })
             elif rel_path and not blob.name.endswith('/'):
-                # It's a file in the current directory
                 name = rel_path
                 doc_type = detect_document_type(name, blob.name)
                 priority, _ = get_document_priority(name, blob.name)
@@ -145,11 +135,9 @@ def register_routes(app):
                     'updated': blob.updated.isoformat() if blob.updated else None
                 })
         
-        # Sort folders alphabetically, files by priority then name
         folders.sort(key=lambda x: x['name'].lower())
         files.sort(key=lambda x: (-x.get('priority', 0), x['name'].lower()))
         
-        # Return combined list with folders first
         return _json_response({'files': folders + files})
     
     @app.route('/search', methods=['GET', 'POST', 'OPTIONS'])
@@ -171,13 +159,8 @@ def register_routes(app):
         if not query:
             return _json_response({'error': 'Query required'}, 400)
         
-        # Map to GCS folder name for search filtering
         gcs_project = get_gcs_folder_name(project) if project else None
-        
-        # Get search results from Vertex AI (with path-based filtering)
         results = search_documents(query, gcs_project, doc_type)
-        
-        # Generate intelligent AI summary using Gemini
         summary = generate_summary(query, results)
         
         return _json_response({
@@ -196,7 +179,6 @@ def register_routes(app):
         if not query:
             return _json_response({'error': 'Query required'}, 400)
         
-        # First get relevant docs
         docs = search_documents(query, page_size=5)
         result = search_with_ai(query, docs)
         return _json_response(result)
@@ -206,7 +188,6 @@ def register_routes(app):
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        # Support both GET query params and POST JSON body
         if request.method == 'POST':
             data = request.get_json() or {}
             project = data.get('project') or data.get('projectName')
@@ -216,7 +197,6 @@ def register_routes(app):
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
-        # Map to GCS folder name
         gcs_project = get_gcs_folder_name(project)
         result = get_project_emails(gcs_project)
         return _json_response({'emails': result})
@@ -226,7 +206,6 @@ def register_routes(app):
         if request.method == 'OPTIONS':
             return _cors_response()
         
-        # Support both GET query params and POST JSON body
         if request.method == 'POST':
             data = request.get_json() or {}
             project = data.get('project') or data.get('projectName')
@@ -240,7 +219,6 @@ def register_routes(app):
         if not project:
             return _json_response({'error': 'Project required'}, 400)
         
-        # Map to GCS folder name
         gcs_project = get_gcs_folder_name(project)
         blobs = list_blobs(f"{gcs_project}/")
         
@@ -258,12 +236,10 @@ def register_routes(app):
             
             priority, _ = get_document_priority(name, blob.name)
             
-            # Extract subject and revision from filename
             subject = 'general'
             revision_str = ''
             name_lower = name.lower()
             
-            # Try to detect subject
             subjects = ['flooring', 'kitchen', 'bathroom', 'ceiling', 'wall', 'door', 
                        'window', 'electrical', 'mechanical', 'plumbing', 'fire', 
                        'furniture', 'signage', 'landscape', 'structure', 'architectural',
@@ -273,7 +249,6 @@ def register_routes(app):
                     subject = s
                     break
             
-            # Try to extract revision
             import re
             rev_match = re.search(r'[_\-\s]?[Rr](?:ev)?\.?\s*(\d+)', name)
             if rev_match:
@@ -296,7 +271,6 @@ def register_routes(app):
             else:
                 recent.append(file_data)
         
-        # Sort by date descending
         approved.sort(key=lambda x: x.get('updated') or '', reverse=True)
         recent.sort(key=lambda x: x.get('updated') or '', reverse=True)
         
@@ -320,7 +294,6 @@ def register_routes(app):
                     continue
                 name = blob.name.split('/')[-1]
                 
-                # Parse email metadata from filename or content
                 emails.append({
                     'id': blob.name.replace('/', '_'),
                     'name': name,
@@ -360,18 +333,12 @@ def register_routes(app):
             if not source_blob.exists():
                 return _json_response({'error': 'File not found'}, 404)
             
-            # Map to GCS folder name
             gcs_project = get_gcs_folder_name(project)
-            
-            # Determine destination path
             filename = path.split('/')[-1]
             dest_path = f"{gcs_project}/09-Correspondence/{filename}"
             
-            # Copy to new location
             dest_blob = bucket.blob(dest_path)
             dest_blob.rewrite(source_blob)
-            
-            # Delete original
             source_blob.delete()
             
             return _json_response({'success': True, 'newPath': dest_path})
@@ -383,25 +350,24 @@ def register_routes(app):
     
     @app.route('/admin/fix-gcs-mapping', methods=['POST', 'OPTIONS'])
     def fix_gcs_mapping():
-        """Fix gcsFolderName mapping for all projects"""
+        """Fix gcsFolderName mapping for all projects in Firestore"""
         if request.method == 'OPTIONS':
             return _cors_response()
         
         if not FIRESTORE_ENABLED:
             return _json_response({'error': 'Firestore not available'}, 500)
         
-        # Mapping: Dashboard project name -> GCS folder name
+        # CORRECT MAPPING: Dashboard project name -> GCS folder name
         mapping = {
             'Agora': 'Agora-GEM',
-            'Amin Fattouh': 'AFV-LV',
-            'Ecolab': 'Ecolab',
             'Springfield': 'Springfield-D5',
+            'Amin Fattouh': 'AFV-LV',
             'Eichholtz': 'Eichholtz',
-            'Bahra': 'Bahra'
+            'Ecolab': 'Ecolab-CFC',  # Cairo Festival City
+            'Bahra': 'Bahra',  # TODO: verify folder exists
         }
         
         try:
-            # Get all projects from Firestore
             projects_ref = firestore_client.collection('artifacts').document(APP_ID).collection('public').document('data').collection('projects')
             docs = projects_ref.stream()
             
@@ -410,12 +376,10 @@ def register_routes(app):
                 data = doc.to_dict()
                 project_name = data.get('name', '')
                 
-                # Check if we have a mapping for this project
                 if project_name in mapping:
                     gcs_folder = mapping[project_name]
                     current_gcs = data.get('gcsFolderName', '')
                     
-                    # Update if different
                     if current_gcs != gcs_folder:
                         doc.reference.update({'gcsFolderName': gcs_folder})
                         updated.append({
@@ -444,9 +408,7 @@ def register_routes(app):
             bucket = get_bucket()
             blobs = bucket.list_blobs(delimiter='/')
             
-            # Get prefixes (folders)
             folders = []
-            # Need to iterate to trigger the prefixes
             list(blobs)
             for prefix in blobs.prefixes:
                 folder_name = prefix.rstrip('/')
@@ -493,7 +455,7 @@ def register_routes(app):
         
         from utils.gcs import PROJECT_TO_GCS_FOLDER
         
-        test_names = ['Agora', 'Springfield', 'Amin Fattouh', 'Eichholtz', 'Ecolab', 'Bahra', 'Unknown Project']
+        test_names = ['Agora', 'Springfield', 'Amin Fattouh', 'Eichholtz', 'Ecolab', 'Bahra', 'Unknown']
         results = {}
         for name in test_names:
             results[name] = get_gcs_folder_name(name)
