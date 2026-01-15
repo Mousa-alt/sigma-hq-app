@@ -10,7 +10,7 @@ PROJECT_TO_GCS_FOLDER = {
     'Springfield': 'Springfield-D5',
     'Amin Fattouh': 'AFV-LV',
     'Eichholtz': 'Eichholtz',
-    'Ecolab': 'Ecolab',
+    'Ecolab': 'Ecolab-CFC',  # Cairo Festival City
     'Bahra': 'Bahra',  # TODO: Verify this folder exists in GCS
 }
 
