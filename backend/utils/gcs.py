@@ -3,6 +3,39 @@ from clients import get_bucket, storage_client
 from config import GCS_BUCKET
 
 
+# Project name to GCS folder mapping
+# Dashboard project name -> Actual GCS folder name
+PROJECT_TO_GCS_FOLDER = {
+    'Agora': 'Agora-GEM',
+    'Springfield': 'Springfield-D5',
+    'Amin Fattouh': 'AFV-LV',
+    'Eichholtz': 'Eichholtz',
+    'Ecolab': 'Ecolab',
+    'Bahra': 'Bahra',  # TODO: Verify this folder exists in GCS
+}
+
+
+def get_gcs_folder_name(project_name):
+    """
+    Convert dashboard project name to actual GCS folder name.
+    Returns the mapped name if exists, otherwise returns the original name.
+    """
+    if not project_name:
+        return project_name
+    
+    # Check exact match first
+    if project_name in PROJECT_TO_GCS_FOLDER:
+        return PROJECT_TO_GCS_FOLDER[project_name]
+    
+    # Check case-insensitive match
+    for key, value in PROJECT_TO_GCS_FOLDER.items():
+        if key.lower() == project_name.lower():
+            return value
+    
+    # Return original if no mapping found
+    return project_name
+
+
 def list_blobs(prefix, max_results=None):
     """List blobs with prefix"""
     bucket = get_bucket()
