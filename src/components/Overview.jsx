@@ -305,125 +305,120 @@ export default function Overview({ projects, onSelectProject }) {
         </div>
       </div>
 
-      {/* Two Column Layout: Projects + Daily Digest */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Projects Grid - Takes 2 columns */}
-        <div className="lg:col-span-2">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-slate-900">Projects Overview</h2>
-            <span className="text-xs text-slate-400">{projects.length} total</span>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {projects.map(project => {
-              const health = getProjectHealth(project);
-              const healthStyle = healthConfig[health];
-              const projectStatus = project.status || 'active';
-              const statusStyle = statusConfig[projectStatus] || statusConfig.active;
-              const teamCount = getProjectTeamCount(project.id);
-              const dateDisplay = formatProjectDates(project);
-              const overdue = isProjectOverdue(project);
-              
-              return (
-                <div 
-                  key={project.id} 
-                  onClick={() => onSelectProject(project)} 
-                  className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer overflow-hidden group"
-                >
-                  {/* Header stripe based on status */}
-                  <div className={`h-1 ${
-                    projectStatus === 'active' ? 'bg-emerald-500' : 
-                    projectStatus === 'tender' ? 'bg-amber-500' :
-                    projectStatus === 'on_hold' ? 'bg-slate-400' :
-                    projectStatus === 'completed' ? 'bg-blue-500' :
-                    projectStatus === 'planning' ? 'bg-purple-500' : 'bg-emerald-500'
-                  }`} />
-                  
-                  <div className="p-4">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="p-2 bg-slate-50 rounded-lg group-hover:bg-blue-50 transition-colors flex-shrink-0">
-                          <Icon name="folder" size={20} className="text-slate-600 group-hover:text-blue-600" />
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="text-sm font-semibold text-slate-900 truncate">{project.name}</h3>
-                          {project.client && (
-                            <p className="text-[10px] text-slate-400 truncate">{project.client}</p>
-                          )}
-                        </div>
+      {/* Projects Overview - Full Width */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-slate-900">Projects Overview</h2>
+          <span className="text-xs text-slate-400">{projects.length} total</span>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {projects.map(project => {
+            const health = getProjectHealth(project);
+            const healthStyle = healthConfig[health];
+            const projectStatus = project.status || 'active';
+            const statusStyle = statusConfig[projectStatus] || statusConfig.active;
+            const teamCount = getProjectTeamCount(project.id);
+            const dateDisplay = formatProjectDates(project);
+            const overdue = isProjectOverdue(project);
+            
+            return (
+              <div 
+                key={project.id} 
+                onClick={() => onSelectProject(project)} 
+                className="bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer overflow-hidden group"
+              >
+                {/* Header stripe based on status */}
+                <div className={`h-1 ${
+                  projectStatus === 'active' ? 'bg-emerald-500' : 
+                  projectStatus === 'tender' ? 'bg-amber-500' :
+                  projectStatus === 'on_hold' ? 'bg-slate-400' :
+                  projectStatus === 'completed' ? 'bg-blue-500' :
+                  projectStatus === 'planning' ? 'bg-purple-500' : 'bg-emerald-500'
+                }`} />
+                
+                <div className="p-4">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="p-2 bg-slate-50 rounded-lg group-hover:bg-blue-50 transition-colors flex-shrink-0">
+                        <Icon name="folder" size={20} className="text-slate-600 group-hover:text-blue-600" />
                       </div>
-                      {/* Status badge */}
-                      <div className={`flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0 ${statusStyle.bg}`}>
-                        <Icon name={statusStyle.icon} size={10} className={statusStyle.color} />
-                        <span className={`text-[9px] font-medium ${statusStyle.color}`}>{statusStyle.label}</span>
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-semibold text-slate-900 truncate">{project.name}</h3>
+                        {project.client && (
+                          <p className="text-[10px] text-slate-400 truncate">{project.client}</p>
+                        )}
                       </div>
                     </div>
-                    
-                    {/* Project Details */}
-                    <div className="space-y-2 mb-3">
-                      {project.venue && (
-                        <div className="flex items-center gap-2 text-xs text-slate-500">
-                          <Icon name="map-pin" size={12} className="text-slate-400" />
-                          <span className="truncate">{project.venue}</span>
-                        </div>
-                      )}
-                      
-                      {project.area && (
-                        <div className="flex items-center gap-2 text-xs text-slate-500">
-                          <Icon name="maximize-2" size={12} className="text-slate-400" />
-                          <span>{project.area} m²</span>
-                        </div>
-                      )}
-
-                      {dateDisplay && (
-                        <div className={`flex items-center gap-2 text-xs ${overdue ? 'text-red-500' : 'text-slate-500'}`}>
-                          <Icon name="calendar" size={12} className={overdue ? 'text-red-400' : 'text-slate-400'} />
-                          <span>{dateDisplay}</span>
-                          {overdue && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">Overdue</span>}
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Footer with team count and sync status */}
-                    <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                      <div className="flex items-center gap-3">
-                        {/* Team count */}
-                        <div className="flex items-center gap-1 text-xs text-slate-500">
-                          <Icon name="users" size={12} className="text-slate-400" />
-                          <span>{teamCount} assigned</span>
-                        </div>
-                      </div>
-                      
-                      {/* Last sync indicator */}
-                      {project.lastSyncAt && (
-                        <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                          <Icon name="refresh-cw" size={10} />
-                          <span>{formatTimeAgo(project.lastSyncAt?.toDate ? project.lastSyncAt.toDate() : project.lastSyncAt)}</span>
-                        </div>
-                      )}
+                    {/* Status badge */}
+                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0 ${statusStyle.bg}`}>
+                      <Icon name={statusStyle.icon} size={10} className={statusStyle.color} />
+                      <span className={`text-[9px] font-medium ${statusStyle.color}`}>{statusStyle.label}</span>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                  
+                  {/* Project Details */}
+                  <div className="space-y-2 mb-3">
+                    {project.venue && (
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <Icon name="map-pin" size={12} className="text-slate-400" />
+                        <span className="truncate">{project.venue}</span>
+                      </div>
+                    )}
+                    
+                    {project.area && (
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <Icon name="maximize-2" size={12} className="text-slate-400" />
+                        <span>{project.area} m²</span>
+                      </div>
+                    )}
 
-            {projects.length === 0 && (
-              <div className="col-span-full flex flex-col items-center justify-center py-16 text-center bg-white rounded-xl border border-slate-200">
-                <div className="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center mb-4">
-                  <Icon name="folder-plus" size={24} className="text-blue-600" />
+                    {dateDisplay && (
+                      <div className={`flex items-center gap-2 text-xs ${overdue ? 'text-red-500' : 'text-slate-500'}`}>
+                        <Icon name="calendar" size={12} className={overdue ? 'text-red-400' : 'text-slate-400'} />
+                        <span>{dateDisplay}</span>
+                        {overdue && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">Overdue</span>}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Footer with team count and sync status */}
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                    <div className="flex items-center gap-3">
+                      {/* Team count */}
+                      <div className="flex items-center gap-1 text-xs text-slate-500">
+                        <Icon name="users" size={12} className="text-slate-400" />
+                        <span>{teamCount} assigned</span>
+                      </div>
+                    </div>
+                    
+                    {/* Last sync indicator */}
+                    {project.lastSyncAt && (
+                      <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                        <Icon name="refresh-cw" size={10} />
+                        <span>{formatTimeAgo(project.lastSyncAt?.toDate ? project.lastSyncAt.toDate() : project.lastSyncAt)}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <h3 className="text-base font-semibold text-slate-900">No Projects Yet</h3>
-                <p className="text-slate-500 mt-1 text-sm">Register your first project to get started</p>
               </div>
-            )}
-          </div>
-        </div>
+            );
+          })}
 
-        {/* Daily Digest - Takes 1 column */}
-        <div className="lg:col-span-1">
-          <DailyDigest projects={projects} />
+          {projects.length === 0 && (
+            <div className="col-span-full flex flex-col items-center justify-center py-16 text-center bg-white rounded-xl border border-slate-200">
+              <div className="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center mb-4">
+                <Icon name="folder-plus" size={24} className="text-blue-600" />
+              </div>
+              <h3 className="text-base font-semibold text-slate-900">No Projects Yet</h3>
+              <p className="text-slate-500 mt-1 text-sm">Register your first project to get started</p>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Daily Digest - Full Width Below Projects */}
+      <DailyDigest projects={projects} />
 
       {/* Recent Pending Items */}
       {recentMessages.length > 0 && (
